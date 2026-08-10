@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "thot-os-vault-bridge-staging",
+  "account_id": "3e7cfa6efb7a97825f1dc24515410c63",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "secrets": {
+    "required": ["COMPOSIO_API_KEY", "COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "thot-os-staging",
+      "database_id": "174532e8-5ada-4e30-abba-1276b3540b3f",
+      "migrations_dir": "../thot-os-app/migrations"
+    }
+  ]
+}

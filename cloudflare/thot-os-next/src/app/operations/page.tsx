@@ -1,0 +1,202 @@
+import Image from "next/image";
+import Link from "next/link";
+import { cancelInstagramPostAction, cancelRedditPostAction, createFanslyVaultJobsAction, createInstagramPostAction, createRedditPostAction, openRedditBridgeAction, refreshInstagramDataAction, retryFanslyVaultJobAction, reviewFailedInstagramPostAction, reviewFailedRedditPostAction, saveRedditCommunityAction, startInstagramReconnectAction, startRedditReconnectAction, verifyFanslyVaultJobAction } from "@/app/actions";
+import { AppShell, PageHeader } from "@/components/app-shell";
+import { AssetCard } from "@/components/asset-card";
+import { objectIdFor } from "@/lib/library";
+import { getInstagramAnalytics, getInstagramSchedulerStatus, getOperationsOverview, getPlatformOperations, getRedditBridgePairing, getRedditSchedulerStatus, getVaultOperations, isOperationPlatform, operationPlatforms, type OperationalAccount, type OperationPlatform, type SocialPost } from "@/lib/operations";
+
+const redditSections = [
+  ["upcoming", "Upcoming"],
+  ["past", "Past & analytics"],
+  ["communities", "Communities"],
+  ["create", "Create"],
+] as const;
+
+const instagramSections = [
+  ["upcoming", "Upcoming"],
+  ["past", "Past & receipts"],
+  ["analytics", "Analytics"],
+  ["create", "Create"],
+] as const;
+
+const vaultSections = [
+  ["queue", "Upload queue"],
+  ["create", "Send to vault"],
+] as const;
+
+function statusLabel(account: OperationalAccount | null) {
+  if (!account) return "Not configured";
+  if (account.connection_status === "needs_reconnection") return "Reconnect required";
+  if (account.connection_status === "needs_check") return "Needs verification";
+  if (account.connection_status === "connected") return account.publishing_authority === "confirmed" ? "Ready" : "Connected · limited";
+  return account.publishing_authority === "device_only" ? "Device bridge" : "Not connected";
+}
+
+function statusClass(account: OperationalAccount | null) {
+  if (!account) return "muted";
+  if (account.warning_level === "blocked") return "blocked";
+  if (account.warning_level === "attention") return "attention";
+  return account.connection_status === "connected" ? "ready" : "muted";
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "Not recorded";
+  const normalized = value.replace(" ", "T").replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+  const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized) ? normalized : `${normalized}Z`);
+  if (Number.isNaN(date.getTime())) return "Time unavailable";
+  return date.toLocaleString("en-AU", { timeZone: "Australia/Perth", dateStyle: "medium", timeStyle: "short" });
+}
+
+function perthDateTimeInput(value: string | null) {
+  if (!value) return "";
+  const date = new Date(value.replace(" ", "T") + (value.includes("Z") ? "" : "Z"));
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Date(date.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function PostRow({ post }: { post: SocialPost }) {
+  const editable = ["reddit", "instagram"].includes(post.platform) && ["draft", "scheduled"].includes(post.status);
+  const cancelAction = post.platform === "instagram" ? cancelInstagramPostAction : cancelRedditPostAction;
+  const reviewAction = post.platform === "instagram" ? reviewFailedInstagramPostAction : reviewFailedRedditPostAction;
+  return <article className="post-row"><span className={`post-state ${post.status}`}>{post.status}</span><div><strong>{post.title || post.caption || "Untitled post"}</strong><small>{post.community_name ? `r/${post.community_name} · ` : ""}{post.basename ?? "No asset attached"}</small>{post.provider_container_type && <small>{post.provider_container_type === "reel" ? "Reel" : "Photo"}</small>}{post.external_post_id && <small>Verified receipt: {post.external_post_id}</small>}{post.error && <p>{post.error}</p>}{post.failure_reviewed_at && <small>Failure reviewed {formatDate(post.failure_reviewed_at)}</small>}</div><div className="post-time"><span>{formatDate(post.published_at ?? post.scheduled_at ?? post.created_at)}</span>{post.external_url && <a href={post.external_url} target="_blank" rel="noreferrer">{post.platform === "reddit" ? "Open Reddit receipt" : "Open receipt"} ↗</a>}{editable && <div className="post-actions"><Link href={`/operations?platform=${post.platform}&section=create&edit=${post.id}`}>Edit</Link><form action={cancelAction}><input type="hidden" name="postId" value={post.id} /><button type="submit">Cancel</button></form></div>}{["reddit", "instagram"].includes(post.platform) && post.status === "failed" && !post.failure_reviewed_at && <form className="post-actions" action={reviewAction}><input type="hidden" name="postId" value={post.id} /><button type="submit">Mark reviewed</button></form>}</div></article>;
+}
+
+function PlatformNavigation({ active }: { active?: string }) {
+  return <nav className="platform-tabs" aria-label="Operations platform"><Link className={!active ? "active" : ""} href="/operations"><span>◎</span>Overview</Link>{operationPlatforms.map((platform) => <Link className={active === platform.id ? "active" : ""} href={`/operations?platform=${platform.id}`} key={platform.id}><span>{platform.short}</span>{platform.label}</Link>)}</nav>;
+}
+
+async function OperationsOverview() {
+  const data = await getOperationsOverview();
+  return <>
+    <section className="ops-summary"><article><b>{data.platforms.filter((platform) => platform.account).length}</b><span>Configured accounts</span></article><article><b>{data.warnings.length}</b><span>Need attention</span></article><article><b>{data.platforms.reduce((sum, platform) => sum + platform.upcoming, 0)}</b><span>Upcoming posts</span></article><article><b>{data.platforms.reduce((sum, platform) => sum + platform.eligibleAssets, 0)}</b><span>Eligible asset tags</span></article></section>
+    {data.warnings.length > 0 && <section className="panel warning-panel"><div className="section-heading"><div><span className="eyebrow">ACCOUNT WARNINGS</span><h2>These accounts need some love</h2></div><span>{data.warnings.length} active</span></div><div className="warning-list">{data.warnings.map((account) => <Link href={`/operations?platform=${account.platform}`} key={account.id}><span className={`account-dot ${statusClass(account)}`} /> <div><strong>{account.label}</strong><small>{account.warning_message}</small></div><b>Review →</b></Link>)}</div></section>}
+    <section className="ops-grid">{data.platforms.map((platform) => <Link className="platform-card" href={`/operations?platform=${platform.id}`} key={platform.id}><div className="platform-card-top"><span className="platform-mark">{platform.short}</span><span className={`account-status ${statusClass(platform.account)}`}>{statusLabel(platform.account)}</span></div><h2>{platform.label}</h2><p>{platform.account?.handle || "No account configured"}</p><dl><div><dt>Upcoming</dt><dd>{platform.upcoming}</dd></div><div><dt>Past</dt><dd>{platform.past}</dd></div><div><dt>Eligible assets</dt><dd>{platform.eligibleAssets}</dd></div></dl></Link>)}</section>
+    <section className="panel activity-panel"><div className="section-heading"><div><span className="eyebrow">RECENT ACTIVITY</span><h2>Across all platforms</h2></div></div>{data.activity.length ? <div className="post-list">{data.activity.map((post) => <PostRow post={post} key={post.id} />)}</div> : <div className="empty">No cloud publication activity has been recorded yet.</div>}</section>
+  </>;
+}
+
+async function RedditWorkspace({ section, saved, connected, connectionError, edit, published, delivery, reviewed, community }: { section: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string; community?: string }) {
+  const [data, scheduler, pairing] = await Promise.all([getPlatformOperations("reddit"), getRedditSchedulerStatus(), getRedditBridgePairing()]);
+  const upcoming = data.posts.filter((post) => ["draft", "scheduled", "publishing"].includes(post.status));
+  const past = data.posts.filter((post) => ["published", "failed", "cancelled"].includes(post.status));
+  const editPost = edit ? data.posts.find((post) => post.id === edit && ["draft", "scheduled"].includes(post.status)) : undefined;
+  return <>
+    <nav className="ops-subnav" aria-label="Reddit operations">{redditSections.map(([id, label]) => <Link className={section === id ? "active" : ""} href={`/operations?platform=reddit&section=${id}`} key={id}>{label}</Link>)}</nav>
+    {connected === "reddit" && <div className="success">Reddit OAuth is connected and Adelaide’s identity has been verified. Pair the signed browser below for native delivery.</div>}
+    {connectionError && <div className="connection-banner blocked"><div><strong>Reddit connection failed</strong><span>{connectionError}</span></div></div>}
+    {data.account?.connection_status !== "connected" && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account?.warning_message || "Reconnect Reddit before native publishing."}</span></div><form action={startRedditReconnectAction}><button className="secondary-action" type="submit">Reconnect Reddit</button></form></div>}
+    {data.account?.connection_status === "connected" && <div className={`connection-banner ${pairing?.last_seen_at ? "connected" : "attention"}`}><div><strong>{data.account.handle || scheduler?.connection?.display_name || "Reddit connected"}</strong><span>{pairing?.last_seen_at ? `Native browser paired · last seen ${formatDate(pairing.last_seen_at)}` : "Pair Adelaide’s signed Reddit browser before scheduling native posts."}</span></div><form action={openRedditBridgeAction} target="_blank"><button className="secondary-action" type="submit">Open & pair Reddit ↗</button></form></div>}
+    <div className="success">Reddit images and videos now enter the native device queue. THOT OS will never silently publish a Dropbox link instead.</div>
+    {published === "now" && <div className="success">Reddit published successfully. Its verified receipt is shown below.</div>}
+    {delivery === "failed" && <div className="connection-banner blocked"><div><strong>Reddit did not return a verified delivery</strong><span>Review the failed item below before attempting anything else.</span></div></div>}
+    {reviewed && <div className="success">The failed delivery has been marked as reviewed. It will not be retried automatically.</div>}
+    {community === "saved" && <div className="success">Community saved. Its current rules and posting requirements are now available when creating Reddit posts.</div>}
+    {saved && <div className="success">{saved === "cancelled" ? "Reddit post cancelled." : saved === "queued" ? "Native post queued for Adelaide’s paired Reddit browser." : `Reddit post ${saved === "scheduled" ? "scheduled for native delivery" : "saved as a draft"}.`}</div>}
+    {section === "upcoming" && <section className="panel"><div className="section-heading"><div><span className="eyebrow">REDDIT QUEUE</span><h2>Upcoming posts</h2></div><Link className="secondary-action" href="/operations?platform=reddit&section=create">Create post</Link></div>{upcoming.length ? <div className="post-list">{upcoming.map((post) => <PostRow post={post} key={post.id} />)}</div> : <div className="empty"><b>No Reddit posts are queued.</b><span>Create a draft or schedule one from a Reddit-eligible asset.</span></div>}</section>}
+    {section === "past" && <section className="panel"><div className="section-heading"><div><span className="eyebrow">HISTORY & RECEIPTS</span><h2>Past Reddit posts</h2></div><span>{past.filter((post) => post.status === "published").length} published · {past.filter((post) => post.status === "failed").length} failed</span></div>{past.length ? <div className="post-list">{past.map((post) => <PostRow post={post} key={post.id} />)}</div> : <div className="empty">No Reddit history has been migrated.</div>}</section>}
+    {section === "communities" && <>
+      <section className="panel community-onboarding">
+        <div className="section-heading"><div><span className="eyebrow">SUBREDDIT ONBOARDING</span><h2>Add a community</h2><p>Record its live rules once, then it becomes available in Reddit Create.</p></div><a className="secondary-action" href="https://www.reddit.com/subreddits/search" target="_blank" rel="noreferrer">Find on Reddit ↗</a></div>
+        <form action={saveRedditCommunityAction}>
+          <div className="reddit-fields">
+            <label className="wide">Community name or URL<input name="name" required maxLength={200} placeholder="r/community or https://reddit.com/r/community" /></label>
+            <fieldset><legend>Content allowed</legend><label className="check-option"><input type="checkbox" name="allowsNsfw" /> NSFW allowed</label></fieldset>
+            <label>Native post types<select name="allowedPostTypes" defaultValue="image"><option value="image">Images</option><option value="video">Videos</option><option value="image,video">Images and videos</option></select></label>
+            <fieldset><legend>Posting requirements</legend><label className="check-option"><input type="checkbox" name="flairRequired" /> Flair required</label><label className="check-option"><input type="checkbox" name="creatorVerified" /> Creator verified</label><label className="check-option"><input type="checkbox" name="verificationRequired" /> Community verification required</label></fieldset>
+            <label>Cooldown hours<input type="number" name="cooldownHours" min="0" max="720" defaultValue="24" /></label>
+            <label>Minimum account age (days)<input type="number" name="minimumAccountAgeDays" min="0" max="3650" defaultValue="0" /></label>
+            <label>Minimum karma<input type="number" name="minimumKarma" min="0" max="1000000" defaultValue="0" /></label>
+            <label className="wide">Title guidance<input name="titleGuidance" maxLength={1000} placeholder="Optional title format or banned wording" /></label>
+            <label className="wide">Notes<textarea name="notes" maxLength={2000} placeholder="Optional posting notes, exclusions or moderation details" /></label>
+          </div>
+          <label className="rules-confirmation"><input type="checkbox" name="rulesChecked" value="yes" required /><span><strong>I checked the community&apos;s current rules</strong><small>This confirmation is dated today. THOT OS will ask for another check after 30 days.</small></span></label>
+          <div className="form-actions"><button className="primary" type="submit">Save community</button></div>
+        </form>
+      </section>
+      <section className="panel"><div className="section-heading"><div><span className="eyebrow">READY TO USE</span><h2>Saved communities</h2></div><span>{data.communities.length} communities</span></div>{data.communities.length ? <div className="community-grid">{data.communities.map((community) => <article key={community.id}><div><strong>r/{community.name}</strong><span className={`rating ${community.allows_nsfw ? "nsfw" : "sfw"}`}>{community.allows_nsfw ? "NSFW allowed" : "SFW only"}</span></div><dl><div><dt>Cooldown</dt><dd>{community.cooldown_hours} hours</dd></div><div><dt>Flair</dt><dd>{community.flair_required ? "Required" : "Optional"}</dd></div><div><dt>Rules checked</dt><dd>{community.last_verified_at}</dd></div></dl><p>{community.notes || community.title_guidance || "No extra posting notes recorded."}</p><a href={community.rules_url} target="_blank" rel="noreferrer">Check current rules ↗</a></article>)}</div> : <div className="empty"><b>No communities saved yet.</b><span>Add the first subreddit above.</span></div>}</section>
+    </>}
+    {section === "create" && <section className="panel reddit-create"><div className="section-heading"><div><span className="eyebrow">{editPost ? "EDIT" : "CREATE"}</span><h2>{editPost ? "Edit Reddit post" : "Prepare a native Reddit post"}</h2><p>Choose eligible content, target a reviewed community, then post now or schedule the native upload.</p></div></div><form action={createRedditPostAction}>{editPost && <input type="hidden" name="postId" value={editPost.id} />}<div className="form-section"><span className="step-number">1</span><div><h3>Choose an image</h3><p>Only Reddit-tagged JPG, PNG, WebP and GIF assets can enter this verified native flow. Video stays disabled until Reddit’s separate video composer is proven.</p></div></div><div className="ops-asset-picker">{data.assets.map((asset) => { const objectId = objectIdFor(asset); const nativeSupported = ["jpg", "jpeg", "png", "webp", "gif"].includes(asset.extension.toLowerCase().replace(/^\./, "")); return <label key={asset.id} aria-disabled={!nativeSupported}><input type="radio" name="assetId" value={asset.id} required disabled={!nativeSupported} defaultChecked={editPost?.asset_id === asset.id} /><span className="picker-preview">{objectId ? <Image src={`/api/preview/${objectId}`} width={180} height={180} unoptimized alt={asset.basename} /> : <span>No preview</span>}</span><strong title={asset.basename}>{asset.basename}</strong><small>{nativeSupported ? `${asset.safety ?? "needs review"} · Native image` : "Native video pending verification"}</small></label>; })}</div><div className="form-section"><span className="step-number">2</span><div><h3>Finish the post</h3><p>Community rules, content rating and native delivery stay attached to the approved target.</p></div></div><div className="reddit-fields"><label>Subreddit<select name="communityId" required defaultValue={editPost?.community_id ?? ""}><option value="" disabled>Choose a community</option>{data.communities.map((community) => <option value={community.id} key={community.id}>r/{community.name}</option>)}</select></label><fieldset><legend>Content rating</legend><label><input type="radio" name="contentRating" value="sfw" required defaultChecked={editPost?.content_rating === "sfw"} /> SFW</label><label><input type="radio" name="contentRating" value="nsfw" required defaultChecked={editPost?.content_rating === "nsfw"} /> NSFW</label></fieldset><label className="wide">Title<input name="title" required maxLength={300} placeholder="Reddit post title" defaultValue={editPost?.title ?? ""} /></label><label className="wide">Post body or first comment<textarea name="caption" maxLength={10000} placeholder="Optional supporting copy" defaultValue={editPost?.caption ?? ""} /></label><label className="wide">Planned time<input type="datetime-local" name="scheduledAt" defaultValue={perthDateTimeInput(editPost?.scheduled_at ?? null)} /></label></div><div className="form-actions"><button className="secondary-action" type="submit" name="intent" value="draft">Save draft</button><button className="secondary-action" type="submit" name="intent" value="schedule">Schedule native post</button><button className="primary" type="submit" name="intent" value="publish_now">Post natively now</button></div></form></section>}
+  </>;
+}
+
+async function InstagramWorkspace({ section, saved, connected, connectionError, edit, published, delivery, reviewed }: { section: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string }) {
+  const [data, scheduler, analytics] = await Promise.all([getPlatformOperations("instagram"), getInstagramSchedulerStatus(), getInstagramAnalytics()]);
+  const upcoming = data.posts.filter((post) => ["draft", "scheduled", "publishing"].includes(post.status));
+  const past = data.posts.filter((post) => ["published", "failed", "cancelled"].includes(post.status));
+  const editPost = edit ? data.posts.find((post) => post.id === edit && ["draft", "scheduled"].includes(post.status)) : undefined;
+  return <>
+    <nav className="ops-subnav" aria-label="Instagram operations">{instagramSections.map(([id, label]) => <Link className={section === id ? "active" : ""} href={`/operations?platform=instagram&section=${id}`} key={id}>{label}</Link>)}</nav>
+    {connected === "instagram" && <div className="success">Instagram is connected and @adelaide.suede has been verified. Scheduled delivery is active.</div>}
+    {connectionError && <div className="connection-banner blocked"><div><strong>Instagram connection failed</strong><span>{connectionError}</span></div></div>}
+    {data.account?.warning_message && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account.warning_message}</span></div><form action={startInstagramReconnectAction}><button className="secondary-action" type="submit">Reconnect Instagram</button></form></div>}
+    {!data.account?.warning_message && <div className="connection-banner connected"><div><strong>{data.account?.handle || scheduler?.connection?.display_name || "Instagram connected"}</strong><span>Photos and Reels can publish now or from the scheduled queue.</span></div><span>{scheduler?.lastRun ? `Last check ${formatDate(scheduler.lastRun.completed_at ?? scheduler.lastRun.started_at)}` : "Scheduler ready"}</span></div>}
+    {published === "now" && <div className="success">Instagram published successfully. Its verified media receipt is shown below.</div>}
+    {delivery === "failed" && <div className="connection-banner blocked"><div><strong>Instagram did not return a verified delivery</strong><span>Review the failed item below before attempting anything else.</span></div></div>}
+    {reviewed && <div className="success">The failed delivery has been marked as reviewed. It will not be retried automatically.</div>}
+    {saved && <div className="success">{saved === "cancelled" ? "Instagram post cancelled." : saved === "queued" ? "Post now was safely queued; the scheduler will claim it once." : saved === "already_queued" ? "That exact Instagram post is already queued. No duplicate was created." : saved === "refreshed" ? "Instagram messages, analytics and post receipts are up to date." : `Instagram post ${saved === "scheduled" ? "scheduled" : "saved as a draft"}.`}</div>}
+    {section === "upcoming" && <section className="panel"><div className="section-heading"><div><span className="eyebrow">INSTAGRAM QUEUE</span><h2>Upcoming posts</h2></div><Link className="secondary-action" href="/operations?platform=instagram&section=create">Create post</Link></div>{upcoming.length ? <div className="post-list">{upcoming.map((post) => <PostRow post={post} key={post.id} />)}</div> : <div className="empty"><b>No Instagram posts are queued.</b><span>Create a draft or schedule one from an Instagram-eligible asset.</span></div>}</section>}
+    {section === "past" && <section className="panel"><div className="section-heading"><div><span className="eyebrow">HISTORY & RECEIPTS</span><h2>Past Instagram posts</h2></div><span>{past.filter((post) => post.status === "published").length} published · {past.filter((post) => post.status === "failed").length} failed</span></div>{past.length ? <div className="post-list">{past.map((post) => <PostRow post={post} key={post.id} />)}</div> : <div className="empty">No Instagram history has been migrated.</div>}</section>}
+    {section === "analytics" && <>
+      <section className="panel"><div className="section-heading"><div><span className="eyebrow">ACCOUNT INSIGHTS</span><h2>Instagram performance</h2><p>Read-only data from Adelaide&apos;s verified Instagram Business account.</p></div><form action={refreshInstagramDataAction}><button className="secondary-action" type="submit">Refresh Instagram data</button></form></div>
+        <section className="metric-grid"><article><b>{analytics.snapshot?.reach ?? "—"}</b><span>Reach</span></article><article><b>{analytics.snapshot?.follower_count ?? "—"}</b><span>Followers</span></article><article><b>{analytics.snapshot?.accounts_engaged ?? "—"}</b><span>Accounts engaged</span></article><article><b>{analytics.snapshot?.total_interactions ?? "—"}</b><span>Total interactions</span></article><article><b>{analytics.snapshot?.profile_views ?? "—"}</b><span>Profile views</span></article><article><b>{analytics.snapshot?.website_clicks ?? "—"}</b><span>Website clicks</span></article></section>
+        <small>Insights refreshed {formatDate(analytics.syncState?.last_analytics_sync_at ?? analytics.snapshot?.collected_at ?? null)} · Messages refreshed {formatDate(analytics.syncState?.last_messages_sync_at ?? null)}</small>{analytics.syncState?.last_error && <div className="connection-banner attention"><div><strong>Last refresh needs attention</strong><span>{analytics.syncState.last_error}</span></div></div>}
+      </section>
+      <section className="panel"><div className="section-heading"><div><span className="eyebrow">MEDIA PERFORMANCE</span><h2>Recent Instagram posts</h2></div><span>{analytics.media.length} synced</span></div>{analytics.media.length ? <div className="post-list">{analytics.media.map((media) => <article className="post-row" key={media.media_id}><span className="post-state published">{media.media_product_type || media.media_type || "media"}</span><div><strong>{formatDate(media.published_at)}</strong><small>{media.like_count ?? "—"} likes · {media.comments_count ?? "—"} comments · {media.view_count ?? "—"} views</small><small>{media.saved_count ?? "—"} saves · {media.shares_count ?? "—"} shares</small></div><div className="post-time">{media.permalink && <a href={media.permalink} target="_blank" rel="noreferrer">Open on Instagram ↗</a>}</div></article>)}</div> : <div className="empty"><b>No media insights have been collected yet.</b><span>Refresh Instagram data to collect the first snapshot.</span></div>}</section>
+    </>}
+    {section === "create" && <section className="panel reddit-create"><div className="section-heading"><div><span className="eyebrow">{editPost ? "EDIT" : "CREATE"}</span><h2>{editPost ? "Edit Instagram post" : "Prepare an Instagram post"}</h2><p>Choose SFW Instagram content, write the caption, then post now or schedule it.</p></div></div><form action={createInstagramPostAction}>{editPost && <input type="hidden" name="postId" value={editPost.id} />}<div className="form-section"><span className="step-number">1</span><div><h3>Choose content</h3><p>JPG and PNG publish as photos. MP4 and MOV publish as Reels.</p></div></div><div className="ops-asset-picker">{data.assets.map((asset) => { const objectId = objectIdFor(asset); const extension = asset.extension.toLowerCase().replace(/^\./, ""); const supported = ["jpg", "jpeg", "png", "mp4", "mov"].includes(extension); return <label key={asset.id} aria-disabled={!supported}><input type="radio" name="assetId" value={asset.id} required disabled={!supported} defaultChecked={editPost?.asset_id === asset.id} /><span className="picker-preview">{objectId ? <Image src={`/api/preview/${objectId}`} width={180} height={180} unoptimized alt={asset.basename} /> : <span>No preview</span>}</span><strong title={asset.basename}>{asset.basename}</strong><small>{["mp4", "mov"].includes(extension) ? "Reel" : supported ? "Photo" : "Unsupported"}</small></label>; })}</div><div className="form-section"><span className="step-number">2</span><div><h3>Finish the post</h3><p>The selected caption and planned time are the final approval.</p></div></div><div className="reddit-fields"><label className="wide">Caption<textarea name="caption" required maxLength={2200} placeholder="Write the Instagram caption" defaultValue={editPost?.caption ?? ""} /></label><label className="wide">Planned time<input type="datetime-local" name="scheduledAt" defaultValue={perthDateTimeInput(editPost?.scheduled_at ?? null)} /></label></div><div className="form-actions"><button className="secondary-action" type="submit" name="intent" value="draft">Save draft</button><button className="secondary-action" type="submit" name="intent" value="schedule">Schedule post</button><button className="primary" type="submit" name="intent" value="publish_now">Post now</button></div></form></section>}
+  </>;
+}
+
+async function VaultWorkspace({ section, saved }: { section: string; saved?: string }) {
+  const data = await getVaultOperations();
+  const fansly = data.accounts.find((account) => account.platform === "fansly") ?? null;
+  const myroomz = data.accounts.find((account) => String(account.platform) === "myroomz") ?? null;
+  const active = data.jobs.filter((job) => ["approved", "claimed", "staged"].includes(job.status));
+  const history = data.jobs.filter((job) => ["verified", "failed", "cancelled"].includes(job.status));
+  const statusCopy: Record<string, string> = {
+    approved: "Waiting for the signed Fansly browser",
+    claimed: "Transfer is in progress",
+    staged: "Accepted by Fansly; confirm it is visible in the vault",
+    verified: "Confirmed in the native Fansly vault",
+    failed: "Needs review before retrying",
+    cancelled: "Cancelled",
+  };
+  return <>
+    <nav className="ops-subnav" aria-label="Vault operations">{vaultSections.map(([id, label]) => <Link className={section === id ? "active" : ""} href={`/operations?platform=fansly&section=${id}`} key={id}>{label}</Link>)}</nav>
+    {saved === "vault_queued" && <div className="success">Selected content was approved for Fansly. Open the signed vault below and press Upload approved content.</div>}
+    {saved === "already_queued" && <div className="success">Those assets are already queued or verified. No duplicate was created.</div>}
+    {saved === "vault_verified" && <div className="success">The staged asset is now recorded as verified in Adelaide’s Fansly vault.</div>}
+    {saved === "retry_queued" && <div className="success">The failed upload was safely returned to the queue.</div>}
+    <section className="ops-grid vault-account-grid">
+      <article className="platform-card"><div className="platform-card-top"><span className="platform-mark">F</span><span className={`account-status ${statusClass(fansly)}`}>Device bridge</span></div><h2>Fansly Vault</h2><p>{fansly?.handle || "@AdelaideSuede"}</p><dl><div><dt>Last verified</dt><dd>{formatDate(fansly?.last_success_at ?? null)}</dd></div><div><dt>Device</dt><dd>{data.pairing?.last_seen_at ? "Seen" : "Pair when opened"}</dd></div></dl><form action="/api/fansly/pair" method="post" target="_blank"><input type="hidden" name="destination" value="vault" /><button className="primary" type="submit">Open & pair Fansly vault ↗</button></form></article>
+      <article className="platform-card"><div className="platform-card-top"><span className="platform-mark">MR</span><span className="account-status attention">First proof needed</span></div><h2>MyRoomz Vault</h2><p>{myroomz?.warning_message || "The protected upload link is valid and targets Vault."}</p><dl><div><dt>Mode</dt><dd>Direct upload</dd></div><div><dt>Status</dt><dd>Controlled test next</dd></div></dl></article>
+    </section>
+    {section === "create" && <section className="panel reddit-create"><div className="section-heading"><div><span className="eyebrow">FANSLY VAULT</span><h2>Send approved content to the vault</h2><p>Select paid-ready content, approve it, then finish the transfer in Adelaide’s signed Fansly browser.</p></div></div><form action={createFanslyVaultJobsAction}><div className="form-section"><span className="step-number">1</span><div><h3>Choose content</h3><p>Only assets tagged Subscription or PPV are available. Multi-creator content must already have paid-use consent recorded.</p></div></div><div className="ops-asset-picker">{data.assets.map((asset) => { const objectId = objectIdFor(asset); const extension = asset.extension.toLowerCase().replace(/^\./, ""); return <label key={asset.id}><input type="checkbox" name="assetId" value={asset.id} /><span className="picker-preview">{objectId ? <Image src={`/api/preview/${objectId}`} width={180} height={180} unoptimized alt={asset.basename} /> : <span>No preview</span>}</span><strong title={asset.basename}>{asset.basename}</strong><small>{["mp4", "mov"].includes(extension) ? "Video" : "Photo"} · {asset.safety || "needs review"}</small></label>; })}</div><div className="form-actions"><button className="primary" type="submit">Approve selected for Fansly</button><Link className="secondary-action" href="/library?destination=subscription">Classify more content</Link></div></form></section>}
+    {section === "queue" && <><section className="panel"><div className="section-heading"><div><span className="eyebrow">ACTIVE TRANSFERS</span><h2>Fansly upload queue</h2></div><Link className="secondary-action" href="/operations?platform=fansly&section=create">Send content</Link></div>{active.length ? <div className="post-list">{active.map((job) => <article className="post-row" key={job.id}><span className={`post-state ${job.status}`}>{job.status}</span><div><strong>{job.basename}</strong><small>{(job.bytes / 1024 / 1024).toFixed(1)} MB · Fansly</small><small>{statusCopy[job.status]}</small>{job.error && <p>{job.error}</p>}</div><div className="post-time"><span>{formatDate(job.completed_at ?? job.claimed_at ?? job.approved_at)}</span>{job.status === "staged" && <form action={verifyFanslyVaultJobAction}><input type="hidden" name="jobId" value={job.id} /><button className="primary" type="submit">Confirm in vault</button></form>}</div></article>)}</div> : <div className="empty"><b>No Fansly uploads are waiting.</b><span>Use Send to vault to approve the first asset.</span></div>}</section><section className="panel"><div className="section-heading"><div><span className="eyebrow">VAULT RECEIPTS</span><h2>Completed and failed</h2></div></div>{history.length ? <div className="post-list">{history.map((job) => <article className="post-row" key={job.id}><span className={`post-state ${job.status}`}>{job.status}</span><div><strong>{job.basename}</strong><small>{statusCopy[job.status]}</small>{job.error && <p>{job.error}</p>}</div><div className="post-time"><span>{formatDate(job.completed_at ?? job.created_at)}</span>{job.status === "failed" && <form action={retryFanslyVaultJobAction}><input type="hidden" name="jobId" value={job.id} /><button type="submit">Retry</button></form>}</div></article>)}</div> : <div className="empty">No cloud vault receipts yet. Existing local receipts remain preserved.</div>}</section></>}
+  </>;
+}
+
+async function GenericPlatformWorkspace({ platform }: { platform: Exclude<OperationPlatform, "reddit"> }) {
+  const data = await getPlatformOperations(platform);
+  const upcoming = data.posts.filter((post) => ["draft", "scheduled", "publishing"].includes(post.status));
+  const past = data.posts.filter((post) => ["published", "failed"].includes(post.status));
+  return <>
+    {data.account?.warning_message && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account.warning_message}</span></div><span>{data.account.publishing_mode.replaceAll("_", " ")}</span></div>}
+    {!data.account && <div className="connection-banner muted"><div><strong>Account not configured</strong><span>Add this creator&apos;s account when its platform migration begins.</span></div></div>}
+    <section className="ops-summary platform-summary"><article><b>{upcoming.length}</b><span>Upcoming</span></article><article><b>{past.length}</b><span>Past posts</span></article><article><b>{data.assets.length}</b><span>Eligible assets shown</span></article><article><b>{statusLabel(data.account)}</b><span>Publishing state</span></article></section>
+    <div className="two-column ops-columns"><section className="panel"><div className="section-heading"><div><span className="eyebrow">UPCOMING</span><h2>{data.definition.label} queue</h2></div></div>{upcoming.length ? <div className="post-list">{upcoming.map((post) => <PostRow post={post} key={post.id} />)}</div> : <div className="empty">No upcoming posts.</div>}</section><section className="panel"><div className="section-heading"><div><span className="eyebrow">ACCOUNT</span><h2>{data.account?.label ?? data.definition.label}</h2></div></div><dl className="account-details"><div><dt>Handle</dt><dd>{data.account?.handle || "Not added"}</dd></div><div><dt>Connection</dt><dd>{statusLabel(data.account)}</dd></div><div><dt>Last success</dt><dd>{formatDate(data.account?.last_success_at ?? null)}</dd></div></dl></section></div>
+    <section className="panel eligible-assets"><div className="section-heading"><div><span className="eyebrow">ELIGIBLE CONTENT</span><h2>Suitable for {data.definition.label}</h2></div><Link href={data.definition.destination ? `/library?destination=${data.definition.destination}` : "/library"}>{data.definition.destination ? "Open filtered library" : "Open content library"} →</Link></div>{data.assets.length ? <div className="asset-grid">{data.assets.slice(0, 8).map((asset) => <AssetCard asset={asset} key={asset.id} />)}</div> : <div className="empty">No assets have this destination tag yet.</div>}</section>
+  </>;
+}
+
+export default async function OperationsPage({ searchParams }: { searchParams: Promise<{ platform?: string; section?: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string; community?: string }> }) {
+  const query = await searchParams;
+  const platform = isOperationPlatform(query.platform) ? query.platform : undefined;
+  const section = [...redditSections, ...instagramSections, ...vaultSections].some(([id]) => id === query.section) ? query.section! : platform === "fansly" ? "queue" : "upcoming";
+  const activeDefinition = platform ? operationPlatforms.find((item) => item.id === platform) : null;
+  return <AppShell active="Operations"><PageHeader title={activeDefinition ? `${activeDefinition.label} Operations` : "Operations"} subtitle={activeDefinition ? `Account health, content and publishing activity for ${activeDefinition.label}.` : "Every social platform, account warning and publishing workflow in one place."} />
+    <PlatformNavigation active={platform} />
+    {!platform ? <OperationsOverview /> : platform === "reddit" ? <RedditWorkspace section={section} saved={query.saved} connected={query.connected} connectionError={query.connectionError} edit={query.edit} published={query.published} delivery={query.delivery} reviewed={query.reviewed} community={query.community} /> : platform === "instagram" ? <InstagramWorkspace section={section} saved={query.saved} connected={query.connected} connectionError={query.connectionError} edit={query.edit} published={query.published} delivery={query.delivery} reviewed={query.reviewed} /> : platform === "fansly" ? <VaultWorkspace section={section} saved={query.saved} /> : <GenericPlatformWorkspace platform={platform} />}
+  </AppShell>;
+}

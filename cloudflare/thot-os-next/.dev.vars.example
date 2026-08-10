@@ -1,0 +1,2 @@
+LOCAL_ACCESS_BYPASS=1
+NEXTJS_ENV=development

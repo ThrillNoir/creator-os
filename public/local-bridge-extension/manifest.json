@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "THOT OS Local Bridge",
+  "version": "0.7.4",
+  "description": "Creator-scoped THOT OS bridge for signed-in Reddit, OnlyFans and Fansly browser profiles.",
+  "permissions": ["storage", "tabs", "scripting", "alarms"],
+  "host_permissions": ["http://127.0.0.1:3000/*", "http://localhost:3000/*", "https://onlyfans.com/*", "https://fansly.com/*", "https://reddit.com/*", "https://www.reddit.com/*", "https://thot-os-vault-bridge-staging.thot-os.workers.dev/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_title": "Process Creator OS queue now"},
+  "content_scripts": [
+    {"matches": ["http://127.0.0.1:3000/api/local-bridge/pair*", "http://localhost:3000/api/local-bridge/pair*"], "js": ["pair.js"], "run_at": "document_idle"},
+    {"matches": ["https://onlyfans.com/*", "https://fansly.com/*"], "js": ["native-pair.js"], "run_at": "document_start"},
+    {"matches": ["https://fansly.com/*"], "js": ["fansly-vault.js"], "run_at": "document_idle"}
+  ]
+}

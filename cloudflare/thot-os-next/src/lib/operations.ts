@@ -1,0 +1,240 @@
+import { cloudflareEnv } from "./cloudflare";
+import type { AssetRow, Destination } from "./library";
+
+export const operationPlatforms = [
+  { id: "instagram", label: "Instagram", short: "IG", destination: "instagram" },
+  { id: "tiktok", label: "TikTok", short: "TT", destination: "tiktok" },
+  { id: "threads", label: "Threads", short: "TH", destination: "threads" },
+  { id: "facebook", label: "Facebook", short: "FB", destination: "facebook" },
+  { id: "x", label: "X", short: "X", destination: "x" },
+  { id: "reddit", label: "Reddit", short: "R", destination: "reddit" },
+  { id: "fansly", label: "Vault", short: "V", destination: "subscription" },
+  { id: "youtube", label: "YouTube", short: "YT", destination: null },
+] as const;
+
+export type OperationPlatform = (typeof operationPlatforms)[number]["id"];
+
+export interface OperationalAccount {
+  id: string;
+  creator_id: string;
+  platform: OperationPlatform;
+  label: string;
+  handle: string;
+  connection_status: "connected" | "needs_reconnection" | "needs_check" | "not_connected";
+  publishing_mode: "direct_api" | "scheduled_api" | "finish_on_device" | "local_bridge" | "not_configured";
+  publishing_authority: "confirmed" | "blocked" | "device_only" | "not_configured";
+  warning_level: "none" | "attention" | "blocked";
+  warning_message: string;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+}
+
+export interface SocialPost {
+  id: string;
+  asset_id: string | null;
+  community_id: number | null;
+  platform: OperationPlatform;
+  title: string;
+  caption: string;
+  content_rating: "sfw" | "nsfw" | null;
+  status: "draft" | "scheduled" | "publishing" | "published" | "failed" | "cancelled";
+  scheduled_at: string | null;
+  published_at: string | null;
+  external_post_id: string | null;
+  external_url: string | null;
+  error: string | null;
+  failure_reviewed_at: string | null;
+  failure_reviewed_by: string | null;
+  provider_container_id: string | null;
+  provider_container_type: string | null;
+  created_at: string;
+  basename: string | null;
+  community_name: string | null;
+}
+
+export interface RedditCommunity {
+  id: number;
+  name: string;
+  rules_url: string;
+  status: string;
+  allows_nsfw: number;
+  creator_verified: number;
+  verification_required: number;
+  flair_required: number;
+  allowed_post_types: string;
+  minimum_account_age_days: number;
+  minimum_karma: number;
+  cooldown_hours: number;
+  title_guidance: string;
+  notes: string;
+  last_verified_at: string;
+}
+
+export interface VaultUploadJob {
+  id: string;
+  platform: "fansly" | "myroomz";
+  status: "approved" | "claimed" | "staged" | "verified" | "failed" | "cancelled";
+  asset_id: string;
+  basename: string;
+  bytes: number;
+  error: string | null;
+  receipt: string;
+  approved_at: string;
+  claimed_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface RedditSchedulerStatus {
+  ok: boolean;
+  connection?: { status: string; display_name: string; identity_confirmed_at: string | null; last_error: string | null; updated_at: string } | null;
+  lastRun?: { status: string; started_at: string; completed_at: string | null; claimed_count: number; published_count: number; failed_count: number; error: string | null } | null;
+  due?: number;
+}
+
+export interface RedditBridgePairing {
+  status: string;
+  expires_at: string;
+  last_seen_at: string | null;
+  created_at: string;
+}
+
+export type PlatformSchedulerStatus = RedditSchedulerStatus;
+
+export interface InstagramAnalyticsSnapshot {
+  reach: number | null;
+  follower_count: number | null;
+  accounts_engaged: number | null;
+  total_interactions: number | null;
+  profile_views: number | null;
+  website_clicks: number | null;
+  collected_at: string;
+}
+
+export interface InstagramMediaMetric {
+  media_id: string;
+  permalink: string | null;
+  media_type: string | null;
+  media_product_type: string | null;
+  published_at: string | null;
+  like_count: number | null;
+  comments_count: number | null;
+  view_count: number | null;
+  saved_count: number | null;
+  shares_count: number | null;
+  collected_at: string;
+}
+
+export interface InstagramSyncState {
+  last_messages_sync_at: string | null;
+  last_analytics_sync_at: string | null;
+  last_error: string | null;
+  updated_at: string;
+}
+
+type EligibleCount = { destination: Destination; assets: number };
+type PostCount = { platform: OperationPlatform; upcoming: number; past: number };
+
+export async function getOperationsOverview() {
+  const { DB } = cloudflareEnv();
+  const [accountResult, eligibleResult, countResult, activityResult] = await Promise.all([
+    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id='adelaide' ORDER BY platform,label").all<OperationalAccount>(),
+    DB.prepare(`SELECT destination,COUNT(*) AS assets FROM asset_destinations d JOIN assets a ON a.id=d.asset_id WHERE d.creator_id='adelaide' AND a.source_available=1 GROUP BY destination`).all<EligibleCount>(),
+    DB.prepare(`SELECT platform,SUM(CASE WHEN status IN ('draft','scheduled','publishing') THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN status IN ('published','failed') THEN 1 ELSE 0 END) AS past FROM social_posts WHERE creator_id='adelaide' GROUP BY platform`).all<PostCount>(),
+    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id='adelaide' ORDER BY COALESCE(p.published_at,p.scheduled_at,p.created_at) DESC LIMIT 8`).all<SocialPost>(),
+  ]);
+  const accounts = new Map(accountResult.results.map((account) => [account.platform, account]));
+  const eligible = new Map(eligibleResult.results.map((row) => [row.destination, row.assets]));
+  const postCounts = new Map(countResult.results.map((row) => [row.platform, row]));
+  const platforms = operationPlatforms.map((platform) => ({
+    ...platform,
+    account: accounts.get(platform.id) ?? null,
+    eligibleAssets: platform.destination ? eligible.get(platform.destination) ?? 0 : 0,
+    upcoming: postCounts.get(platform.id)?.upcoming ?? 0,
+    past: postCounts.get(platform.id)?.past ?? 0,
+  }));
+  return { platforms, activity: activityResult.results, warnings: accountResult.results.filter((account) => account.warning_level !== "none") };
+}
+
+export async function getPlatformOperations(platform: OperationPlatform) {
+  const definition = operationPlatforms.find((item) => item.id === platform)!;
+  const { DB } = cloudflareEnv();
+  const assetQuery = definition.destination ? DB.prepare(`
+    SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
+      c.safety,c.is_teaser,c.is_multi,c.notes,
+      COALESCE((SELECT GROUP_CONCAT(ad.destination,'|') FROM asset_destinations ad WHERE ad.asset_id=a.id),'') AS destinations
+    FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id
+    LEFT JOIN asset_classifications c ON c.asset_id=a.id
+    WHERE a.creator_id='adelaide' AND a.source_available=1 AND d.destination=?
+    ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120
+  `).bind(definition.destination).all<AssetRow>() : Promise.resolve({ results: [] as AssetRow[], success: true, meta: {} });
+  const [account, posts, assets, communities] = await Promise.all([
+    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id='adelaide' AND platform=? ORDER BY label LIMIT 1").bind(platform).first<OperationalAccount>(),
+    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id='adelaide' AND p.platform=? ORDER BY COALESCE(p.scheduled_at,p.published_at,p.created_at) DESC`).bind(platform).all<SocialPost>(),
+    assetQuery,
+    platform === "reddit" ? DB.prepare("SELECT * FROM reddit_communities WHERE creator_id='adelaide' ORDER BY status,name").all<RedditCommunity>() : Promise.resolve({ results: [] as RedditCommunity[], success: true, meta: {} }),
+  ]);
+  return { definition, account, posts: posts.results, assets: assets.results, communities: communities.results };
+}
+
+export async function getInstagramSchedulerStatus(): Promise<PlatformSchedulerStatus | null> {
+  try {
+    const response = await cloudflareEnv().INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/status");
+    if (!response.ok) return null;
+    return await response.json() as PlatformSchedulerStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function getInstagramAnalytics() {
+  const { DB } = cloudflareEnv();
+  const [snapshot, media, syncState] = await Promise.all([
+    DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id='adelaide' ORDER BY collected_at DESC LIMIT 1").first<InstagramAnalyticsSnapshot>(),
+    DB.prepare("SELECT media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at FROM instagram_media_metrics WHERE creator_id='adelaide' ORDER BY COALESCE(published_at,collected_at) DESC LIMIT 50").all<InstagramMediaMetric>(),
+    DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id='adelaide'").first<InstagramSyncState>(),
+  ]);
+  return { snapshot, media: media.results, syncState };
+}
+
+export async function getVaultOperations() {
+  const base = await getPlatformOperations("fansly");
+  const { DB } = cloudflareEnv();
+  const [accounts, jobs, pairing, assets] = await Promise.all([
+    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id='adelaide' AND platform IN ('fansly','myroomz') ORDER BY platform,label").all<OperationalAccount>(),
+    DB.prepare(`
+      SELECT j.id,j.platform,j.status,j.asset_id,a.basename,a.bytes,j.error,j.receipt,j.approved_at,j.claimed_at,j.completed_at,j.created_at
+      FROM vault_upload_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
+      WHERE j.creator_id='adelaide' ORDER BY j.created_at DESC LIMIT 120
+    `).all<VaultUploadJob>(),
+    DB.prepare("SELECT status,expires_at,last_seen_at,created_at FROM vault_bridge_tokens WHERE creator_id='adelaide' AND account_id='adelaide-fansly-main' AND platform='fansly' ORDER BY created_at DESC LIMIT 1").first<{ status: string; expires_at: string; last_seen_at: string | null; created_at: string }>(),
+    DB.prepare(`
+      SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
+        c.safety,c.is_teaser,c.is_multi,c.notes,
+        COALESCE((SELECT GROUP_CONCAT(ad.destination,'|') FROM asset_destinations ad WHERE ad.asset_id=a.id),'') AS destinations
+      FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
+      WHERE a.creator_id='adelaide' AND a.source_available=1
+        AND EXISTS (SELECT 1 FROM asset_destinations d WHERE d.asset_id=a.id AND d.creator_id=a.creator_id AND d.destination IN ('subscription','ppv'))
+      ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120
+    `).all<AssetRow>(),
+  ]);
+  return { ...base, assets: assets.results, accounts: accounts.results, jobs: jobs.results, pairing };
+}
+
+export async function getRedditSchedulerStatus(): Promise<RedditSchedulerStatus | null> {
+  try {
+    const response = await cloudflareEnv().REDDIT_SCHEDULER.fetch("https://reddit-scheduler/status");
+    if (!response.ok) return null;
+    return await response.json() as RedditSchedulerStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRedditBridgePairing() {
+  return cloudflareEnv().DB.prepare("SELECT status,expires_at,last_seen_at,created_at FROM reddit_bridge_tokens WHERE creator_id='adelaide' AND account_id='adelaide-reddit-main' ORDER BY created_at DESC LIMIT 1").first<RedditBridgePairing>();
+}
+
+export function isOperationPlatform(value: string | undefined): value is OperationPlatform {
+  return operationPlatforms.some((platform) => platform.id === value);
+}
