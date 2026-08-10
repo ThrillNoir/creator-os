@@ -137,6 +137,9 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
   assert.match(qaPage, /requireCreatorContext\("view", creatorId\)/);
   assert.match(qaPage, /Write own-creator audit probe/);
   assert.match(qaPage, /name="actor_role" value="agency_admin"/);
+  assert.match(qaPage, /name="creatorId" required pattern=/);
+  assert.match(qaPage, /Attempt scoped mutation/);
+  assert.doesNotMatch(qaPage, /value="adelaide"/);
   assert.match(qaPage, /never publish, message, upload or retrieve media/i);
   assert.match(serviceProbe, /requireServiceAuditActor/);
   assert.match(serviceProbe, /actorRole: service\.actor\.role/);

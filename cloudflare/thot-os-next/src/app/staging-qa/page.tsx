@@ -27,6 +27,10 @@ export default async function StagingQaPage({ searchParams }: { searchParams: Pr
         <input type="hidden" name="actor_role" value="agency_admin" />
         <button className="secondary-action" type="submit">Attempt role spoof</button>
       </form>
+      <form action="/api/staging/qa/human-mutation" method="post">
+        <label>Requested creator ID<input name="creatorId" required pattern="[a-z0-9][a-z0-9_-]{0,63}" /></label>
+        <button className="secondary-action" type="submit">Attempt scoped mutation</button>
+      </form>
     </section>
   </AppShell>;
 }
