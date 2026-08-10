@@ -4,6 +4,7 @@ import { AppShell, PageHeader } from "@/components/app-shell";
 import { AttributeFields } from "@/components/attribute-fields";
 import { CreatorFriendFields } from "@/components/creator-friend-fields";
 import { getAssetByObjectId, getAssetEvents, getAttachedFriends, getCreatorFriends } from "@/lib/library";
+import { requireCreatorContext } from "@/lib/identity";
 
 function eventSummary(snapshotValue: string) {
   try {
@@ -17,9 +18,11 @@ function eventSummary(snapshotValue: string) {
 export default async function AssetPage({ params, searchParams }: { params: Promise<{ objectId: string }>; searchParams: Promise<{ saved?: string }> }) {
   const { objectId } = await params;
   if (!/^[a-f0-9]{64}$/.test(objectId)) notFound();
-  const asset = await getAssetByObjectId(objectId);
+  const context = await requireCreatorContext();
+  const creatorId = context.creator.creator_id;
+  const asset = await getAssetByObjectId(creatorId, objectId);
   if (!asset) notFound();
-  const [friends, attached, events] = await Promise.all([getCreatorFriends(), getAttachedFriends(asset.id), getAssetEvents(asset.id)]);
+  const [friends, attached, events] = await Promise.all([getCreatorFriends(creatorId), getAttachedFriends(creatorId, asset.id), getAssetEvents(creatorId, asset.id)]);
   const query = await searchParams;
   return <AppShell active="Content library"><PageHeader title="Asset details" subtitle={asset.basename} />
     {query.saved && <div className="success">Asset attributes saved.</div>}

@@ -30,10 +30,6 @@ type InstagramReplyDraft = {
 
 const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
-const CREATOR_ID = "adelaide";
-const ACCOUNT_ID = "adelaide-instagram-main";
-const INSTAGRAM_USER_ID = `creator-os:${CREATOR_ID}:${ACCOUNT_ID}`;
-const DROPBOX_USER_ID = `creator-os:${CREATOR_ID}:service:dropbox`;
 
 function record(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : undefined;
@@ -150,31 +146,31 @@ async function fetchMetaMedia(source: URL) {
   throw new Error("Instagram media redirected too many times.");
 }
 
-async function storeMessageAttachment(env: Env, input: { messageId: string; externalMessageId: string; sourceKey: string; kind: "story" | "image" | "video" | "audio" | "file"; sourceUrl: URL }) {
+async function storeMessageAttachment(env: Env, creatorId: string, input: { messageId: string; externalMessageId: string; sourceKey: string; kind: "story" | "image" | "video" | "audio" | "file"; sourceUrl: URL }) {
   const existing = await env.DB.prepare("SELECT status,object_key FROM message_attachments WHERE creator_id=? AND message_id=? AND source_key=?")
-    .bind(CREATOR_ID, input.messageId, input.sourceKey).first<{ status: string; object_key: string | null }>();
+    .bind(creatorId, input.messageId, input.sourceKey).first<{ status: string; object_key: string | null }>();
   if (existing?.status === "ready" && existing.object_key) return;
   const attachmentId = `instagram-attachment-${(await sha256(`${input.externalMessageId}:${input.sourceKey}`)).slice(0, 40)}`;
-  const objectKey = `messages/${CREATOR_ID}/${await sha256(`${input.externalMessageId}:${input.sourceKey}:media`)}`;
+  const objectKey = `messages/${creatorId}/${await sha256(`${input.externalMessageId}:${input.sourceKey}:media`)}`;
   try {
     const media = await fetchMetaMedia(input.sourceUrl);
-    await env.PREVIEWS.put(objectKey, media.body, { httpMetadata: { contentType: media.contentType }, customMetadata: { creatorId: CREATOR_ID, messageId: input.messageId } });
+    await env.PREVIEWS.put(objectKey, media.body, { httpMetadata: { contentType: media.contentType }, customMetadata: { creatorId, messageId: input.messageId } });
     await env.DB.prepare(`INSERT INTO message_attachments
       (id,creator_id,message_id,source_key,kind,object_key,mime_type,status,error,updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', NULL, CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,message_id,source_key) DO UPDATE SET kind=excluded.kind,object_key=excluded.object_key,mime_type=excluded.mime_type,status='ready',error=NULL,updated_at=CURRENT_TIMESTAMP`)
-      .bind(attachmentId, CREATOR_ID, input.messageId, input.sourceKey, input.kind, objectKey, media.contentType).run();
+      .bind(attachmentId, creatorId, input.messageId, input.sourceKey, input.kind, objectKey, media.contentType).run();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instagram media could not be collected.";
     await env.DB.prepare(`INSERT INTO message_attachments
       (id,creator_id,message_id,source_key,kind,status,error,updated_at)
       VALUES (?, ?, ?, ?, ?, 'failed', ?, CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,message_id,source_key) DO UPDATE SET status='failed',error=excluded.error,updated_at=CURRENT_TIMESTAMP`)
-      .bind(attachmentId, CREATOR_ID, input.messageId, input.sourceKey, input.kind, message.slice(0, 500)).run();
+      .bind(attachmentId, creatorId, input.messageId, input.sourceKey, input.kind, message.slice(0, 500)).run();
   }
 }
 
-async function syncMessageAttachments(env: Env, messageId: string, externalMessageId: string, message: InstagramMessage) {
+async function syncMessageAttachments(env: Env, creatorId: string, messageId: string, externalMessageId: string, message: InstagramMessage) {
   for (const [index, share] of (message.shares?.data ?? []).entries()) {
     const url = safeHttpsUrl(share.link);
     if (!url || !isInstagramPublicLink(url)) continue;
@@ -184,7 +180,7 @@ async function syncMessageAttachments(env: Env, messageId: string, externalMessa
       (id,creator_id,message_id,source_key,kind,external_url,status,error,updated_at)
       VALUES (?, ?, ?, ?, 'shared_post', ?, 'ready', NULL, CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,message_id,source_key) DO UPDATE SET external_url=excluded.external_url,status='ready',error=NULL,updated_at=CURRENT_TIMESTAMP`)
-      .bind(attachmentId, CREATOR_ID, messageId, sourceKey, url.toString()).run();
+      .bind(attachmentId, creatorId, messageId, sourceKey, url.toString()).run();
   }
   const storyUrl = safeHttpsUrl(message.story?.reply_to?.link);
   if (storyUrl && isInstagramPublicLink(storyUrl)) {
@@ -194,9 +190,9 @@ async function syncMessageAttachments(env: Env, messageId: string, externalMessa
       (id,creator_id,message_id,source_key,kind,external_url,status,error,updated_at)
       VALUES (?, ?, ?, ?, 'story', ?, 'ready', NULL, CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,message_id,source_key) DO UPDATE SET kind='story',external_url=excluded.external_url,status='ready',error=NULL,updated_at=CURRENT_TIMESTAMP`)
-      .bind(attachmentId, CREATOR_ID, messageId, sourceKey, storyUrl.toString()).run();
+      .bind(attachmentId, creatorId, messageId, sourceKey, storyUrl.toString()).run();
   } else if (storyUrl) {
-    await storeMessageAttachment(env, { messageId, externalMessageId, sourceKey: "story:reply", kind: "story", sourceUrl: storyUrl });
+    await storeMessageAttachment(env, creatorId, { messageId, externalMessageId, sourceKey: "story:reply", kind: "story", sourceUrl: storyUrl });
   }
   for (const [index, attachment] of (message.attachments?.data ?? []).entries()) {
     const image = record(attachment.image_data);
@@ -206,7 +202,7 @@ async function syncMessageAttachments(env: Env, messageId: string, externalMessa
     const sourceUrl = safeHttpsUrl(candidate);
     if (!sourceUrl) continue;
     const kind = image ? "image" : video ? "video" : audio ? "audio" : "file";
-    await storeMessageAttachment(env, { messageId, externalMessageId, sourceKey: `attachment:${index}`, kind, sourceUrl });
+    await storeMessageAttachment(env, creatorId, { messageId, externalMessageId, sourceKey: `attachment:${index}`, kind, sourceUrl });
   }
 }
 
@@ -258,16 +254,19 @@ function isDefinitiveInstagramRejection(message: string) {
   return /\bstatus 4\d\d\b/i.test(message) || /outside of allowed window/i.test(message);
 }
 
-async function currentInstagramConnection(env: Env) {
-  const connection = await env.DB.prepare("SELECT connected_account_id,status,external_account_id,display_name FROM provider_connections WHERE creator_id=? AND service='instagram'")
-    .bind(CREATOR_ID).first<{ connected_account_id: string; status: string; external_account_id: string; display_name: string }>();
+async function currentInstagramConnection(env: Env, creatorId: string) {
+  const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id,mc.id AS messaging_connection_id
+    FROM provider_connections pc JOIN operational_accounts oa ON oa.creator_id=pc.creator_id AND oa.platform='instagram'
+    JOIN messaging_connections mc ON mc.creator_id=pc.creator_id AND mc.platform='instagram'
+    WHERE pc.creator_id=? AND pc.service='instagram' ORDER BY oa.label LIMIT 1`)
+    .bind(creatorId).first<{ connected_account_id: string; status: string; external_account_id: string; display_name: string; account_id: string; messaging_connection_id: string }>();
   if (!connection || connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
   return connection;
 }
 
-async function resolveInstagramRecipient(env: Env, externalThreadId: string) {
-  const connection = await currentInstagramConnection(env);
-  const payload = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_MESSAGES", connection.connected_account_id, INSTAGRAM_USER_ID, {
+async function resolveInstagramRecipient(env: Env, creatorId: string, externalThreadId: string) {
+  const connection = await currentInstagramConnection(env, creatorId);
+  const payload = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_MESSAGES", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {
     conversation_id: externalThreadId,
     graph_api_version: "v25.0",
     limit: 100,
@@ -287,11 +286,11 @@ function normalizedUsername(value: string | undefined) {
   return value?.replace(/^@/, "").trim().toLowerCase() ?? "";
 }
 
-async function syncInstagramMessages(env: Env, force = false) {
-  const connection = await currentInstagramConnection(env);
-  const state = await env.DB.prepare("SELECT last_messages_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(CREATOR_ID).first<{ last_messages_sync_at: string | null }>();
+async function syncInstagramMessages(env: Env, creatorId: string, force = false) {
+  const connection = await currentInstagramConnection(env, creatorId);
+  const state = await env.DB.prepare("SELECT last_messages_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_messages_sync_at: string | null }>();
   const previousSync = state?.last_messages_sync_at ? new Date(`${state.last_messages_sync_at.replace(" ", "T")}Z`).getTime() : 0;
-  const listed = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_CONVERSATIONS", connection.connected_account_id, INSTAGRAM_USER_ID, {
+  const listed = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_CONVERSATIONS", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {
     graph_api_version: "v25.0",
     ig_user_id: connection.external_account_id,
     platform: "instagram",
@@ -324,11 +323,11 @@ async function syncInstagramMessages(env: Env, force = false) {
     }, conversation.updated_time ?? null);
     await env.DB.prepare(`INSERT INTO message_threads
       (id,creator_id,connection_id,external_thread_id,participant_name,participant_handle,participant_external_id,subject,unread_count,last_message_at,status,updated_at)
-      VALUES (?,'adelaide','adelaide-messages-instagram',?,?,?,?,'Instagram conversation',0,?,'open',CURRENT_TIMESTAMP)
+      VALUES (?,?,?,?,?,?,?,'Instagram conversation',0,?,'open',CURRENT_TIMESTAMP)
       ON CONFLICT(connection_id,external_thread_id) DO UPDATE SET participant_name=excluded.participant_name,participant_handle=excluded.participant_handle,
         participant_external_id=CASE WHEN excluded.participant_external_id<>'' THEN excluded.participant_external_id ELSE message_threads.participant_external_id END,
         last_message_at=COALESCE(excluded.last_message_at,message_threads.last_message_at),updated_at=CURRENT_TIMESTAMP`)
-      .bind(threadId, conversation.id, participant.username ? `@${participant.username.replace(/^@/, "")}` : "Instagram user", participant.username ? `@${participant.username.replace(/^@/, "")}` : "", participant.id ?? "", latestAt).run();
+      .bind(threadId, creatorId, connection.messaging_connection_id, conversation.id, participant.username ? `@${participant.username.replace(/^@/, "")}` : "Instagram user", participant.username ? `@${participant.username.replace(/^@/, "")}` : "", participant.id ?? "", latestAt).run();
 
     let insertedInbound = 0;
     for (const [index, message] of messages.entries()) {
@@ -338,57 +337,57 @@ async function syncInstagramMessages(env: Env, force = false) {
       const localMessageId = crypto.randomUUID();
       const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO messages
         (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-        VALUES (?,'adelaide',?,?,?,?,?,?, 'observed')`)
-        .bind(localMessageId, threadId, externalId, outbound ? "outbound" : "inbound", outbound ? "creator" : "instagram_user", body, message.created_time ?? null).run();
+        VALUES (?,?,?,?,?,?,?,?, 'observed')`)
+        .bind(localMessageId, creatorId, threadId, externalId, outbound ? "outbound" : "inbound", outbound ? "creator" : "instagram_user", body, message.created_time ?? null).run();
       if (inserted.meta.changes) {
         newMessageCount++;
         if (!outbound) insertedInbound++;
       } else {
-        await env.DB.prepare("UPDATE messages SET direction=?,sender_type=? WHERE creator_id='adelaide' AND thread_id=? AND external_message_id=?")
-          .bind(outbound ? "outbound" : "inbound", outbound ? "creator" : "instagram_user", threadId, externalId).run();
+        await env.DB.prepare("UPDATE messages SET direction=?,sender_type=? WHERE creator_id=? AND thread_id=? AND external_message_id=?")
+          .bind(outbound ? "outbound" : "inbound", outbound ? "creator" : "instagram_user", creatorId, threadId, externalId).run();
       }
       if (message.attachments?.data?.length || message.shares?.data?.length || message.story?.reply_to?.link) {
         const stored = inserted.meta.changes ? { id: localMessageId } : await env.DB.prepare("SELECT id FROM messages WHERE creator_id=? AND thread_id=? AND external_message_id=?")
-          .bind(CREATOR_ID, threadId, externalId).first<{ id: string }>();
-        if (stored?.id) await syncMessageAttachments(env, stored.id, externalId, message);
+          .bind(creatorId, threadId, externalId).first<{ id: string }>();
+        if (stored?.id) await syncMessageAttachments(env, creatorId, stored.id, externalId, message);
       }
     }
     if (insertedInbound && previousSync) {
       newInboundCount += insertedInbound;
-      await env.DB.prepare("UPDATE message_threads SET unread_count=unread_count+?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id='adelaide'").bind(insertedInbound, threadId).run();
+      await env.DB.prepare("UPDATE message_threads SET unread_count=unread_count+?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(insertedInbound, threadId, creatorId).run();
     }
     threadCount++;
   }
 
   const completionStatements = [
-    env.DB.prepare("UPDATE messaging_connections SET status='connected',read_enabled=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id='adelaide-messages-instagram' AND creator_id='adelaide'"),
-    env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_messages_sync_at,last_error,updated_at) VALUES (?,'adelaide-messages-instagram',CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_messages_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(CREATOR_ID),
+    env.DB.prepare("UPDATE messaging_connections SET status='connected',read_enabled=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(connection.messaging_connection_id, creatorId),
+    env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_messages_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_messages_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.messaging_connection_id),
   ];
-  if (!previousSync || newMessageCount) completionStatements.push(env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,'adelaide','adelaide-messages-instagram','instagram_messages_synced','instagram-scheduler',?)").bind(crypto.randomUUID(), JSON.stringify({ threadCount, newMessageCount, newInboundCount })));
+  if (!previousSync || newMessageCount) completionStatements.push(env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'instagram_messages_synced','service:instagram-scheduler',?)").bind(crypto.randomUUID(), creatorId, connection.messaging_connection_id, JSON.stringify({ threadCount, newMessageCount, newInboundCount })));
   await env.DB.batch(completionStatements);
   return { threadCount, newMessageCount, newInboundCount };
 }
 
-async function syncInstagramAnalytics(env: Env, force = false) {
-  const connection = await currentInstagramConnection(env);
-  const state = await env.DB.prepare("SELECT last_analytics_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(CREATOR_ID).first<{ last_analytics_sync_at: string | null }>();
+async function syncInstagramAnalytics(env: Env, creatorId: string, force = false) {
+  const connection = await currentInstagramConnection(env, creatorId);
+  const state = await env.DB.prepare("SELECT last_analytics_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_analytics_sync_at: string | null }>();
   if (!force && state?.last_analytics_sync_at) {
     const last = new Date(`${state.last_analytics_sync_at.replace(" ", "T")}Z`).getTime();
     if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60_000) return { skipped: true, mediaCount: 0 };
   }
   const [insightsPayload, mediaPayload, profilePayload] = await Promise.all([
-    executeTool<unknown>(env, "INSTAGRAM_GET_USER_INSIGHTS", connection.connected_account_id, INSTAGRAM_USER_ID, {
+    executeTool<unknown>(env, "INSTAGRAM_GET_USER_INSIGHTS", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {
       ig_user_id: connection.external_account_id,
       metric: ["reach", "follower_count", "accounts_engaged", "total_interactions", "profile_views", "website_clicks"],
       period: "day",
       metric_type: "total_value",
     }),
-    executeTool<unknown>(env, "INSTAGRAM_GET_IG_USER_MEDIA", connection.connected_account_id, INSTAGRAM_USER_ID, {
+    executeTool<unknown>(env, "INSTAGRAM_GET_IG_USER_MEDIA", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {
       ig_user_id: connection.external_account_id,
       limit: 100,
       fields: "id,media_type,media_product_type,permalink,timestamp,comments_count,like_count,view_count,saved_count,shares_count,total_views_count",
     }),
-    executeTool<unknown>(env, "INSTAGRAM_GET_USER_INFO", connection.connected_account_id, INSTAGRAM_USER_ID, {}),
+    executeTool<unknown>(env, "INSTAGRAM_GET_USER_INFO", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {}),
   ]);
   const insightRoot = record(insightsPayload) ?? {};
   const insightItems = (Array.isArray(insightsPayload) ? records(insightsPayload) : dataRecords(insightRoot));
@@ -398,110 +397,110 @@ async function syncInstagramAnalytics(env: Env, force = false) {
   const mediaItems = Array.isArray(mediaPayload) ? records(mediaPayload) : dataRecords(mediaRoot);
   await env.DB.prepare(`INSERT INTO instagram_analytics_snapshots
     (id,creator_id,account_id,reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks)
-    VALUES (?,'adelaide',?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), ACCOUNT_ID, metrics.get("reach") ?? null, metrics.get("follower_count") ?? numeric(profile.followers_count), metrics.get("accounts_engaged") ?? null, metrics.get("total_interactions") ?? null, metrics.get("profile_views") ?? null, metrics.get("website_clicks") ?? null).run();
+    VALUES (?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), creatorId, connection.account_id, metrics.get("reach") ?? null, metrics.get("follower_count") ?? numeric(profile.followers_count), metrics.get("accounts_engaged") ?? null, metrics.get("total_interactions") ?? null, metrics.get("profile_views") ?? null, metrics.get("website_clicks") ?? null).run();
   for (const item of mediaItems) {
     if (!item.id) continue;
     const mediaId = String(item.id);
     const permalink = typeof item.permalink === "string" ? item.permalink : null;
     const mediaStatements = [env.DB.prepare(`INSERT INTO instagram_media_metrics
       (creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at)
-      VALUES ('adelaide',?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,media_id) DO UPDATE SET permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP`)
-      .bind(mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count))];
-    if (permalink) mediaStatements.push(env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id='adelaide' AND platform='instagram' AND external_post_id=? AND (external_url IS NULL OR external_url='')").bind(permalink, mediaId));
+      .bind(creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count))];
+    if (permalink) mediaStatements.push(env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram' AND external_post_id=? AND (external_url IS NULL OR external_url='')").bind(permalink, creatorId, mediaId));
     await env.DB.batch(mediaStatements);
   }
-  const missingReceipts = await env.DB.prepare("SELECT id,external_post_id FROM social_posts WHERE creator_id='adelaide' AND platform='instagram' AND status='published' AND external_post_id IS NOT NULL AND (external_url IS NULL OR external_url='') ORDER BY published_at DESC LIMIT 20").all<{ id: string; external_post_id: string }>();
+  const missingReceipts = await env.DB.prepare("SELECT id,external_post_id FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='published' AND external_post_id IS NOT NULL AND (external_url IS NULL OR external_url='') ORDER BY published_at DESC LIMIT 20").bind(creatorId).all<{ id: string; external_post_id: string }>();
   for (const post of missingReceipts.results) {
     try {
-      const receipt = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA", connection.connected_account_id, INSTAGRAM_USER_ID, {
+      const receipt = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {
         ig_media_id: post.external_post_id,
         fields: "id,permalink,media_type,media_product_type,timestamp",
       });
       const permalink = record(receipt)?.permalink;
       if (typeof permalink === "string" && permalink) {
-        await env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id='adelaide' AND external_post_id=?").bind(permalink, post.id, post.external_post_id).run();
+        await env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND external_post_id=?").bind(permalink, post.id, creatorId, post.external_post_id).run();
       }
     } catch (error) {
       console.warn(JSON.stringify({ event: "instagram_receipt_backfill_failed", postId: post.id, message: error instanceof Error ? error.message : "Lookup failed" }));
     }
   }
-  await env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_analytics_sync_at,last_error,updated_at) VALUES (?,'adelaide-messages-instagram',CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_analytics_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(CREATOR_ID).run();
+  await env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_analytics_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_analytics_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.messaging_connection_id).run();
   return { skipped: false, mediaCount: mediaItems.length };
 }
 
-async function syncInstagram(env: Env, forceAnalytics = false) {
+async function syncInstagram(env: Env, creatorId: string, forceAnalytics = false) {
   const result: { subscription?: unknown; messages?: unknown; analytics?: unknown; errors: string[] } = { errors: [] };
   try {
-    const connection = await currentInstagramConnection(env);
+    const connection = await currentInstagramConnection(env, creatorId);
     result.subscription = await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
   } catch (error) {
     result.errors.push(`Messaging subscription: ${error instanceof Error ? error.message : "check failed"}`);
   }
-  try { result.messages = await syncInstagramMessages(env); } catch (error) { result.errors.push(`Messages: ${error instanceof Error ? error.message : "sync failed"}`); }
-  try { result.analytics = await syncInstagramAnalytics(env, forceAnalytics); } catch (error) { result.errors.push(`Analytics: ${error instanceof Error ? error.message : "sync failed"}`); }
+  try { result.messages = await syncInstagramMessages(env, creatorId); } catch (error) { result.errors.push(`Messages: ${error instanceof Error ? error.message : "sync failed"}`); }
+  try { result.analytics = await syncInstagramAnalytics(env, creatorId, forceAnalytics); } catch (error) { result.errors.push(`Analytics: ${error instanceof Error ? error.message : "sync failed"}`); }
   const error = result.errors.join(" ").slice(0, 2000) || null;
-  if (error) await env.DB.prepare("UPDATE instagram_sync_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(error, CREATOR_ID).run();
+  if (error) await env.DB.prepare("UPDATE instagram_sync_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(error, creatorId).run();
   return { ok: result.errors.length === 0, ...result };
 }
 
 async function validateInstagramReplyTarget(request: Request, env: Env) {
-  const input = await request.json<{ threadId?: string }>();
-  if (!input.threadId) return Response.json({ ok: false, error: "missing_thread_id" }, { status: 400 });
+  const input = await request.json<{ threadId?: string; creatorId?: string }>();
+  if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
-    WHERE t.id=? AND t.creator_id=? AND c.id='adelaide-messages-instagram' AND c.platform='instagram'`)
-    .bind(input.threadId, CREATOR_ID).first<{ id: string; external_thread_id: string; participant_external_id: string }>();
+    WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'`)
+    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string }>();
   if (!thread) return Response.json({ ok: false, error: "instagram_thread_not_found" }, { status: 404 });
-  const { connection, recipient, messageCount } = await resolveInstagramRecipient(env, thread.external_thread_id);
+  const { connection, recipient, messageCount } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id);
   await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
   if (thread.participant_external_id && thread.participant_external_id !== recipient.id) {
     return Response.json({ ok: false, error: "Instagram recipient changed. Refresh messages before enabling replies." }, { status: 409 });
   }
   await env.DB.batch([
-    env.DB.prepare("UPDATE message_threads SET participant_external_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, thread.id, CREATOR_ID),
-    env.DB.prepare("UPDATE messaging_connections SET outbound_validated=1,status='connected',last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id='adelaide-messages-instagram' AND creator_id=?").bind(CREATOR_ID),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,'adelaide-messages-instagram',?,'instagram_reply_target_validated','instagram-scheduler',?)")
-      .bind(crypto.randomUUID(), CREATOR_ID, thread.id, JSON.stringify({ messageCount, recipientIdStored: true, liveMessageSent: false })),
+    env.DB.prepare("UPDATE message_threads SET participant_external_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, thread.id, input.creatorId),
+    env.DB.prepare("UPDATE messaging_connections SET outbound_validated=1,status='connected',last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(connection.messaging_connection_id, input.creatorId),
+    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_reply_target_validated','service:instagram-scheduler',?)")
+      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, JSON.stringify({ messageCount, recipientIdStored: true, liveMessageSent: false })),
   ]);
   return Response.json({ ok: true, participantUsername: recipient.username ? `@${recipient.username.replace(/^@/, "")}` : null, messageCount });
 }
 
 async function markInstagramThreadSeen(request: Request, env: Env) {
-  const input = await request.json<{ threadId?: string; actor?: string }>();
-  if (!input.threadId) return Response.json({ ok: false, error: "missing_thread_id" }, { status: 400 });
+  const input = await request.json<{ threadId?: string; actor?: string; creatorId?: string }>();
+  if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
-    WHERE t.id=? AND t.creator_id=? AND c.id='adelaide-messages-instagram' AND c.platform='instagram'`)
-    .bind(input.threadId, CREATOR_ID).first<{ id: string; external_thread_id: string; participant_external_id: string }>();
+    WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'`)
+    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string }>();
   if (!thread) return Response.json({ ok: false, error: "instagram_thread_not_found" }, { status: 404 });
-  const { connection, recipient } = await resolveInstagramRecipient(env, thread.external_thread_id);
+  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id);
   if (thread.participant_external_id && thread.participant_external_id !== recipient.id) {
     return Response.json({ ok: false, error: "Instagram recipient changed. Refresh this conversation before marking it read." }, { status: 409 });
   }
-  await executeTool<unknown>(env, "INSTAGRAM_MARK_SEEN", connection.connected_account_id, INSTAGRAM_USER_ID, {
+  await executeTool<unknown>(env, "INSTAGRAM_MARK_SEEN", connection.connected_account_id, `creator-os:${input.creatorId}:service:instagram`, {
     graph_api_version: "v25.0",
     ig_user_id: connection.external_account_id,
     recipient_id: recipient.id,
   });
   await env.DB.batch([
-    env.DB.prepare("UPDATE message_threads SET unread_count=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(thread.id, CREATOR_ID),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,'adelaide-messages-instagram',?,'instagram_thread_marked_seen',?,?)")
-      .bind(crypto.randomUUID(), CREATOR_ID, thread.id, input.actor?.slice(0, 200) || "thot-os", JSON.stringify({ providerConfirmed: true })),
+    env.DB.prepare("UPDATE message_threads SET unread_count=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(thread.id, input.creatorId),
+    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_thread_marked_seen',?,?)")
+      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, input.actor?.slice(0, 200) || "service:instagram-scheduler", JSON.stringify({ providerConfirmed: true })),
   ]);
   return Response.json({ ok: true, markedSeen: true });
 }
 
-async function syncInstagramMessagesOnly(env: Env) {
-  const connection = await currentInstagramConnection(env);
+async function syncInstagramMessagesOnly(env: Env, creatorId: string) {
+  const connection = await currentInstagramConnection(env, creatorId);
   const subscription = await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
-  const messages = await syncInstagramMessages(env);
+  const messages = await syncInstagramMessages(env, creatorId);
   return { ok: true, subscription, messages };
 }
 
 async function sendInstagramReply(request: Request, env: Env) {
-  const input = await request.json<{ draftId?: string }>();
-  if (!input.draftId) return Response.json({ ok: false, error: "missing_draft_id" }, { status: 400 });
+  const input = await request.json<{ draftId?: string; creatorId?: string }>();
+  if (!input.draftId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const draft = await env.DB.prepare(`SELECT d.id,d.creator_id,d.connection_id,d.thread_id,d.body,d.status,d.requested_by,
       t.external_thread_id,t.participant_external_id,t.participant_name,t.participant_handle,
       (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=d.creator_id AND m.thread_id=d.thread_id AND m.direction='inbound') AS last_inbound_at,
@@ -510,7 +509,7 @@ async function sendInstagramReply(request: Request, env: Env) {
     JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id AND t.connection_id=d.connection_id
     JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
     WHERE d.id=? AND d.creator_id=? AND c.platform='instagram'`)
-    .bind(input.draftId, CREATOR_ID).first<InstagramReplyDraft>();
+    .bind(input.draftId, input.creatorId).first<InstagramReplyDraft>();
   if (!draft) return Response.json({ ok: false, error: "instagram_reply_draft_not_found" }, { status: 404 });
   if (draft.status !== "draft") return Response.json({ ok: false, error: "instagram_reply_not_sendable" }, { status: 409 });
   if (draft.connection_status !== "connected" || !draft.write_enabled || !draft.outbound_validated || draft.emergency_paused) {
@@ -520,20 +519,20 @@ async function sendInstagramReply(request: Request, env: Env) {
   if (!Number.isFinite(lastInboundAt) || Date.now() - lastInboundAt > 24 * 60 * 60_000) {
     return Response.json({ ok: false, error: "Instagram's active reply window is closed. Ask the person to send a new message, refresh the inbox, then reply." }, { status: 409 });
   }
-  const { connection, recipient } = await resolveInstagramRecipient(env, draft.external_thread_id);
+  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, draft.external_thread_id);
   if (draft.participant_external_id && draft.participant_external_id !== recipient.id) {
     return Response.json({ ok: false, error: "Instagram recipient changed. Refresh and validate this conversation again." }, { status: 409 });
   }
   const claim = await env.DB.prepare(`UPDATE instagram_reply_drafts SET status='sending',approved_by=requested_by,approved_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP
-    WHERE id=? AND creator_id=? AND status='draft'`).bind(draft.id, CREATOR_ID).run();
+    WHERE id=? AND creator_id=? AND status='draft'`).bind(draft.id, input.creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "instagram_reply_already_claimed" }, { status: 409 });
   await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_reply_approved', ?, ?)")
-    .bind(crypto.randomUUID(), CREATOR_ID, draft.connection_id, draft.thread_id, draft.requested_by, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
+    .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, draft.requested_by, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
 
   let sendAttempted = false;
   try {
     sendAttempted = true;
-    const sent = await executeTool<unknown>(env, "INSTAGRAM_SEND_TEXT_MESSAGE", connection.connected_account_id, INSTAGRAM_USER_ID, {
+    const sent = await executeTool<unknown>(env, "INSTAGRAM_SEND_TEXT_MESSAGE", connection.connected_account_id, `creator-os:${input.creatorId}:service:instagram`, {
       graph_api_version: "v25.0",
       ig_user_id: connection.external_account_id,
       recipient_id: recipient.id,
@@ -542,12 +541,12 @@ async function sendInstagramReply(request: Request, env: Env) {
     const providerMessageId = responseId(sent, "Instagram message");
     const messageId = `instagram-outbound-${(await sha256(providerMessageId)).slice(0, 40)}`;
     await env.DB.batch([
-      env.DB.prepare("UPDATE instagram_reply_drafts SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(providerMessageId, draft.id, CREATOR_ID),
+      env.DB.prepare("UPDATE instagram_reply_drafts SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(providerMessageId, draft.id, input.creatorId),
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-        VALUES (?,? ,?,?,'outbound','agency',?,CURRENT_TIMESTAMP,'sent')`).bind(messageId, CREATOR_ID, draft.thread_id, providerMessageId, draft.body),
-      env.DB.prepare("UPDATE message_threads SET participant_external_id=?,last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, draft.thread_id, CREATOR_ID),
+        VALUES (?,? ,?,?,'outbound','agency',?,CURRENT_TIMESTAMP,'sent')`).bind(messageId, input.creatorId, draft.thread_id, providerMessageId, draft.body),
+      env.DB.prepare("UPDATE message_threads SET participant_external_id=?,last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, draft.thread_id, input.creatorId),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_reply_sent', 'instagram-scheduler', ?)")
-        .bind(crypto.randomUUID(), CREATOR_ID, draft.connection_id, draft.thread_id, JSON.stringify({ draftId: draft.id, providerMessageId })),
+        .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, JSON.stringify({ draftId: draft.id, providerMessageId })),
     ]);
     return Response.json({ ok: true, sent: true, providerMessageId });
   } catch (error) {
@@ -557,11 +556,11 @@ async function sendInstagramReply(request: Request, env: Env) {
     const status = uncertain ? "uncertain" : "failed";
     const safeMessage = `${uncertain ? "Outcome uncertain; check Instagram before sending again. " : ""}${message}`.slice(0, 2000);
     await env.DB.batch([
-      env.DB.prepare("UPDATE instagram_reply_drafts SET status=?,error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(status, safeMessage, draft.id, CREATOR_ID),
+      env.DB.prepare("UPDATE instagram_reply_drafts SET status=?,error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(status, safeMessage, draft.id, input.creatorId),
       ...(definitiveRejection ? [env.DB.prepare("UPDATE messaging_connections SET outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
-        .bind("Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, CREATOR_ID)] : []),
+        .bind("Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, input.creatorId)] : []),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?,?,'instagram-scheduler',?)")
-        .bind(crypto.randomUUID(), CREATOR_ID, draft.connection_id, draft.thread_id, uncertain ? "instagram_reply_uncertain" : "instagram_reply_failed", JSON.stringify({ draftId: draft.id, error: safeMessage })),
+        .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, uncertain ? "instagram_reply_uncertain" : "instagram_reply_failed", JSON.stringify({ draftId: draft.id, error: safeMessage })),
     ]);
     return Response.json({ ok: false, sent: false, uncertain, error: safeMessage }, { status: uncertain ? 502 : 409 });
   }
@@ -576,17 +575,18 @@ async function markFailed(env: Env, post: DuePost, message: string, uncertain = 
 }
 
 async function publishPost(env: Env, post: DuePost) {
-  const connection = await currentInstagramConnection(env);
+  const connection = await currentInstagramConnection(env, post.creator_id);
+  const instagramUserId = `creator-os:${post.creator_id}:service:instagram`;
   const kind = mediaType(post.extension);
   let containerId = post.provider_container_id;
   if (!containerId) {
-    const temporary = await executeTool<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", env.COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID, DROPBOX_USER_ID, {
+    const temporary = await executeTool<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", env.COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID, `creator-os:${post.creator_id}:service:dropbox`, {
       path: dropboxPath(post.dropbox_root, post.relative_path),
     });
     if (!temporary.link) throw new Error("Dropbox did not return a temporary media link.");
     let created: unknown;
     try {
-      created = await executeTool<unknown>(env, "INSTAGRAM_CREATE_MEDIA_CONTAINER", connection.connected_account_id, INSTAGRAM_USER_ID, {
+      created = await executeTool<unknown>(env, "INSTAGRAM_CREATE_MEDIA_CONTAINER", connection.connected_account_id, instagramUserId, {
         ig_user_id: connection.external_account_id,
         caption: post.caption,
         content_type: kind,
@@ -607,7 +607,7 @@ async function publishPost(env: Env, post: DuePost) {
 
   let published: unknown;
   try {
-    published = await executeTool<unknown>(env, "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", connection.connected_account_id, INSTAGRAM_USER_ID, {
+    published = await executeTool<unknown>(env, "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", connection.connected_account_id, instagramUserId, {
       ig_user_id: connection.external_account_id,
       creation_id: containerId,
       max_wait_seconds: kind === "reel" ? 180 : 60,
@@ -620,7 +620,7 @@ async function publishPost(env: Env, post: DuePost) {
   let permalink: string | null = null;
   let receiptWarning: string | null = null;
   try {
-    const details = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA", connection.connected_account_id, INSTAGRAM_USER_ID, {
+    const details = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA", connection.connected_account_id, instagramUserId, {
       ig_media_id: externalPostId,
       fields: "id,permalink,media_type,media_product_type,timestamp",
     });
@@ -639,7 +639,7 @@ async function publishPost(env: Env, post: DuePost) {
   return { published: true, failed: false };
 }
 
-async function loadPost(env: Env, postId: string) {
+async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
     SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.caption,p.provider_container_id,p.provider_container_type,
       a.extension,a.relative_path,c.dropbox_root
@@ -647,7 +647,7 @@ async function loadPost(env: Env, postId: string) {
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
     JOIN creators c ON c.id=p.creator_id
     WHERE p.id=? AND p.creator_id=? AND p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL
-  `).bind(postId, CREATOR_ID).first<DuePost>();
+  `).bind(postId, creatorId).first<DuePost>();
 }
 
 async function claimAndPublish(env: Env, post: DuePost) {
@@ -663,12 +663,12 @@ async function claimAndPublish(env: Env, post: DuePost) {
 }
 
 async function publishOne(request: Request, env: Env) {
-  const input = await request.json<{ postId?: string }>();
-  if (!input.postId) return Response.json({ ok: false, error: "missing_post_id" }, { status: 400 });
-  const post = await loadPost(env, input.postId);
+  const input = await request.json<{ postId?: string; creatorId?: string }>();
+  if (!input.postId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
+  const post = await loadPost(env, input.creatorId, input.postId);
   if (!post) return Response.json({ ok: false, error: "post_not_publishable" }, { status: 409 });
   const result = await claimAndPublish(env, post);
-  const current = await env.DB.prepare("SELECT status,external_post_id,error FROM social_posts WHERE id=? AND creator_id=?").bind(input.postId, CREATOR_ID).first();
+  const current = await env.DB.prepare("SELECT status,external_post_id,error FROM social_posts WHERE id=? AND creator_id=?").bind(input.postId, input.creatorId).first();
   return Response.json({ ok: result.published, ...result, post: current }, { status: result.published ? 200 : 409 });
 }
 
@@ -683,10 +683,10 @@ async function processDue(env: Env, triggerType: string) {
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
       JOIN creators c ON c.id=p.creator_id
-      WHERE p.creator_id=? AND p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL
+      WHERE p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL
         AND p.scheduled_at IS NOT NULL AND unixepoch(p.scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)
       ORDER BY p.scheduled_at LIMIT 3
-    `).bind(CREATOR_ID).all<DuePost>();
+    `).all<DuePost>();
     for (const post of due.results) {
       const result = await claimAndPublish(env, post);
       if (!result.claimed) continue;
@@ -710,62 +710,77 @@ async function sha256(value: string) {
 }
 
 async function startConnection(request: Request, env: Env) {
-  const input = await request.json<{ callbackUrl?: string }>();
-  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/")) return Response.json({ ok: false, error: "invalid_callback" }, { status: 400 });
+  const input = await request.json<{ callbackUrl?: string; creatorId?: string; actor?: string }>();
+  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
+  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='instagram'").bind(input.creatorId).first();
+  if (!account) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   const state = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const callback = new URL(input.callbackUrl);
   callback.searchParams.set("state", state);
   const link = await jsonRequest<{ redirect_url: string; connected_account_id: string; expires_at?: string }>(
     `${COMPOSIO_V3}/connected_accounts/link`, env.COMPOSIO_API_KEY,
-    { method: "POST", body: JSON.stringify({ auth_config_id: env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID, user_id: INSTAGRAM_USER_ID, alias: `adelaide-instagram-${Date.now().toString(36)}`, callback_url: callback.toString() }) },
+    { method: "POST", body: JSON.stringify({ auth_config_id: env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID, user_id: `creator-os:${input.creatorId}:service:instagram`, alias: `${input.creatorId}-instagram-${Date.now().toString(36)}`, callback_url: callback.toString() }) },
   );
   await env.DB.prepare("INSERT INTO provider_connection_attempts (id,creator_id,service,state_hash,connected_account_id,status,expires_at) VALUES (?,?,'instagram',?,?,'pending',?)")
-    .bind(crypto.randomUUID(), CREATOR_ID, await sha256(state), link.connected_account_id, link.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString()).run();
+    .bind(crypto.randomUUID(), input.creatorId, await sha256(state), link.connected_account_id, link.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString()).run();
   return Response.json({ ok: true, redirectUrl: link.redirect_url });
 }
 
 async function completeConnection(request: Request, env: Env) {
-  const input = await request.json<{ state?: string }>();
-  if (!input.state) return Response.json({ ok: false, error: "missing_state" }, { status: 400 });
+  const input = await request.json<{ state?: string; creatorId?: string; actor?: string }>();
+  if (!input.state || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const attempt = await env.DB.prepare("SELECT id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='instagram' AND state_hash=? AND status='pending'")
-    .bind(CREATOR_ID, await sha256(input.state)).first<{ id: string; connected_account_id: string; expires_at: string }>();
+    .bind(input.creatorId, await sha256(input.state)).first<{ id: string; connected_account_id: string; expires_at: string }>();
   if (!attempt || new Date(attempt.expires_at).getTime() < Date.now()) return Response.json({ ok: false, error: "invalid_or_expired_state" }, { status: 400 });
   try {
     const account = await jsonRequest<{ status?: string }>(`${COMPOSIO_V3}/connected_accounts/${attempt.connected_account_id}`, env.COMPOSIO_API_KEY);
     if (account.status !== "ACTIVE") throw new Error(`Instagram authorization is ${account.status ?? "not active"}.`);
-    const identity = await executeTool<{ id?: string; username?: string }>(env, "INSTAGRAM_GET_USER_INFO", attempt.connected_account_id, INSTAGRAM_USER_ID, {});
+    const instagramUserId = `creator-os:${input.creatorId}:service:instagram`;
+    const identity = await executeTool<{ id?: string; username?: string }>(env, "INSTAGRAM_GET_USER_INFO", attempt.connected_account_id, instagramUserId, {});
     if (!identity.id || !identity.username) throw new Error("Instagram identity could not be verified.");
     await ensureInstagramMessageSubscriptions(env, attempt.connected_account_id, identity.id);
-    const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1").bind(CREATOR_ID).first<{ handle: string }>();
+    const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1").bind(input.creatorId).first<{ handle: string }>();
     if (expected?.handle && expected.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
-      throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but Adelaide's configured account is ${expected.handle}.`);
+      throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${expected.handle}.`);
     }
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(CREATOR_ID, attempt.connected_account_id, INSTAGRAM_USER_ID, identity.id, `@${identity.username.replace(/^@/, "")}`),
+      env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.connected_account_id, instagramUserId, identity.id, `@${identity.username.replace(/^@/, "")}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, CREATOR_ID),
-      env.DB.prepare("UPDATE messaging_connections SET handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE id='adelaide-messages-instagram' AND creator_id=?").bind(`@${identity.username.replace(/^@/, "")}`, CREATOR_ID),
+      env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
+      env.DB.prepare("UPDATE messaging_connections SET handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
+      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,'instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, JSON.stringify({ username: identity.username })),
     ]);
     return Response.json({ ok: true, displayName: `@${identity.username.replace(/^@/, "")}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instagram connection failed.";
     await env.DB.batch([
       env.DB.prepare("UPDATE provider_connection_attempts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(message.slice(0, 2000), attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(message.slice(0, 500), CREATOR_ID),
+      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(message.slice(0, 500), input.creatorId),
     ]);
     return Response.json({ ok: false, error: message }, { status: 400 });
   }
 }
 
-async function status(env: Env) {
+async function status(env: Env, creatorId: string) {
   const [connection, lastRun, due, syncState, analytics] = await Promise.all([
-    env.DB.prepare("SELECT status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='instagram'").bind(CREATOR_ID).first(),
+    env.DB.prepare("SELECT status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='instagram'").bind(creatorId).first(),
     env.DB.prepare("SELECT status,started_at,completed_at,claimed_count,published_count,failed_count,error FROM scheduler_runs WHERE service='instagram' ORDER BY started_at DESC LIMIT 1").first(),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='scheduled' AND unixepoch(scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)").bind(CREATOR_ID).first<{ count: number }>(),
-    env.DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(CREATOR_ID).first(),
-    env.DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(CREATOR_ID).first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='scheduled' AND unixepoch(scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)").bind(creatorId).first<{ count: number }>(),
+    env.DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first(),
+    env.DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first(),
   ]);
   return Response.json({ ok: true, connection, lastRun, due: due?.count ?? 0, syncState, analytics });
+}
+
+async function requestedCreatorId(request: Request) {
+  const input = await request.json<{ creatorId?: string }>();
+  if (!input.creatorId) throw new Error("Creator scope is required.");
+  return input.creatorId;
+}
+
+async function syncAllCreators(env: Env) {
+  const creators = await env.DB.prepare("SELECT creator_id FROM provider_connections WHERE service='instagram' AND status='active'").all<{ creator_id: string }>();
+  return Promise.allSettled(creators.results.map((row) => syncInstagram(env, row.creator_id)));
 }
 
 export default {
@@ -779,9 +794,9 @@ export default {
       if (request.method === "POST" && url.pathname === "/messages/instagram/send") return sendInstagramReply(request, env);
       if (request.method === "POST" && url.pathname === "/messages/instagram/seen") return markInstagramThreadSeen(request, env);
       if (request.method === "POST" && url.pathname === "/run") return Response.json(await processDue(env, "service"));
-      if (request.method === "POST" && url.pathname === "/sync") return Response.json(await syncInstagram(env, true));
-      if (request.method === "POST" && url.pathname === "/sync/messages") return Response.json(await syncInstagramMessagesOnly(env));
-      if (request.method === "GET" && url.pathname === "/status") return status(env);
+      if (request.method === "POST" && url.pathname === "/sync") return Response.json(await syncInstagram(env, await requestedCreatorId(request), true));
+      if (request.method === "POST" && url.pathname === "/sync/messages") return Response.json(await syncInstagramMessagesOnly(env, await requestedCreatorId(request)));
+      if (request.method === "GET" && url.pathname === "/status") return status(env, url.searchParams.get("creator") ?? "");
       return new Response("Not found", { status: 404 });
     } catch (error) {
       console.error(JSON.stringify({ event: "instagram_scheduler_request_error", path: url.pathname, message: error instanceof Error ? error.message : "Unknown error" }));
@@ -789,6 +804,6 @@ export default {
     }
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.allSettled([processDue(env, "cron"), syncInstagram(env)]));
+    ctx.waitUntil(Promise.allSettled([processDue(env, "cron"), syncAllCreators(env)]));
   },
 } satisfies ExportedHandler<Env>;

@@ -50,48 +50,48 @@ export function isMessagePlatform(value: string | undefined): value is MessagePl
   return messagePlatforms.includes(value as MessagePlatform);
 }
 
-export async function getUnifiedMessages(platform?: MessagePlatform, selectedThreadId?: string) {
+export async function getUnifiedMessages(creatorId: string, platform?: MessagePlatform, selectedThreadId?: string) {
   const { DB } = cloudflareEnv();
   const [connectionsResult, threadsResult, telegramResult, instagramSentResult, premiumSentResult, auditResult] = await Promise.all([
     DB.prepare(`SELECT c.*,COUNT(DISTINCT t.id) AS thread_count,COALESCE(SUM(t.unread_count),0) AS unread_count
       FROM messaging_connections c LEFT JOIN message_threads t ON t.connection_id=c.id AND t.creator_id=c.creator_id
-      WHERE c.creator_id='adelaide' GROUP BY c.id ORDER BY c.platform,c.display_name`).all<MessagingConnection>(),
+      WHERE c.creator_id=? GROUP BY c.id ORDER BY c.platform,c.display_name`).bind(creatorId).all<MessagingConnection>(),
     platform
       ? DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
           (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at
           FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
-          WHERE t.creator_id='adelaide' AND c.platform=? ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(platform).all<MessageThread>()
+          WHERE t.creator_id=? AND c.platform=? ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(creatorId, platform).all<MessageThread>()
       : DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
           (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at
           FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
-          WHERE t.creator_id='adelaide' ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).all<MessageThread>(),
-    DB.prepare("SELECT id,message_text,status,requested_by,error,completed_at,created_at FROM telegram_send_log WHERE creator_id='adelaide' ORDER BY created_at DESC LIMIT 20").all<TelegramLogRow>(),
-    DB.prepare("SELECT COUNT(*) AS count FROM instagram_reply_drafts WHERE creator_id='adelaide' AND status='sent'").first<{ count: number }>(),
-    DB.prepare("SELECT COUNT(*) AS count FROM premium_message_drafts WHERE creator_id='adelaide' AND status='sent'").first<{ count: number }>(),
+          WHERE t.creator_id=? ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(creatorId).all<MessageThread>(),
+    DB.prepare("SELECT id,message_text,status,requested_by,error,completed_at,created_at FROM telegram_send_log WHERE creator_id=? ORDER BY created_at DESC LIMIT 20").bind(creatorId).all<TelegramLogRow>(),
+    DB.prepare("SELECT COUNT(*) AS count FROM instagram_reply_drafts WHERE creator_id=? AND status='sent'").bind(creatorId).first<{ count: number }>(),
+    DB.prepare("SELECT COUNT(*) AS count FROM premium_message_drafts WHERE creator_id=? AND status='sent'").bind(creatorId).first<{ count: number }>(),
     DB.prepare(`SELECT e.id,e.event_type,e.actor,e.detail,e.created_at,c.display_name FROM messaging_audit_events e
       LEFT JOIN messaging_connections c ON c.id=e.connection_id AND c.creator_id=e.creator_id
-      WHERE e.creator_id='adelaide' ORDER BY e.created_at DESC LIMIT 30`).all<MessagingAuditRow>(),
+      WHERE e.creator_id=? ORDER BY e.created_at DESC LIMIT 30`).bind(creatorId).all<MessagingAuditRow>(),
   ]);
   const threads = threadsResult.results;
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? threads[0] ?? null;
   const [messageRows, instagramDraftRows, premiumDraftRows, attachmentRows] = selectedThread
     ? await Promise.all([
         DB.prepare(`SELECT m.id,m.direction,m.sender_type,m.body,m.sent_at,m.created_at,m.delivery_status FROM messages m
-          JOIN message_threads t ON t.id=m.thread_id WHERE m.creator_id='adelaide' AND m.thread_id=? AND t.creator_id='adelaide'
-          ORDER BY unixepoch(replace(substr(COALESCE(m.sent_at,m.created_at),1,19),'T',' ')),m.id`).bind(selectedThread.id).all<MessageRow>(),
+          JOIN message_threads t ON t.id=m.thread_id WHERE m.creator_id=? AND m.thread_id=? AND t.creator_id=?
+          ORDER BY unixepoch(replace(substr(COALESCE(m.sent_at,m.created_at),1,19),'T',' ')),m.id`).bind(creatorId, selectedThread.id, creatorId).all<MessageRow>(),
         selectedThread.platform === "instagram"
           ? DB.prepare(`SELECT d.id,d.body,d.status,d.requested_by,d.approved_by,d.provider_message_id,d.error,d.completed_at,d.created_at
               FROM instagram_reply_drafts d JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id
-              WHERE d.creator_id='adelaide' AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(selectedThread.id).all<InstagramReplyDraft>()
+              WHERE d.creator_id=? AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(creatorId, selectedThread.id).all<InstagramReplyDraft>()
           : Promise.resolve({ results: [], success: true } as D1Result<InstagramReplyDraft>),
         selectedThread.platform === "fansly" || selectedThread.platform === "onlyfans"
           ? DB.prepare(`SELECT d.id,d.body,d.status,d.requested_by,d.approved_by,d.error,d.receipt,d.completed_at,d.created_at
               FROM premium_message_drafts d JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id
-              WHERE d.creator_id='adelaide' AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(selectedThread.id).all<PremiumReplyDraft>()
+              WHERE d.creator_id=? AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(creatorId, selectedThread.id).all<PremiumReplyDraft>()
           : Promise.resolve({ results: [], success: true } as D1Result<PremiumReplyDraft>),
         DB.prepare(`SELECT a.id,a.message_id,a.kind,a.external_url,a.mime_type,a.status,a.error
           FROM message_attachments a JOIN messages m ON m.id=a.message_id AND m.creator_id=a.creator_id
-          WHERE a.creator_id='adelaide' AND m.thread_id=? ORDER BY a.created_at,a.id`).bind(selectedThread.id).all<MessageAttachment>(),
+          WHERE a.creator_id=? AND m.thread_id=? ORDER BY a.created_at,a.id`).bind(creatorId, selectedThread.id).all<MessageAttachment>(),
       ])
     : [
         { results: [], success: true } as D1Result<MessageRow>,

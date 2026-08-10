@@ -1,5 +1,5 @@
-type BridgeIdentity = { creator_id: string; account_id: string; platform: "fansly" };
-type RedditBridgeIdentity = { creator_id: string; account_id: string };
+type BridgeIdentity = { creator_id: string; account_id: string; profile_id: string; platform: "fansly" };
+type RedditBridgeIdentity = { creator_id: string; account_id: string; profile_id: string };
 type VaultJob = { id: string; basename: string; bytes: number; asset_id: string };
 type BrowserMessage = { externalMessageId?: string; direction?: string; senderType?: string; body?: string; sentAt?: string };
 type BrowserThread = { externalThreadId?: string; participantName?: string; participantHandle?: string; unreadCount?: number; observedOpen?: boolean; messages?: BrowserMessage[] };
@@ -9,9 +9,7 @@ type RedditNativeJob = {
   expected_handle: string;
 };
 
-const DROPBOX_USER_ID = "creator-os:adelaide:service:dropbox";
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
-const REDDIT_USER_ID = "creator-os:adelaide:service:reddit";
 const allowedOrigins = new Set(["https://fansly.com", "https://www.reddit.com", "https://reddit.com", "https://thot-os-staging.thot-os.workers.dev"]);
 
 function cors(request: Request) {
@@ -19,7 +17,7 @@ function cors(request: Request) {
   return {
     "access-control-allow-origin": allowedOrigins.has(origin) ? origin : "https://fansly.com",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "authorization,content-type,x-thot-os-vault-client,x-thot-os-reddit-client",
+    "access-control-allow-headers": "authorization,content-type,x-thot-os-vault-client,x-thot-os-reddit-client,x-thot-os-installation-id",
     "access-control-max-age": "86400",
     vary: "Origin",
   };
@@ -38,11 +36,13 @@ async function authenticate(request: Request, env: Env) {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   if (token.length < 40) return null;
-  const identity = await env.DB.prepare(`
-    SELECT creator_id,account_id,platform FROM vault_bridge_tokens
-    WHERE token_hash=? AND status='active' AND expires_at>CURRENT_TIMESTAMP
-  `).bind(await sha256(token)).first<BridgeIdentity>();
-  if (identity) await env.DB.prepare("UPDATE vault_bridge_tokens SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=? AND (last_seen_at IS NULL OR last_seen_at<datetime('now','-5 minutes'))").bind(await sha256(token)).run();
+  const tokenHash = await sha256(token);
+  const identity = await env.DB.prepare(`SELECT bc.creator_id,bc.account_id,bc.profile_id,bc.platform
+    FROM bridge_credentials bc JOIN browser_profiles bp ON bp.id=bc.profile_id AND bp.creator_id=bc.creator_id
+    JOIN account_browser_profiles abp ON abp.creator_id=bc.creator_id AND abp.account_id=bc.account_id AND abp.profile_id=bc.profile_id
+    WHERE bc.token_hash=? AND bc.platform='fansly' AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP AND bp.status<>'revoked'`).bind(tokenHash).first<BridgeIdentity>();
+  if (identity && !await bindInstallation(request, env, identity.creator_id, identity.profile_id, tokenHash)) return null;
+  if (identity) await env.DB.prepare("UPDATE bridge_credentials SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=? AND (last_seen_at IS NULL OR last_seen_at<datetime('now','-5 minutes'))").bind(tokenHash).run();
   return identity;
 }
 
@@ -51,19 +51,43 @@ async function authenticateReddit(request: Request, env: Env) {
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   if (token.length < 40) return null;
   const tokenHash = await sha256(token);
-  const identity = await env.DB.prepare(`
-    SELECT creator_id,account_id FROM reddit_bridge_tokens
-    WHERE token_hash=? AND status='active' AND expires_at>CURRENT_TIMESTAMP
-  `).bind(tokenHash).first<RedditBridgeIdentity>();
-  if (identity) await env.DB.prepare("UPDATE reddit_bridge_tokens SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=?").bind(tokenHash).run();
+  const identity = await env.DB.prepare(`SELECT bc.creator_id,bc.account_id,bc.profile_id FROM bridge_credentials bc
+    JOIN browser_profiles bp ON bp.id=bc.profile_id AND bp.creator_id=bc.creator_id
+    JOIN account_browser_profiles abp ON abp.creator_id=bc.creator_id AND abp.account_id=bc.account_id AND abp.profile_id=bc.profile_id
+    WHERE bc.token_hash=? AND bc.platform='reddit' AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP AND bp.status<>'revoked'`).bind(tokenHash).first<RedditBridgeIdentity>();
+  if (identity && !await bindInstallation(request, env, identity.creator_id, identity.profile_id, tokenHash)) return null;
+  if (identity) await env.DB.prepare("UPDATE bridge_credentials SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=?").bind(tokenHash).run();
   return identity;
 }
 
-async function executeDropbox<T>(env: Env, slug: string, args: Record<string, unknown>) {
+async function bindInstallation(request: Request, env: Env, creatorId: string, profileId: string, tokenHash: string) {
+  const installationId = request.headers.get("x-thot-os-installation-id")?.trim() ?? "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installationId)) return false;
+  const profile = await env.DB.prepare("SELECT installation_id FROM browser_profiles WHERE id=? AND creator_id=? AND installation_id=? AND status<>'revoked'").bind(profileId, creatorId, installationId).first<{ installation_id: string }>();
+  if (!profile) return false;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE browser_profiles SET status='paired',last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND installation_id=?").bind(profileId, creatorId, installationId),
+    env.DB.prepare("UPDATE account_browser_profiles SET verified_at=COALESCE(verified_at,CURRENT_TIMESTAMP) WHERE profile_id=? AND creator_id=?").bind(profileId, creatorId),
+  ]);
+  return Boolean(await env.DB.prepare("SELECT 1 AS valid FROM bridge_credentials WHERE token_hash=? AND profile_id=? AND creator_id=? AND status='active'").bind(tokenHash, profileId, creatorId).first());
+}
+
+function pairingPage() {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>THOT OS device pairing</title></head><body><main><h1>Pairing this Chrome profile…</h1><p>Keep the THOT OS extension enabled. This page contains no third-party scripts and will continue to the selected platform after verification.</p></main></body></html>`;
+  return new Response(html, { headers: {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  } });
+}
+
+async function executeDropbox<T>(env: Env, creatorId: string, slug: string, args: Record<string, unknown>) {
   const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ connected_account_id: env.COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID, user_id: DROPBOX_USER_ID, version: "latest", arguments: args }),
+    body: JSON.stringify({ connected_account_id: env.COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID, user_id: `creator-os:${creatorId}:service:dropbox`, version: "latest", arguments: args }),
   });
   const payload = await response.json().catch(() => ({})) as { successful?: boolean; data?: T; error?: string | { message?: string } };
   if (!response.ok || payload.successful === false || payload.data === undefined) {
@@ -73,11 +97,11 @@ async function executeDropbox<T>(env: Env, slug: string, args: Record<string, un
   return payload.data;
 }
 
-async function executeReddit<T>(env: Env, connectedAccountId: string, slug: string, args: Record<string, unknown>) {
+async function executeReddit<T>(env: Env, creatorId: string, connectedAccountId: string, slug: string, args: Record<string, unknown>) {
   const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ connected_account_id: connectedAccountId, user_id: REDDIT_USER_ID, version: "latest", arguments: args }),
+    body: JSON.stringify({ connected_account_id: connectedAccountId, user_id: `creator-os:${creatorId}:service:reddit`, version: "latest", arguments: args }),
   });
   const payload = await response.json().catch(() => ({})) as { successful?: boolean; data?: T; error?: string | { message?: string } };
   if (!response.ok || payload.successful === false || payload.data === undefined) {
@@ -119,7 +143,7 @@ async function mediaRedirect(request: Request, env: Env, identity: BridgeIdentit
     WHERE j.id=? AND j.creator_id=? AND j.account_id=? AND j.platform='fansly' AND j.status IN ('claimed','staged')
   `).bind(jobId, identity.creator_id, identity.account_id).first<{ relative_path: string; dropbox_root: string }>();
   if (!job) return json(request, { ok: false, error: "Vault media is not available for this device." }, 404);
-  const temporary = await executeDropbox<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(job.dropbox_root, job.relative_path) });
+  const temporary = await executeDropbox<{ link?: string }>(env, identity.creator_id, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(job.dropbox_root, job.relative_path) });
   if (!temporary.link) return json(request, { ok: false, error: "Dropbox did not return the approved file." }, 502);
   return new Response(null, { status: 302, headers: { location: temporary.link, "cache-control": "no-store", ...cors(request) } });
 }
@@ -150,13 +174,18 @@ function canonicalFanslyThread(value: unknown) {
 
 async function ingestFanslyMessages(request: Request, env: Env, identity: BridgeIdentity) {
   const input = await request.json<{ platform?: string; threads?: BrowserThread[] }>();
-  if (identity.creator_id !== "adelaide" || identity.account_id !== "adelaide-fansly-main" || identity.platform !== "fansly" || input.platform !== "fansly" || !Array.isArray(input.threads)) return json(request, { ok: false, error: "invalid_fansly_snapshot" }, 400);
+  if (identity.platform !== "fansly" || input.platform !== "fansly" || !Array.isArray(input.threads)) return json(request, { ok: false, error: "invalid_fansly_snapshot" }, 400);
+  const connection = await env.DB.prepare("SELECT id FROM messaging_connections WHERE creator_id=? AND account_id=? AND platform='fansly'").bind(identity.creator_id, identity.account_id).first<{ id: string }>();
+  if (!connection) return json(request, { ok: false, error: "fansly_connection_not_configured" }, 409);
   const threads = input.threads.slice(0, 100);
   let importedThreads = 0, importedMessages = 0, changedThreads = 0;
   for (const snapshot of threads) {
     const externalThreadId = canonicalFanslyThread(snapshot.externalThreadId);
     if (!externalThreadId) continue;
-    const threadId = `fansly-${(await sha256(externalThreadId)).slice(0, 40)}`;
+    const existingThread = await env.DB.prepare("SELECT id FROM message_threads WHERE creator_id=? AND connection_id=? AND external_thread_id=? LIMIT 1")
+      .bind(identity.creator_id, connection.id, externalThreadId).first<{ id: string }>();
+    // Reuse Adelaide's existing natural-key row; namespace every new id by creator.
+    const threadId = existingThread?.id ?? `fansly-${(await sha256(`${identity.creator_id}:${externalThreadId}`)).slice(0, 40)}`;
     const participantName = String(snapshot.participantName ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || "Fansly conversation";
     const participantHandle = String(snapshot.participantHandle ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
     const unreadCount = Number(snapshot.unreadCount) > 0 ? 1 : 0;
@@ -168,14 +197,14 @@ async function ingestFanslyMessages(request: Request, env: Env, identity: Bridge
     }
     const threadMutation = await env.DB.prepare(`INSERT INTO message_threads
       (id,creator_id,connection_id,external_thread_id,participant_name,participant_handle,subject,unread_count,last_message_at,status)
-      VALUES (?,'adelaide','adelaide-messages-fansly',?,?,?,'Fansly conversation',?,NULL,'open')
+      VALUES (?,?,?,?,?,?,'Fansly conversation',?,NULL,'open')
       ON CONFLICT(id) DO UPDATE SET participant_name=CASE WHEN excluded.participant_name<>'Fansly conversation' THEN excluded.participant_name ELSE message_threads.participant_name END,
         participant_handle=CASE WHEN excluded.participant_handle<>'' THEN excluded.participant_handle ELSE message_threads.participant_handle END,
         unread_count=excluded.unread_count,updated_at=CURRENT_TIMESTAMP
       WHERE (excluded.participant_name<>'Fansly conversation' AND excluded.participant_name<>message_threads.participant_name)
         OR (excluded.participant_handle<>'' AND excluded.participant_handle<>message_threads.participant_handle)
         OR excluded.unread_count<>message_threads.unread_count`)
-      .bind(threadId, externalThreadId, participantName, participantHandle, unreadCount).run();
+      .bind(threadId, identity.creator_id, connection.id, externalThreadId, participantName, participantHandle, unreadCount).run();
     changedThreads += Number(threadMutation.meta.changes ?? 0);
     let threadMessageChanges = 0;
     for (const [index, item] of messages.entries()) {
@@ -188,9 +217,9 @@ async function ingestFanslyMessages(request: Request, env: Env, identity: Bridge
       if (direction === "inbound" && bodyOccurrences.get(body) === 1 && externalMessageId.startsWith(inboundSyntheticPrefix)) {
         const previousOutboundId = externalMessageId.replace(inboundSyntheticPrefix, `${externalThreadId}-outbound-`);
         const repaired = await env.DB.prepare(`UPDATE messages SET external_message_id=?,direction='inbound',sender_type=?,body=?,sent_at=COALESCE(?,sent_at)
-          WHERE creator_id='adelaide' AND thread_id=? AND external_message_id=? AND direction='outbound' AND delivery_status='observed'
+          WHERE creator_id=? AND thread_id=? AND external_message_id=? AND direction='outbound' AND delivery_status='observed'
             AND NOT EXISTS (SELECT 1 FROM messages existing WHERE existing.thread_id=? AND existing.external_message_id=?)`)
-          .bind(externalMessageId, senderType, body, item.sentAt ?? null, threadId, previousOutboundId, threadId, externalMessageId).run();
+          .bind(externalMessageId, senderType, body, item.sentAt ?? null, identity.creator_id, threadId, previousOutboundId, threadId, externalMessageId).run();
         if (repaired.meta.changes) {
           const changes = Number(repaired.meta.changes);
           importedMessages += changes;
@@ -200,48 +229,50 @@ async function ingestFanslyMessages(request: Request, env: Env, identity: Bridge
       }
       const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO messages
         (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-        VALUES (?,'adelaide',?,?,?,?,?,?,'observed')`)
-        .bind(`fansly-message-${(await sha256(`${externalThreadId}:${externalMessageId}`)).slice(0, 40)}`, threadId, externalMessageId, direction, senderType, body, item.sentAt ?? null).run();
+        VALUES (?,?,?,?,?,?,?,?, 'observed')`)
+        .bind(`fansly-message-${(await sha256(`${identity.creator_id}:${externalThreadId}:${externalMessageId}`)).slice(0, 40)}`, identity.creator_id, threadId, externalMessageId, direction, senderType, body, item.sentAt ?? null).run();
       const changes = Number(inserted.meta.changes ?? 0);
       importedMessages += changes;
       threadMessageChanges += changes;
     }
-    if (threadMessageChanges > 0) await env.DB.prepare("UPDATE message_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id='adelaide'").bind(threadId).run();
+    if (threadMessageChanges > 0) await env.DB.prepare("UPDATE message_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(threadId, identity.creator_id).run();
     const completed = Boolean(snapshot.observedOpen);
     const insertedState = await env.DB.prepare(`INSERT OR IGNORE INTO premium_thread_sync_state
       (thread_id,creator_id,status,attempts,last_completed_at,last_error,updated_at)
-      VALUES (?,'adelaide',?,0,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,NULL,CURRENT_TIMESTAMP)`)
-      .bind(threadId, completed ? "complete" : "pending", completed ? 1 : 0).run();
+      VALUES (?,?,?,0,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,NULL,CURRENT_TIMESTAMP)`)
+      .bind(threadId, identity.creator_id, completed ? "complete" : "pending", completed ? 1 : 0).run();
     if (!insertedState.meta.changes && completed) await env.DB.prepare(`UPDATE premium_thread_sync_state
       SET status='complete',attempts=0,last_completed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
-      WHERE thread_id=? AND creator_id='adelaide' AND (status<>'complete' OR last_completed_at IS NULL OR last_completed_at<datetime('now','-5 minutes'))`).bind(threadId).run();
+      WHERE thread_id=? AND creator_id=? AND (status<>'complete' OR last_completed_at IS NULL OR last_completed_at<datetime('now','-5 minutes'))`).bind(threadId, identity.creator_id).run();
     if (!insertedState.meta.changes && !completed) await env.DB.prepare(`UPDATE premium_thread_sync_state
       SET status='pending',updated_at=CURRENT_TIMESTAMP
-      WHERE thread_id=? AND creator_id='adelaide' AND status='complete' AND last_completed_at<datetime('now','-10 minutes')`).bind(threadId).run();
+      WHERE thread_id=? AND creator_id=? AND status='complete' AND last_completed_at<datetime('now','-10 minutes')`).bind(threadId, identity.creator_id).run();
     importedThreads++;
   }
   if (importedThreads > 0) await env.DB.prepare(`UPDATE messaging_connections
     SET status='connected',read_enabled=1,outbound_validated=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
-    WHERE id='adelaide-messages-fansly' AND creator_id='adelaide' AND (status<>'connected' OR read_enabled<>1 OR outbound_validated<>1 OR last_error IS NOT NULL OR last_synced_at IS NULL OR last_synced_at<datetime('now','-5 minutes'))`).run();
-  if (importedMessages > 0 || changedThreads > 0) await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,'adelaide','adelaide-messages-fansly','fansly_messages_synced','fansly-device',?)")
-    .bind(crypto.randomUUID(), JSON.stringify({ importedThreads, importedMessages, changedThreads })).run();
+    WHERE id=? AND creator_id=? AND (status<>'connected' OR read_enabled<>1 OR outbound_validated<>1 OR last_error IS NOT NULL OR last_synced_at IS NULL OR last_synced_at<datetime('now','-5 minutes'))`).bind(connection.id, identity.creator_id).run();
+  if (importedMessages > 0 || changedThreads > 0) await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'fansly_messages_synced','service:vault-bridge',?)")
+    .bind(crypto.randomUUID(), identity.creator_id, connection.id, JSON.stringify({ importedThreads, importedMessages, changedThreads })).run();
   return json(request, { ok: true, importedThreads, importedMessages, changedThreads });
 }
 
 async function pendingFanslyThread(request: Request, env: Env, identity: BridgeIdentity) {
+  const connection = await env.DB.prepare("SELECT id FROM messaging_connections WHERE creator_id=? AND account_id=? AND platform='fansly'").bind(identity.creator_id, identity.account_id).first<{ id: string }>();
+  if (!connection) return json(request, { ok: false, error: "fansly_connection_not_configured" }, 409);
   if (request.method === "POST") {
     const input = await request.json<{ threadId?: string; error?: string }>();
     const threadId = String(input.threadId ?? "");
     await env.DB.prepare(`UPDATE premium_thread_sync_state SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP
-      WHERE thread_id=? AND creator_id=? AND thread_id IN (SELECT id FROM message_threads WHERE creator_id=? AND connection_id='adelaide-messages-fansly')`)
-      .bind(String(input.error ?? "Fansly conversation collection failed.").slice(0, 1000), threadId, identity.creator_id, identity.creator_id).run();
+      WHERE thread_id=? AND creator_id=? AND thread_id IN (SELECT id FROM message_threads WHERE creator_id=? AND connection_id=?)`)
+      .bind(String(input.error ?? "Fansly conversation collection failed.").slice(0, 1000), threadId, identity.creator_id, identity.creator_id, connection.id).run();
     return json(request, { ok: true });
   }
   const pending = await env.DB.prepare(`SELECT s.thread_id AS id,t.external_thread_id FROM premium_thread_sync_state s
     JOIN message_threads t ON t.id=s.thread_id AND t.creator_id=s.creator_id
-    WHERE s.creator_id=? AND t.connection_id='adelaide-messages-fansly' AND s.status IN ('pending','failed') AND s.attempts<3
+    WHERE s.creator_id=? AND t.connection_id=? AND s.status IN ('pending','failed') AND s.attempts<3
       AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-55 seconds')) ORDER BY s.updated_at LIMIT 1`)
-    .bind(identity.creator_id).first<{ id: string; external_thread_id: string }>();
+    .bind(identity.creator_id, connection.id).first<{ id: string; external_thread_id: string }>();
   if (!pending) return json(request, { ok: true, thread: null });
   const claimed = await env.DB.prepare("UPDATE premium_thread_sync_state SET status='claimed',attempts=attempts+1,last_requested_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE thread_id=? AND creator_id=? AND status IN ('pending','failed')")
     .bind(pending.id, identity.creator_id).run();
@@ -290,7 +321,7 @@ async function fanslyOutbox(request: Request, env: Env, identity: BridgeIdentity
   ];
   if (sent) statements.push(
     env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-      VALUES (?,'adelaide',?,?,'outbound','agency',?,CURRENT_TIMESTAMP,'device_submitted')`).bind(`fansly-out-${job.id}`, job.thread_id, `device-${job.id}`, job.body),
+      VALUES (?,?,?,?, 'outbound','agency',?,CURRENT_TIMESTAMP,'device_submitted')`).bind(`fansly-out-${job.id}`, identity.creator_id, job.thread_id, `device-${job.id}`, job.body),
     env.DB.prepare("UPDATE message_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(job.thread_id, identity.creator_id),
   );
   await env.DB.batch(statements);
@@ -333,7 +364,7 @@ async function redditMediaRedirect(request: Request, env: Env, identity: RedditB
     WHERE p.id=? AND p.creator_id=? AND p.account_id=? AND p.platform='reddit' AND p.status='publishing' AND p.device_claimed_at IS NOT NULL
   `).bind(postId, identity.creator_id, identity.account_id).first<{ relative_path: string; dropbox_root: string }>();
   if (!media) return json(request, { ok: false, error: "Reddit media is not available for this paired device." }, 404);
-  const temporary = await executeDropbox<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(media.dropbox_root, media.relative_path) });
+  const temporary = await executeDropbox<{ link?: string }>(env, identity.creator_id, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(media.dropbox_root, media.relative_path) });
   if (!temporary.link) return json(request, { ok: false, error: "Dropbox did not return the approved file." }, 502);
   return new Response(null, { status: 302, headers: { location: temporary.link, "cache-control": "no-store", ...cors(request) } });
 }
@@ -347,7 +378,7 @@ async function recordRedditReceipt(request: Request, env: Env, identity: RedditB
     WHERE p.id=? AND p.creator_id=? AND p.account_id=? AND p.platform='reddit'
   `).bind(postId, identity.creator_id, identity.account_id).first<{ id: string; caption: string; title: string; status: string; expected_handle: string; connected_account_id: string | null }>();
   if (!post || post.status !== "publishing") return json(request, { ok: false, error: "Reddit job is no longer awaiting a device receipt." }, 409);
-  if (normaliseHandle(input.observedHandle ?? "") !== normaliseHandle(post.expected_handle)) return json(request, { ok: false, error: "The signed-in Reddit browser does not match Adelaide’s configured account." }, 409);
+  if (normaliseHandle(input.observedHandle ?? "") !== normaliseHandle(post.expected_handle)) return json(request, { ok: false, error: "The signed-in Reddit browser does not match this creator’s configured account." }, 409);
   const receipt = JSON.stringify(input.receipt ?? {}).slice(0, 12000);
   const receiptRecord = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt) ? input.receipt as Record<string, unknown> : {};
   if (input.status !== "published") {
@@ -369,7 +400,7 @@ async function recordRedditReceipt(request: Request, env: Env, identity: RedditB
   if (post.caption.trim() && post.caption.trim() !== post.title.trim() && receiptRecord.bodyFilled !== true) {
     if (!post.connected_account_id) warning = "Post published, but the caption comment could not be added because Reddit OAuth is unavailable.";
     else {
-      try { await executeReddit(env, post.connected_account_id, "REDDIT_POST_REDDIT_COMMENT", { thing_id: externalPostId, text: post.caption }); }
+      try { await executeReddit(env, identity.creator_id, post.connected_account_id, "REDDIT_POST_REDDIT_COMMENT", { thing_id: externalPostId, text: post.caption }); }
       catch (error) { warning = `Post published, but the caption comment failed: ${error instanceof Error ? error.message : "Unknown error"}`; }
     }
   }
@@ -386,6 +417,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(request) });
     try {
       const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/pair") return pairingPage();
       if (url.pathname === "/reddit" || url.pathname.startsWith("/reddit/")) {
         const identity = await authenticateReddit(request, env);
         if (!identity) return json(request, { ok: false, error: "unauthorized" }, 401);

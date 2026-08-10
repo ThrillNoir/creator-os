@@ -16,11 +16,18 @@ const removeStoredBridge=async(platform)=>{
   await chrome.storage.local.set({creatorOsBridges:bridges});
   if(stored.creatorOsBridge&&(!stored.creatorOsBridge.platform||stored.creatorOsBridge.platform===platform))await chrome.storage.local.remove("creatorOsBridge");
 };
+const getInstallationId=async()=>{
+  const stored=await chrome.storage.local.get("creatorOsInstallationId");
+  if(stored.creatorOsInstallationId)return stored.creatorOsInstallationId;
+  const installationId=crypto.randomUUID();
+  await chrome.storage.local.set({creatorOsInstallationId:installationId});
+  return installationId;
+};
 const CLOUD_VAULT_BRIDGE="https://thot-os-vault-bridge-staging.thot-os.workers.dev";
 const CLOUD_REDDIT_BRIDGE=`${CLOUD_VAULT_BRIDGE}/reddit`;
 const bridgeRequest=(config,path,init={})=>fetch(config?.cloud?`${config.apiBase||CLOUD_VAULT_BRIDGE}${path}`:`http://127.0.0.1:3000${path}`,{
   ...init,
-  headers:{authorization:`Bearer ${config.token}`,...(init.headers||{})},
+  headers:{authorization:`Bearer ${config.token}`,...(config.installationId?{"x-thot-os-installation-id":config.installationId}:{}),...(init.headers||{})},
 });
 const messageBridgeRequest=(config,path,init={})=>config?.cloud
   ? bridgeRequest(config,`/messages${path}`,init)
@@ -71,40 +78,36 @@ const showRedditPairingError=(message)=>{
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const url = changeInfo.url || tab.url || "";
-  if(/^https:\/\/(?:www\.)?reddit\.com\//.test(url)&&url.includes("#creator_os_reddit_pair=")){
+  if(/^https:\/\/thot-os-vault-bridge-staging\.thot-os\.workers\.dev\/pair(?:#|$)/.test(url)&&url.includes("creator_os_bridge_pair=")){
     try{
       const parsed=new URL(url);
-      const token=new URLSearchParams(parsed.hash.slice(1)).get("creator_os_reddit_pair");
-      if(!token)return;
-      const response=await fetch(`${CLOUD_REDDIT_BRIDGE}/status`,{headers:{authorization:`Bearer ${token}`}});
-      if(!response.ok)throw new Error("Reddit pairing failed");
+      const parameters=new URLSearchParams(parsed.hash.slice(1));
+      const token=parameters.get("creator_os_bridge_pair");
+      const platform=parameters.get("platform");
+      const next=parameters.get("next");
+      if(!token||!next||!['fansly','reddit'].includes(platform))return;
+      const destination=new URL(next);
+      if(platform==='fansly'&&destination.origin!=="https://fansly.com")throw new Error("Untrusted Fansly pairing destination");
+      if(platform==='reddit'&&!['https://reddit.com','https://www.reddit.com'].includes(destination.origin))throw new Error("Untrusted Reddit pairing destination");
+      const installationId=await getInstallationId();
+      const apiBase=platform==='reddit'?CLOUD_REDDIT_BRIDGE:CLOUD_VAULT_BRIDGE;
+      const response=await fetch(`${apiBase}/status`,{headers:{authorization:`Bearer ${token}`,"x-thot-os-installation-id":installationId}});
+      if(!response.ok)throw new Error(`${platform} pairing failed`);
       const identity=await response.json();
-      await new Promise((resolve)=>setTimeout(resolve,1500));
-      const observedResult=await chrome.scripting.executeScript({target:{tabId},func:readRedditPageHandle});
-      const observed=String(observedResult?.[0]?.result||"").replace(/^u\//i,"").toLowerCase();
-      const expected=String(identity.expected_handle||"").replace(/^u\//i,"").replace(/^@/,"").toLowerCase();
-      if(!observed||observed!==expected){
-        await chrome.scripting.executeScript({target:{tabId},func:showRedditPairingError,args:[`THOT OS did not pair. This browser is signed in as ${observed?`u/${observed}`:"an unreadable Reddit account"}; switch to u/${expected} and open the pairing link again.`]});
-        throw new Error(`Reddit browser identity mismatch: ${observed||"unknown"}`);
+      await chrome.tabs.update(tabId,{url:destination.href});
+      await waitForTab(tabId,30000);
+      if(platform==='reddit'){
+        await new Promise((resolve)=>setTimeout(resolve,1500));
+        const observedResult=await chrome.scripting.executeScript({target:{tabId},func:readRedditPageHandle});
+        const observed=String(observedResult?.[0]?.result||"").replace(/^u\//i,"").toLowerCase();
+        const expected=String(identity.expected_handle||"").replace(/^u\//i,"").replace(/^@/,"").toLowerCase();
+        if(!observed||observed!==expected){
+          await chrome.scripting.executeScript({target:{tabId},func:showRedditPairingError,args:[`THOT OS did not pair. This browser is signed in as ${observed?`u/${observed}`:"an unreadable Reddit account"}; switch to u/${expected} and open the pairing link again.`]});
+          throw new Error(`Reddit browser identity mismatch: ${observed||"unknown"}`);
+        }
       }
-      await setStoredBridge({platform:"reddit",creatorId:identity.creator_id,accountId:identity.account_id,token,cloud:true,apiBase:CLOUD_REDDIT_BRIDGE});
-      parsed.hash="";
-      await chrome.tabs.update(tabId,{url:parsed.href});
-    }catch(error){console.error("THOT OS collector: Reddit cloud pairing failed",error);}
-    return;
-  }
-  if(/^https:\/\/(?:www\.)?fansly\.com\//.test(url)&&url.includes("#creator_os_cloud_pair=")){
-    try{
-      const parsed=new URL(url);
-      const token=new URLSearchParams(parsed.hash.slice(1)).get("creator_os_cloud_pair");
-      if(!token)return;
-      const response=await fetch(`${CLOUD_VAULT_BRIDGE}/status`,{headers:{authorization:`Bearer ${token}`}});
-      if(!response.ok)throw new Error("cloud pairing failed");
-      const identity=await response.json();
-      await setStoredBridge({platform:"fansly",creatorId:identity.creator_id,accountId:identity.account_id,token,cloud:true,apiBase:CLOUD_VAULT_BRIDGE});
-      parsed.hash="";
-      await chrome.tabs.update(tabId,{url:parsed.href});
-    }catch(error){console.error("THOT OS collector: cloud pairing failed",error);}
+      await setStoredBridge({platform,creatorId:identity.creator_id,accountId:identity.account_id,profileId:identity.profile_id,installationId,token,cloud:true,apiBase});
+    }catch(error){console.error("THOT OS collector: trusted cloud pairing failed",error);}
     return;
   }
   if(/^https:\/\/(?:www\.)?(?:onlyfans\.com|fansly\.com)\//.test(url)&&url.includes("#creator_os_pair=")){
@@ -132,12 +135,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
-  if(message?.type==="creator-os-cloud-pair-token"&&typeof message.token==="string"){
-    fetch(`${CLOUD_VAULT_BRIDGE}/status`,{headers:{authorization:`Bearer ${message.token}`}})
-      .then(async(response)=>{if(!response.ok)throw new Error("pairing failed");const identity=await response.json();await setStoredBridge({platform:"fansly",creatorId:identity.creator_id,accountId:identity.account_id,token:message.token,cloud:true,apiBase:CLOUD_VAULT_BRIDGE});sendResponse({ok:true,platform:"fansly"});})
-      .catch(()=>sendResponse({ok:false}));
-    return true;
-  }
   if(message?.type==="creator-os-pair-token"&&typeof message.token==="string"){
     fetch(`http://127.0.0.1:3000/api/local-bridge/pair?token=${encodeURIComponent(message.token)}`,{headers:{accept:"application/json"}})
       .then(async(response)=>{if(!response.ok)throw new Error("pairing failed");const config=await response.json();await setStoredBridge(config);sendResponse({ok:true,platform:config.platform});})
@@ -347,7 +344,7 @@ const prepareFanslyVault = async () => {
   return {ready:false,error:"Fansly did not expose one media input after the native vault sequence.",receipt:{...diagnostic,clickedAlbum,clickedUpload,clickedPlus,url:location.href}};
 };
 
-const stageVaultFile = async (mediaUrl,token,filename) => {
+const stageVaultFile = async (mediaUrl,token,installationId,filename) => {
   const findMediaInputs=()=>Array.from(document.querySelectorAll('input[type="file"]')).filter((input)=>!input.disabled).filter((input)=>{
     const context=`${input.accept||""} ${input.getAttribute("aria-label")||""} ${input.closest("label")?.textContent||""}`;
     return !/avatar|profile|cover|banner/i.test(context)&&(!input.accept||/image|video|\.jpg|\.jpeg|\.png|\.webp|\.heic|\.mp4|\.mov/i.test(input.accept));
@@ -366,7 +363,7 @@ const stageVaultFile = async (mediaUrl,token,filename) => {
   }
   const candidates=Array.from(document.querySelectorAll('input[type="file"]')).filter((input)=>!input.disabled);
   if(mediaInputs.length!==1)return {status:"failed",error:`Expected one native vault media input; found ${mediaInputs.length}.`,receipt:{candidateCount:candidates.length,mediaInputCount:mediaInputs.length,url:location.href}};
-  const response=await fetch(mediaUrl,{headers:{authorization:`Bearer ${token}`}});
+  const response=await fetch(mediaUrl,{headers:{authorization:`Bearer ${token}`,"x-thot-os-installation-id":installationId}});
   if(!response.ok)return {status:"failed",error:`Creator OS media download failed with ${response.status}.`,receipt:{url:location.href}};
   const blob=await response.blob();
   const file=new File([blob],filename,{type:blob.type||"application/octet-stream",lastModified:Date.now()});
@@ -409,7 +406,7 @@ const processVaultQueue=async(tabId,url)=>{
     job=(await response.json()).job;
     if(!job)return {ok:true,state:"empty",message:"No approved vault upload is waiting for this creator."};
     console.info("Creator OS collector: staging approved vault asset",{platform,jobId:job.id,filename:job.basename});
-    const executed=await chrome.scripting.executeScript({target:{tabId},func:stageVaultFile,args:[job.mediaUrl,config.token,job.basename]});
+    const executed=await chrome.scripting.executeScript({target:{tabId},func:stageVaultFile,args:[job.mediaUrl,config.token,config.installationId,job.basename]});
     const result=executed?.[0]?.result??{status:"failed",error:"No native vault execution receipt."};
     const receiptResponse=await bridgeRequest(config,config.cloud?`/jobs/${encodeURIComponent(job.id)}/receipt`:"/api/local-bridge/vault",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jobId:job.id,status:result.status,error:result.error,receipt:result.receipt})});
     if(!receiptResponse.ok)return {ok:false,state:"receipt_error",error:"The file was handled, but Creator OS could not record the result."};
@@ -422,7 +419,7 @@ const processVaultQueue=async(tabId,url)=>{
   finally{vaultUploadRunning=false;}
 };
 
-const prepareAndSubmitRedditPost=async(job,token)=>{
+const prepareAndSubmitRedditPost=async(job,token,installationId)=>{
   const clean=(value)=>String(value||"").replace(/\s+/g," ").trim();
   const visible=(element)=>{const rect=element.getBoundingClientRect();const style=getComputedStyle(element);return rect.width>0&&rect.height>0&&style.display!=="none"&&style.visibility!=="hidden";};
   const deepAll=(selector)=>{
@@ -457,7 +454,7 @@ const prepareAndSubmitRedditPost=async(job,token)=>{
   }
   const expected=clean(job.expected_handle).replace(/^u\//i,"").replace(/^@/,"").toLowerCase();
   if(!observedHandle||observedHandle.toLowerCase()!==expected)return {submitted:false,error:`Reddit browser identity ${observedHandle||"could not be read"}; expected u/${expected}.`,observedHandle,receipt:{url:location.href}};
-  const response=await fetch(job.mediaUrl,{headers:{authorization:`Bearer ${token}`}});
+  const response=await fetch(job.mediaUrl,{headers:{authorization:`Bearer ${token}`,"x-thot-os-installation-id":installationId}});
   if(!response.ok)return {submitted:false,error:`THOT OS media download failed with ${response.status}.`,observedHandle,receipt:{url:location.href}};
   const blob=await response.blob();
   const file=new File([blob],job.basename,{type:blob.type||"application/octet-stream",lastModified:Date.now()});
@@ -521,7 +518,7 @@ const processRedditQueue=async()=>{
     if(!createdTab.id)throw new Error("Chrome did not create the Reddit composer tab.");
     await waitForTab(createdTab.id,30000);
     await new Promise((resolve)=>setTimeout(resolve,1500));
-    const executed=await chrome.scripting.executeScript({target:{tabId:createdTab.id},func:prepareAndSubmitRedditPost,args:[job,config.token]});
+    const executed=await chrome.scripting.executeScript({target:{tabId:createdTab.id},func:prepareAndSubmitRedditPost,args:[job,config.token,config.installationId]});
     const result=executed?.[0]?.result??{submitted:false,error:"No native Reddit execution receipt."};
     observedHandle=result.observedHandle||"";
     if(!result.submitted){

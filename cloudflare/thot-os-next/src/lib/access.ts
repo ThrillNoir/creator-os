@@ -12,10 +12,11 @@ function decodeBase64Url(value: string) {
 
 export async function requireAccessIdentity() {
   const env = cloudflareEnv();
+  const localEnv = env as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string };
   const requestHeaders = await headers();
   const host = requestHeaders.get("host") ?? "";
-  if (env.LOCAL_ACCESS_BYPASS === "1" && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)) {
-    return { email: env.ACCESS_ALLOWED_EMAIL };
+  if (localEnv.LOCAL_ACCESS_BYPASS === "1" && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)) {
+    return { email: env.ACCESS_ALLOWED_EMAIL.toLowerCase() };
   }
   const token = requestHeaders.get("cf-access-jwt-assertion");
   if (!token) throw new Error("Cloudflare Access identity is required.");
@@ -29,9 +30,7 @@ export async function requireAccessIdentity() {
   if (header.alg !== "RS256" || !header.kid || !audiences.includes(env.ACCESS_AUD) || !claims.exp || claims.exp <= now || (claims.nbf ?? 0) > now) {
     throw new Error("Cloudflare Access token is invalid.");
   }
-  if (claims.email?.toLowerCase() !== env.ACCESS_ALLOWED_EMAIL.toLowerCase()) {
-    throw new Error("This Cloudflare identity is not authorised for THOT OS.");
-  }
+  if (!claims.email) throw new Error("Cloudflare Access did not provide an email identity.");
 
   cachedKeys ??= fetch(env.ACCESS_JWKS_URL).then(async (response) => {
     if (!response.ok) throw new Error("Cloudflare Access keys are unavailable.");
@@ -42,5 +41,8 @@ export async function requireAccessIdentity() {
   const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
   const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, decodeBase64Url(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
   if (!valid) throw new Error("Cloudflare Access signature is invalid.");
-  return { email: claims.email };
+  const email = claims.email.toLowerCase();
+  const user = await env.DB.prepare("SELECT email FROM users WHERE lower(email)=? AND status='active'").bind(email).first<{ email: string }>();
+  if (!user) throw new Error("This Cloudflare identity is not an active THOT OS user.");
+  return { email };
 }

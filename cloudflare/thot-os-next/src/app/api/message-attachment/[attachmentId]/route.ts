@@ -1,16 +1,16 @@
-import { requireAccessIdentity } from "@/lib/access";
 import { cloudflareEnv } from "@/lib/cloudflare";
+import { requireCreatorContext } from "@/lib/identity";
 
 export async function GET(request: Request, { params }: { params: Promise<{ attachmentId: string }> }) {
-  await requireAccessIdentity();
+  const context = await requireCreatorContext();
   const { attachmentId } = await params;
   if (!/^instagram-attachment-[a-f0-9]{40}$/.test(attachmentId)) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   const { DB, PREVIEWS } = cloudflareEnv();
   const attachment = await DB.prepare(`SELECT a.object_key,a.mime_type FROM message_attachments a
     JOIN messages m ON m.id=a.message_id AND m.creator_id=a.creator_id
     JOIN message_threads t ON t.id=m.thread_id AND t.creator_id=m.creator_id
-    WHERE a.id=? AND a.creator_id='adelaide' AND a.status='ready' AND a.object_key IS NOT NULL`)
-    .bind(attachmentId).first<{ object_key: string; mime_type: string | null }>();
+    WHERE a.id=? AND a.creator_id=? AND a.status='ready' AND a.object_key IS NOT NULL`)
+    .bind(attachmentId, context.creator.creator_id).first<{ object_key: string; mime_type: string | null }>();
   if (!attachment) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   const rangeHeader = request.headers.get("range");
   const object = await PREVIEWS.get(attachment.object_key, rangeHeader ? { range: request.headers } : undefined);

@@ -1,0 +1,114 @@
+"use server";
+
+import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { cloudflareEnv } from "@/lib/cloudflare";
+import { requireCreatorContext, getCreatorIdentity } from "@/lib/identity";
+import type { CreatorRole } from "@/lib/identity";
+
+const membershipRoles = new Set<CreatorRole>(["agency_admin", "operator", "creator", "viewer"]);
+
+function membershipEmail(value: FormDataEntryValue | null) {
+  const email = String(value ?? "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new Error("Enter a valid member email address.");
+  return email;
+}
+
+export async function switchCreatorAction(formData: FormData) {
+  const identity = await getCreatorIdentity();
+  const creatorId = String(formData.get("creatorId") ?? "");
+  if (!identity.memberships.some((membership) => membership.creator_id === creatorId && membership.role === "agency_admin")) throw new Error("Only an agency admin can switch to that creator workspace.");
+  const localBypass = (cloudflareEnv() as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string }).LOCAL_ACCESS_BYPASS;
+  (await cookies()).set("thot_os_creator", creatorId, { httpOnly: true, sameSite: "lax", secure: localBypass !== "1", path: "/", maxAge: 60 * 60 * 24 * 365 });
+  redirect("/");
+}
+
+export async function registerBrowserProfileAction(formData: FormData) {
+  const context = await requireCreatorContext("manage_identity");
+  const label = String(formData.get("label") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const installationId = String(formData.get("installationId") ?? "").trim().toLowerCase();
+  if (label.length < 2) throw new Error("Enter a recognisable Chrome profile label.");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(installationId)) throw new Error("Paste the installation ID shown by this Chrome profile’s THOT OS extension.");
+  const id = crypto.randomUUID();
+  const { DB } = cloudflareEnv();
+  await DB.batch([
+    DB.prepare("INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,?,?,?,?)").bind(id, context.creator.creator_id, label, context.email, installationId),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "browser_profile_registered", id, JSON.stringify({ label, installationId })),
+  ]);
+  revalidatePath("/creators");
+}
+
+export async function assignBrowserProfileAction(formData: FormData) {
+  const context = await requireCreatorContext("manage_identity");
+  const accountId = String(formData.get("accountId") ?? "");
+  const profileId = String(formData.get("profileId") ?? "");
+  const { DB } = cloudflareEnv();
+  const [account, profile] = await Promise.all([
+    DB.prepare("SELECT id,platform FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, context.creator.creator_id).first<{ id: string; platform: string }>(),
+    DB.prepare("SELECT id FROM browser_profiles WHERE id=? AND creator_id=? AND status<>'revoked'").bind(profileId, context.creator.creator_id).first<{ id: string }>(),
+  ]);
+  if (!account || !profile) throw new Error("Choose an available account and Chrome profile.");
+  await DB.batch([
+    DB.prepare(`INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by)
+      VALUES (?,?,?,?,?) ON CONFLICT(creator_id,account_id) DO UPDATE SET profile_id=excluded.profile_id,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP,verified_at=NULL`)
+      .bind(context.creator.creator_id, account.id, account.platform, profile.id, context.email),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "browser_profile_assigned", account.id, JSON.stringify({ profileId: profile.id, platform: account.platform })),
+  ]);
+  revalidatePath("/creators");
+}
+
+export async function revokeBridgeCredentialsAction(formData: FormData) {
+  const context = await requireCreatorContext("manage_identity");
+  const accountId = String(formData.get("accountId") ?? "");
+  const { DB } = cloudflareEnv();
+  const account = await DB.prepare("SELECT id,platform FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, context.creator.creator_id).first<{ id: string; platform: string }>();
+  if (!account) throw new Error("That account is outside this creator workspace.");
+  await DB.batch([
+    DB.prepare("UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_id=? AND status='active'").bind(context.creator.creator_id, account.id),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "bridge_credentials_revoked", account.id, JSON.stringify({ platform: account.platform })),
+  ]);
+  revalidatePath("/creators");
+}
+
+export async function saveCreatorMembershipAction(formData: FormData) {
+  const context = await requireCreatorContext("manage_identity");
+  const email = membershipEmail(formData.get("email"));
+  const displayName = String(formData.get("displayName") ?? "").replace(/\s+/g, " ").trim().slice(0, 100) || email;
+  const role = String(formData.get("role") ?? "") as CreatorRole;
+  if (!membershipRoles.has(role)) throw new Error("Choose a valid creator role.");
+  const { DB } = cloudflareEnv();
+  const conflicting = await DB.prepare(`SELECT creator_id,role FROM creator_memberships
+    WHERE lower(user_email)=? AND status='active' AND creator_id<>? AND (role='creator' OR ?='creator') LIMIT 1`)
+    .bind(email, context.creator.creator_id, role).first<{ creator_id: string; role: CreatorRole }>();
+  if (conflicting) throw new Error("Creator-only identities cannot be combined with another active workspace or agency role.");
+  const existingUser = await DB.prepare("SELECT status FROM users WHERE lower(email)=?").bind(email).first<{ status: string }>();
+  if (existingUser?.status === "suspended") throw new Error("This user is globally suspended. A creator workspace cannot reactivate them.");
+  await DB.batch([
+    DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?,'active')").bind(email, displayName),
+    DB.prepare(`INSERT INTO creator_memberships (creator_id,user_email,role,status) VALUES (?,?,?,'active')
+      ON CONFLICT(creator_id,user_email) DO UPDATE SET role=excluded.role,status='active',updated_at=CURRENT_TIMESTAMP`).bind(context.creator.creator_id, email, role),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "creator_membership_saved", email, JSON.stringify({ role })),
+  ]);
+  revalidatePath("/creators");
+}
+
+export async function suspendCreatorMembershipAction(formData: FormData) {
+  const context = await requireCreatorContext("manage_identity");
+  const email = membershipEmail(formData.get("email"));
+  if (email === context.email) throw new Error("Switch to another agency administrator before suspending your own membership.");
+  const { DB } = cloudflareEnv();
+  const membership = await DB.prepare("SELECT role FROM creator_memberships WHERE creator_id=? AND lower(user_email)=? AND status='active'")
+    .bind(context.creator.creator_id, email).first<{ role: CreatorRole }>();
+  if (!membership) throw new Error("That active membership does not exist in this workspace.");
+  await DB.batch([
+    DB.prepare("UPDATE creator_memberships SET status='suspended',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND lower(user_email)=?").bind(context.creator.creator_id, email),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "creator_membership_suspended", email, JSON.stringify({ role: membership.role })),
+  ]);
+  revalidatePath("/creators");
+}
