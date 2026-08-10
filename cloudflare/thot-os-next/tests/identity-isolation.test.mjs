@@ -85,7 +85,10 @@ test("shared provider identifiers and streams are creator safe", async () => {
   assert.match(bridge, /sha256\(`\$\{identity\.creator_id\}:\$\{externalThreadId\}`\)/);
   assert.match(bridge, /SELECT id FROM message_threads WHERE creator_id=\? AND connection_id=\? AND external_thread_id=\?/);
   assert.match(telegram, /pollSharedUpdates/);
-  assert.match(telegram, /executeTool<[^>]+>\(env, null, "TELEGRAM_GET_UPDATES"/);
+  assert.match(telegram, /executeTelegramTool<[^>]+>\(env, "TELEGRAM_GET_UPDATES"/);
+  assert.match(telegram, /user_id: env\.COMPOSIO_TELEGRAM_USER_ID/);
+  assert.doesNotMatch(telegram, /function serviceUserId/);
+  assert.doesNotMatch(telegram, /creator-os:\$\{creatorId\}:service:telegram/);
   assert.doesNotMatch(telegram, /Promise\.allSettled\(connectors\.results\.map/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS telegram_bot_state/);
 });

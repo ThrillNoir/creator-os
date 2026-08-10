@@ -13,10 +13,6 @@ type Connector = {
 
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
 
-function serviceUserId(creatorId: string | null) {
-  return creatorId ? `creator-os:${creatorId}:service:telegram` : "creator-os:service:telegram-bot";
-}
-
 function threadId(creatorId: string) {
   return `${creatorId}-telegram-private`;
 }
@@ -25,11 +21,16 @@ function record(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : undefined;
 }
 
-async function executeTool<T>(env: Env, creatorId: string | null, slug: string, args: Record<string, unknown>) {
-  const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
+export async function executeTelegramTool<T>(
+  env: Pick<Env, "COMPOSIO_API_KEY" | "COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID" | "COMPOSIO_TELEGRAM_USER_ID">,
+  slug: string,
+  args: Record<string, unknown>,
+  fetcher: typeof fetch = fetch,
+) {
+  const response = await fetcher(`${COMPOSIO_V31}/tools/execute/${slug}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ connected_account_id: env.COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID, user_id: serviceUserId(creatorId), version: "latest", arguments: args }),
+    body: JSON.stringify({ connected_account_id: env.COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID, user_id: env.COMPOSIO_TELEGRAM_USER_ID, version: "latest", arguments: args }),
   });
   const payload = await response.json().catch(() => ({})) as UnknownRecord;
   if (!response.ok || payload.successful === false) {
@@ -51,7 +52,7 @@ async function validateIdentity(env: Env, creatorId: string) {
   const state = await connector(env, creatorId);
   if (!state) throw new Error("This creator’s Telegram pairing has not been configured.");
   try {
-    const response = await executeTool<{ ok?: boolean; result?: { id?: number; username?: string; first_name?: string; is_bot?: boolean } }>(env, creatorId, "TELEGRAM_GET_ME", {});
+    const response = await executeTelegramTool<{ ok?: boolean; result?: { id?: number; username?: string; first_name?: string; is_bot?: boolean } }>(env, "TELEGRAM_GET_ME", {});
     const identity = response.result;
     const expected = state.expected_bot_username.replace(/^@/, "").toLowerCase();
     if (!response.ok || !identity?.id || !identity.is_bot || identity.username?.toLowerCase() !== expected) {
@@ -134,7 +135,7 @@ async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?:
     let botState = await env.DB.prepare("SELECT next_update_id FROM telegram_bot_state WHERE id='shared'").first<{ next_update_id: number }>();
     if (!botState) throw new Error("Telegram shared cursor is unavailable.");
     for (let page = 0; page < 5; page++) {
-      const response: { ok?: boolean; result?: TelegramUpdate[] } = await executeTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, null, "TELEGRAM_GET_UPDATES", { offset: botState.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message", "edited_message"] });
+      const response: { ok?: boolean; result?: TelegramUpdate[] } = await executeTelegramTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, "TELEGRAM_GET_UPDATES", { offset: botState.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message", "edited_message"] });
       if (!response.ok) throw new Error("Telegram did not confirm getUpdates.");
       const updates: TelegramUpdate[] = response.result ?? [];
       if (!updates.length) break;
@@ -197,7 +198,7 @@ async function sendMessage(request: Request, env: Env) {
   const claim = await env.DB.prepare("UPDATE telegram_send_log SET claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='queued' AND claimed_at IS NULL").bind(row.id, creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "message_already_claimed" }, { status: 409 });
   try {
-    const result = await executeTool<{ ok?: boolean; result?: { message_id?: number; date?: number } }>(env, creatorId, "TELEGRAM_SEND_MESSAGE", { chat_id: row.chat_id, text: row.message_text, disable_web_page_preview: true });
+    const result = await executeTelegramTool<{ ok?: boolean; result?: { message_id?: number; date?: number } }>(env, "TELEGRAM_SEND_MESSAGE", { chat_id: row.chat_id, text: row.message_text, disable_web_page_preview: true });
     if (!result.ok || !result.result?.message_id) throw new Error("Telegram did not confirm the message.");
     const providerId = String(result.result.message_id);
     const sentAt = result.result.date ? new Date(result.result.date * 1000).toISOString() : new Date().toISOString();
