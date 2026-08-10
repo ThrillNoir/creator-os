@@ -61,7 +61,7 @@ async function validateIdentity(env: Env, creatorId: string) {
     await env.DB.batch([
       env.DB.prepare("UPDATE telegram_connector_state SET status='connected',identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
       env.DB.prepare("UPDATE messaging_connections SET status='connected',outbound_validated=1,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, creatorId),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'telegram_identity_validated','service:telegram-bridge',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, JSON.stringify({ username: `@${identity.username}` })),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_identity_validated','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, JSON.stringify({ username: `@${identity.username}` })),
     ]);
     return { ok: true, username: `@${identity.username}` };
   } catch (error) {
@@ -105,7 +105,7 @@ async function importUpdate(env: Env, state: Connector, update: TelegramUpdate) 
     statements.push(
       env.DB.prepare(`INSERT INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
         VALUES (?,?,?,?, 'inbound','creator',?,?,'received')`).bind(`telegram-in-${creatorId}-${updateId}`, creatorId, creatorThreadId, externalMessageId, body, sentAt),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'telegram_reply_collected','service:telegram-bridge',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, creatorThreadId, JSON.stringify({ updateId, externalMessageId })),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'telegram_reply_collected','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, creatorThreadId, JSON.stringify({ updateId, externalMessageId })),
     );
   }
   await env.DB.batch(statements);
@@ -208,14 +208,14 @@ async function sendMessage(request: Request, env: Env) {
         VALUES (?,?,?,?,?,'Agency ↔ creator',0,?,'open') ON CONFLICT(id) DO UPDATE SET last_message_at=excluded.last_message_at,updated_at=CURRENT_TIMESTAMP`).bind(threadId(creatorId), creatorId, row.connection_id, `${creatorId}-telegram-private`, "Creator", sentAt),
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
         VALUES (?,?,?,?, 'outbound','agency',?,?,'sent')`).bind(`telegram-out-${creatorId}-${providerId}`, creatorId, threadId(creatorId), providerId, row.message_text, sentAt),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'telegram_message_sent','service:telegram-bridge',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, threadId(creatorId), JSON.stringify({ logId: row.id, providerMessageId: providerId })),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'telegram_message_sent','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, threadId(creatorId), JSON.stringify({ logId: row.id, providerMessageId: providerId })),
     ]);
     return Response.json({ ok: true, logId: row.id, providerMessageId: providerId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram delivery failed.";
     await env.DB.batch([
       env.DB.prepare("UPDATE telegram_send_log SET status='failed',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(message.slice(0, 1000), row.id, creatorId),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'telegram_message_failed','service:telegram-bridge',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, JSON.stringify({ logId: row.id, error: message })),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_message_failed','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, JSON.stringify({ logId: row.id, error: message })),
     ]);
     return Response.json({ ok: false, error: message }, { status: 502 });
   }

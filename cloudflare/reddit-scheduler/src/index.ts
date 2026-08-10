@@ -40,7 +40,7 @@ async function markFailed(env: Env, post: DuePost, message: string, uncertain = 
   const safeMessage = `${uncertain ? "Outcome uncertain; verify Reddit before retrying. " : ""}${message}`.slice(0, 2000);
   await env.DB.batch([
     env.DB.prepare("UPDATE social_posts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(safeMessage, post.id, post.creator_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'reddit-scheduler','publish_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: safeMessage, uncertain })),
+    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','publish_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: safeMessage, uncertain })),
   ]);
 }
 
@@ -51,7 +51,7 @@ async function publishPost(env: Env, post: DuePost) {
   if (post.content_rating === "nsfw" && !post.allows_nsfw) throw new Error(`r/${post.community_name} is not recorded as allowing NSFW posts.`);
   await env.DB.batch([
     env.DB.prepare("UPDATE social_posts SET error=NULL,device_claimed_at=NULL,device_receipt='{}',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='publishing'").bind(post.id, post.creator_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'reddit-scheduler','native_delivery_queued',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ community: post.community_name, contentRating: post.content_rating })),
+    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','native_delivery_queued',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ community: post.community_name, contentRating: post.content_rating })),
   ]);
   return { published: false, failed: false, queued: true };
 }
@@ -129,6 +129,16 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function humanActorRole(env: Env, creatorId: string, actor: string) {
+  const membership = await env.DB.prepare(`SELECT m.role FROM creator_memberships m
+    JOIN users u ON lower(u.email)=lower(m.user_email)
+    WHERE m.creator_id=? AND lower(m.user_email)=lower(?)
+      AND m.status='active' AND u.status='active'`)
+    .bind(creatorId, actor).first<{ role: "agency_admin" | "operator" | "creator" | "viewer" }>();
+  if (!membership) throw new Error("Authenticated actor is not authorised for this creator.");
+  return membership.role;
+}
+
 async function startConnection(request: Request, env: Env) {
   const input = await request.json<{ callbackUrl?: string; actor?: string; creatorId?: string }>();
   if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
@@ -158,6 +168,7 @@ async function completeConnection(request: Request, env: Env) {
     const identity = await redditIdentity(env, attempt.connected_account_id);
     const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='reddit' ORDER BY label LIMIT 1").bind(input.creatorId).first<{ handle: string }>();
     if (expected?.handle && expected.handle.replace(/^u\//i, "").toLowerCase() !== identity.name!.toLowerCase()) throw new Error(`Authorized u/${identity.name}, but the configured creator account is ${expected.handle}.`);
+    const actorRole = await humanActorRole(env, input.creatorId, input.actor);
     await env.DB.batch([
       env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'reddit',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.connected_account_id, `creator-os:${input.creatorId}:service:reddit`, identity.id, `u/${identity.name}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
@@ -165,7 +176,7 @@ async function completeConnection(request: Request, env: Env) {
         warning_level=CASE WHEN EXISTS (SELECT 1 FROM bridge_credentials WHERE creator_id=? AND platform='reddit' AND status='active' AND expires_at>CURRENT_TIMESTAMP AND last_seen_at IS NOT NULL) THEN 'none' ELSE 'attention' END,
         warning_message=CASE WHEN EXISTS (SELECT 1 FROM bridge_credentials WHERE creator_id=? AND platform='reddit' AND status='active' AND expires_at>CURRENT_TIMESTAMP AND last_seen_at IS NOT NULL) THEN '' ELSE 'Pair the assigned signed Reddit browser for native scheduled posts.' END,
         external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='reddit'`).bind(`u/${identity.name}`, input.creatorId, input.creatorId, input.creatorId),
-      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,'reddit_connection_verified','reddit',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, JSON.stringify({ displayName: `u/${identity.name}` })),
+      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,'reddit_connection_verified','reddit',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, actorRole, JSON.stringify({ displayName: `u/${identity.name}` })),
     ]);
     return Response.json({ ok: true, displayName: `u/${identity.name}` });
   } catch (error) {

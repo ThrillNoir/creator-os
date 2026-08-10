@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { humanAuditActor, identityAuditStatement } from "@/lib/audit-identity";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
@@ -73,8 +74,8 @@ export async function saveAssetAttributesAction(formData: FormData) {
       creatorPrepare(DB, creatorId, "DELETE FROM asset_destinations WHERE creator_id=@creator AND asset_id=?").bind(assetId),
       ...selectedDestinations.map((destination) => creatorPrepare(DB, creatorId, "INSERT INTO asset_destinations (asset_id,creator_id,destination) VALUES (?,@creator,?)").bind(assetId, destination)),
       ...peopleStatements,
-      creatorPrepare(DB, creatorId, "INSERT INTO asset_classification_events (id,asset_id,creator_id,actor,event_type,snapshot) VALUES (? ,?,@creator,?,'attributes_saved',?)")
-        .bind(crypto.randomUUID(), assetId, actor, snapshot),
+      creatorPrepare(DB, creatorId, "INSERT INTO asset_classification_events (id,asset_id,creator_id,actor,actor_role,event_type,snapshot) VALUES (? ,?,@creator,?,?,'attributes_saved',?)")
+        .bind(crypto.randomUUID(), assetId, actor, identity.creator.role, snapshot),
     ];
   });
   await DB.batch(statements);
@@ -145,11 +146,11 @@ export async function createRedditPostAction(formData: FormData) {
     const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,community_id=?,title=?,caption=?,content_rating=?,status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')`)
       .bind(account.id, asset.id, community.id, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
     if (!update.meta?.changes) throw new Error("This Reddit post changed before it could be saved. Refresh and try again.");
-    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,?,?)").bind(crypto.randomUUID(), postId, actor, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })).run();
   } else {
     await DB.batch([
       creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,asset_id,community_id,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, community.id, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
-      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,?,?)").bind(crypto.randomUUID(), postId, actor, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })),
+      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })),
     ]);
   }
   revalidatePath("/operations");
@@ -228,9 +229,9 @@ export async function saveRedditCommunityAction(formData: FormData) {
         allowed_post_types=excluded.allowed_post_types,minimum_account_age_days=excluded.minimum_account_age_days,minimum_karma=excluded.minimum_karma,
         cooldown_hours=excluded.cooldown_hours,title_guidance=excluded.title_guidance,notes=excluded.notes,last_verified_at=excluded.last_verified_at,updated_at=CURRENT_TIMESTAMP`)
       .bind(communityName, rulesUrl, allowsNsfw, creatorVerified, verificationRequired, flairRequired, allowedPostTypes, minimumAccountAgeDays, minimumKarma, cooldownHours, titleGuidance, notes, rulesCheckedAt),
-    creatorPrepare(DB, creatorId, `INSERT INTO reddit_community_events (id,community_id,creator_id,actor,event_type,detail)
-      SELECT ?,id,@creator,?,'community_saved',? FROM reddit_communities WHERE creator_id=@creator AND name=?`)
-      .bind(crypto.randomUUID(), actor, detail, communityName),
+    creatorPrepare(DB, creatorId, `INSERT INTO reddit_community_events (id,community_id,creator_id,actor,actor_role,event_type,detail)
+      SELECT ?,id,@creator,?,?,'community_saved',? FROM reddit_communities WHERE creator_id=@creator AND name=?`)
+      .bind(crypto.randomUUID(), actor, identity.creator.role, detail, communityName),
   ]);
   revalidatePath("/operations");
   redirect("/operations?platform=reddit&section=communities&community=saved");
@@ -243,7 +244,7 @@ export async function cancelRedditPostAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const result = await creatorPrepare(DB, creatorId, "UPDATE social_posts SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')").bind(postId).run();
   if (!result.meta?.changes) throw new Error("Only draft or scheduled Reddit posts can be cancelled.");
-  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'post_cancelled','{}')").bind(crypto.randomUUID(), postId, identity.email).run();
+  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'post_cancelled','{}')").bind(crypto.randomUUID(), postId, identity.email, identity.creator.role).run();
   revalidatePath("/operations");
   redirect("/operations?platform=reddit&section=upcoming&saved=cancelled");
 }
@@ -256,7 +257,7 @@ export async function reviewFailedRedditPostAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const result = await creatorPrepare(DB, creatorId, "UPDATE social_posts SET failure_reviewed_at=CURRENT_TIMESTAMP,failure_reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status='failed' AND failure_reviewed_at IS NULL").bind(actor, postId).run();
   if (!result.meta?.changes) throw new Error("This failed post has already been reviewed or is no longer failed.");
-  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'failure_reviewed','{}')").bind(crypto.randomUUID(), postId, actor).run();
+  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'failure_reviewed','{}')").bind(crypto.randomUUID(), postId, actor, identity.creator.role).run();
   revalidatePath("/operations");
   redirect("/operations?platform=reddit&section=past&reviewed=1");
 }
@@ -288,11 +289,12 @@ export async function openRedditBridgeAction() {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   const tokenHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const auditActor = humanAuditActor(identity);
   await DB.batch([
     creatorPrepare(DB, creatorId, "UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND account_id=? AND profile_id=? AND platform='reddit' AND status='active'").bind(account.id, account.profile_id),
     creatorPrepare(DB, creatorId, "INSERT INTO bridge_credentials (id,creator_id,account_id,profile_id,platform,token_hash,status,issued_by,expires_at) VALUES (?,@creator,?,?, 'reddit',?,'active',?,datetime('now','+90 days'))").bind(crypto.randomUUID(), account.id, account.profile_id, tokenHash, identity.email),
     creatorPrepare(DB, creatorId, "UPDATE operational_accounts SET publishing_mode='local_bridge',publishing_authority='device_only',warning_level='attention',warning_message='Finish pairing the assigned signed Reddit browser for native scheduled posts.',last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator").bind(account.id),
-    creatorPrepare(DB, creatorId, "INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,@creator,?,'bridge_credential_issued',?,?)").bind(crypto.randomUUID(), identity.email, account.id, JSON.stringify({ platform: "reddit", profileId: account.profile_id })),
+    identityAuditStatement(DB, auditActor, "bridge_credential_issued", account.id, { platform: "reddit", profileId: account.profile_id }),
   ]);
   const bridgeBaseUrl = (env as CloudflareEnv & { VAULT_BRIDGE_BASE_URL?: string }).VAULT_BRIDGE_BASE_URL ?? "https://thot-os-vault-bridge-staging.thot-os.workers.dev";
   redirect(`${bridgeBaseUrl}/pair#creator_os_bridge_pair=${encodeURIComponent(token)}&platform=reddit&next=${encodeURIComponent("https://www.reddit.com/submit")}`);
@@ -348,11 +350,11 @@ export async function createInstagramPostAction(formData: FormData) {
     const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,title='',caption=?,content_rating='sfw',status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,provider_container_id=NULL,provider_container_type=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='instagram' AND status IN ('draft','scheduled')`)
       .bind(account.id, asset.id, caption, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
     if (!update.meta?.changes) throw new Error("This Instagram post changed before it could be saved. Refresh and try again.");
-    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,?,?)").bind(crypto.randomUUID(), postId, actor, eventType, JSON.stringify({ scheduledAt, mediaType: ["mp4", "mov"].includes(extension) ? "reel" : "photo" })).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, mediaType: ["mp4", "mov"].includes(extension) ? "reel" : "photo" })).run();
   } else {
     const inserted = await creatorPrepare(DB, creatorId, `INSERT OR IGNORE INTO social_posts (id,creator_id,platform,account_id,asset_id,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'instagram',?,?,'',?,'sfw',?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, caption, status, scheduledAt, status === "scheduled" ? actor : null, status).run();
     if (!inserted.meta?.changes) redirect("/operations?platform=instagram&section=upcoming&saved=already_queued");
-    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,?,?)").bind(crypto.randomUUID(), postId, actor, eventType, JSON.stringify({ scheduledAt, mediaType: ["mp4", "mov"].includes(extension) ? "reel" : "photo" })).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, mediaType: ["mp4", "mov"].includes(extension) ? "reel" : "photo" })).run();
   }
   revalidatePath("/operations");
   if (intent === "publish_now") {
@@ -378,7 +380,7 @@ export async function cancelInstagramPostAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const result = await creatorPrepare(DB, creatorId, "UPDATE social_posts SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='instagram' AND status IN ('draft','scheduled')").bind(postId).run();
   if (!result.meta?.changes) throw new Error("Only draft or scheduled Instagram posts can be cancelled.");
-  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'post_cancelled','{}')").bind(crypto.randomUUID(), postId, identity.email).run();
+  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'post_cancelled','{}')").bind(crypto.randomUUID(), postId, identity.email, identity.creator.role).run();
   revalidatePath("/operations");
   redirect("/operations?platform=instagram&section=upcoming&saved=cancelled");
 }
@@ -391,7 +393,7 @@ export async function reviewFailedInstagramPostAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const result = await creatorPrepare(DB, creatorId, "UPDATE social_posts SET failure_reviewed_at=CURRENT_TIMESTAMP,failure_reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='instagram' AND status='failed' AND failure_reviewed_at IS NULL").bind(actor, postId).run();
   if (!result.meta?.changes) throw new Error("This failed Instagram post has already been reviewed or is no longer failed.");
-  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'failure_reviewed','{}')").bind(crypto.randomUUID(), postId, actor).run();
+  await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'failure_reviewed','{}')").bind(crypto.randomUUID(), postId, actor, identity.creator.role).run();
   revalidatePath("/operations");
   redirect("/operations?platform=instagram&section=past&reviewed=1");
 }
@@ -476,9 +478,9 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
     VALUES (?,@creator,?,?,?,'draft',?)`).bind(draftId, thread.connection_id, thread.id, body, actor).run();
   if (inserted.meta?.changes) {
     await creatorPrepare(env.DB, creatorId, `INSERT OR IGNORE INTO messaging_audit_events
-      (id,creator_id,connection_id,thread_id,event_type,actor,detail)
-      VALUES (?,@creator,?,?,'instagram_quick_send_requested',?,?)`)
-      .bind(`instagram-send-audit-${requestId}`, thread.connection_id, thread.id, actor, JSON.stringify({ draftId, characters: body.length, enterToSend: true })).run();
+      (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail)
+      VALUES (?,@creator,?,?,'instagram_quick_send_requested',?,?,?)`)
+      .bind(`instagram-send-audit-${requestId}`, thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, characters: body.length, enterToSend: true })).run();
   } else {
     const existing = await creatorPrepare(env.DB, creatorId, `SELECT id,status FROM instagram_reply_drafts
       WHERE creator_id=@creator AND (id=? OR (thread_id=? AND body=? AND status IN ('draft','approved','sending')))
@@ -504,8 +506,8 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
     const message = `Outcome uncertain; check Instagram before sending again. ${error instanceof Error ? error.message : "The Instagram delivery service did not respond."}`.slice(0, 2000);
     await env.DB.batch([
       creatorPrepare(env.DB, creatorId, "UPDATE instagram_reply_drafts SET status='uncertain',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND status='draft'").bind(message, draftId),
-      creatorPrepare(env.DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,@creator,?,?, 'instagram_reply_uncertain',?,?)")
-        .bind(crypto.randomUUID(), thread.connection_id, thread.id, actor, JSON.stringify({ draftId, error: message })),
+      creatorPrepare(env.DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,?, 'instagram_reply_uncertain',?,?,?)")
+        .bind(crypto.randomUUID(), thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, error: message })),
     ]);
     saved = "instagram_uncertain";
   }
@@ -529,9 +531,9 @@ export async function validateInstagramReplyTargetAction(formData: FormData) {
     const error = (result.error || "Instagram reply target validation failed.").slice(0, 500);
     await env.DB.batch([
       creatorPrepare(env.DB, creatorId, "UPDATE messaging_connections SET outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND platform='instagram'").bind(error),
-      creatorPrepare(env.DB, creatorId, `INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail)
-        SELECT ?,@creator,id,?,'instagram_reply_validation_failed',?,? FROM messaging_connections WHERE creator_id=@creator AND platform='instagram' LIMIT 1`)
-        .bind(crypto.randomUUID(), threadId, identity.email, JSON.stringify({ error })),
+      creatorPrepare(env.DB, creatorId, `INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail)
+        SELECT ?,@creator,id,?,'instagram_reply_validation_failed',?,?,? FROM messaging_connections WHERE creator_id=@creator AND platform='instagram' LIMIT 1`)
+        .bind(crypto.randomUUID(), threadId, identity.email, identity.creator.role, JSON.stringify({ error })),
     ]);
     redirect(`/messages?platform=instagram&thread=${encodeURIComponent(threadId)}&saved=instagram_validation_failed`);
   }
@@ -575,7 +577,7 @@ export async function createFanslyVaultJobsAction(formData: FormData) {
     `).bind(jobId, account.id, assetId, actor).run();
     if (!inserted.meta?.changes) continue;
     created++;
-    await creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'upload_approved','{}')").bind(crypto.randomUUID(), jobId, actor).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'upload_approved','{}')").bind(crypto.randomUUID(), jobId, actor, identity.creator.role).run();
   }
   revalidatePath("/operations");
   redirect(`/operations?platform=fansly&section=queue&saved=${created ? "vault_queued" : "already_queued"}`);
@@ -598,7 +600,7 @@ export async function verifyFanslyVaultJobAction(formData: FormData) {
   const updated = await creatorPrepare(DB, creatorId, "UPDATE vault_upload_jobs SET status='verified',completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='fansly' AND status='staged'").bind(jobId).run();
   if (!updated.meta?.changes) throw new Error("Only a staged Fansly upload can be confirmed.");
   await DB.batch([
-    creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'upload_verified','{}')").bind(crypto.randomUUID(), jobId, actor),
+    creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'upload_verified','{}')").bind(crypto.randomUUID(), jobId, actor, identity.creator.role),
     creatorPrepare(DB, creatorId, "UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND platform='fansly'").bind(),
   ]);
   revalidatePath("/operations");
@@ -613,7 +615,7 @@ export async function retryFanslyVaultJobAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const updated = await creatorPrepare(DB, creatorId, "UPDATE vault_upload_jobs SET status='approved',claimed_at=NULL,completed_at=NULL,error=NULL,receipt='{}',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='fansly' AND status='failed'").bind(jobId).run();
   if (!updated.meta?.changes) throw new Error("Only a failed Fansly upload can be retried.");
-  await creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,event_type,detail) VALUES (?,?,@creator,?,'retry_approved','{}')").bind(crypto.randomUUID(), jobId, actor).run();
+  await creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'retry_approved','{}')").bind(crypto.randomUUID(), jobId, actor, identity.creator.role).run();
   revalidatePath("/operations");
   redirect("/operations?platform=fansly&section=queue&saved=retry_queued");
 }
@@ -626,7 +628,7 @@ export async function setMessagingPauseAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   await DB.batch([
     creatorPrepare(DB, creatorId, "UPDATE messaging_connections SET emergency_paused=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator").bind(paused ? 1 : 0),
-    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,event_type,actor,detail) VALUES (?,@creator,'emergency_pause_changed',?,?)").bind(crypto.randomUUID(), actor, JSON.stringify({ paused })),
+    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,event_type,actor,actor_role,detail) VALUES (?,@creator,'emergency_pause_changed',?,?,?)").bind(crypto.randomUUID(), actor, identity.creator.role, JSON.stringify({ paused })),
   ]);
   redirect(`/messages?saved=${paused ? "paused" : "resumed"}`);
 }
@@ -648,7 +650,7 @@ export async function updateMessagingAuthorityAction(formData: FormData) {
   const actor = identity.email;
   await DB.batch([
     creatorPrepare(DB, creatorId, "UPDATE messaging_connections SET mode=?,read_enabled=?,write_enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator").bind(mode, readEnabled ? 1 : 0, writeEnabled ? 1 : 0, connectionId),
-    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,@creator,?,'permissions_updated',?,?)").bind(crypto.randomUUID(), connectionId, actor, JSON.stringify({ mode, readEnabled, writeEnabled })),
+    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'permissions_updated',?,?,?)").bind(crypto.randomUUID(), connectionId, actor, identity.creator.role, JSON.stringify({ mode, readEnabled, writeEnabled })),
   ]);
   redirect("/messages?saved=authority");
 }
@@ -682,8 +684,8 @@ export async function markCollectedThreadReadAction(formData: FormData) {
   if (!thread) throw new Error("That conversation is outside this creator’s collected message streams.");
   await DB.batch([
     creatorPrepare(DB, creatorId, "UPDATE message_threads SET unread_count=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator").bind(thread.id),
-    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,@creator,?,?, 'collected_thread_marked_read',?,'{}')")
-      .bind(crypto.randomUUID(), thread.connection_id, thread.id, identity.email),
+    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,?, 'collected_thread_marked_read',?,?,'{}')")
+      .bind(crypto.randomUUID(), thread.connection_id, thread.id, identity.email, identity.creator.role),
   ]);
   revalidatePath("/messages");
   redirect(`/messages?platform=${thread.platform}&thread=${encodeURIComponent(thread.id)}&saved=thread_read`);
@@ -711,8 +713,8 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
     const saved = existing?.status === "sent" ? "telegram_sent" : existing?.status === "failed" ? "telegram_failed" : "telegram_queued";
     redirect(`/messages?platform=telegram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=${saved}`);
   }
-  await creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,@creator,?,'telegram_message_approved',?,?)")
-    .bind(`telegram-send-audit-${requestId}`, connection.id, actor, JSON.stringify({ logId, characters: message.length, enterToSend: true })).run();
+  await creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'telegram_message_approved',?,?,?)")
+    .bind(`telegram-send-audit-${requestId}`, connection.id, actor, identity.creator.role, JSON.stringify({ logId, characters: message.length, enterToSend: true })).run();
   const response = await TELEGRAM_BRIDGE.fetch("https://telegram-bridge/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ logId, creatorId }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   revalidatePath("/messages");
@@ -741,8 +743,8 @@ export async function sendFanslyReplyAction(formData: FormData) {
       (id,creator_id,connection_id,thread_id,platform,body,status,requested_by,approved_by)
       VALUES (?,@creator,?,?,'fansly',?,'approved',?,?)`).bind(draftId, thread.connection_id, thread.id, body, actor, actor),
     creatorPrepare(DB, creatorId, `INSERT OR IGNORE INTO messaging_audit_events
-      (id,creator_id,connection_id,thread_id,event_type,actor,detail)
-      VALUES (?,@creator,?,?, 'fansly_device_send_approved',?,?)`).bind(`fansly-send-audit-${requestId}`, thread.connection_id, thread.id, actor, JSON.stringify({ draftId, characters: body.length, directComposer: true })),
+      (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail)
+      VALUES (?,@creator,?,?, 'fansly_device_send_approved',?,?,?)`).bind(`fansly-send-audit-${requestId}`, thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, characters: body.length, directComposer: true })),
   ]);
   revalidatePath("/messages");
   redirect(`/messages?platform=fansly&thread=${encodeURIComponent(thread.id)}&saved=fansly_reply_queued`);

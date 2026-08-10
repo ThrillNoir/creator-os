@@ -22,7 +22,8 @@
     "ACCESS_JWKS_URL": "https://thot-os.cloudflareaccess.com/cdn-cgi/access/certs",
     "ACCESS_ALLOWED_EMAIL": "connect@thrillnoir.com",
     "APP_BASE_URL": "https://thot-os-staging.thot-os.workers.dev",
-    "VAULT_BRIDGE_BASE_URL": "https://thot-os-vault-bridge-staging.thot-os.workers.dev"
+    "VAULT_BRIDGE_BASE_URL": "https://thot-os-vault-bridge-staging.thot-os.workers.dev",
+    "STAGING_QA_ENABLED": "1"
   },
   "observability": {
     "enabled": true,

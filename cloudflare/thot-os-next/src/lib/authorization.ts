@@ -27,8 +27,8 @@ export function selectCreatorMembership(
   return membership;
 }
 
-export function roleCan(role: CreatorRole, permission: CreatorPermission) {
-  return permissions[role].has(permission);
+export function roleCan(role: string, permission: CreatorPermission) {
+  return permissions[role as CreatorRole]?.has(permission) ?? false;
 }
 
 export function authorizeCreatorScope(

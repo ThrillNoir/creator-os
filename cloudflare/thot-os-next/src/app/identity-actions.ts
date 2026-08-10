@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cloudflareEnv } from "@/lib/cloudflare";
+import { humanAuditActor, identityAuditStatement } from "@/lib/audit-identity";
 import { requireCreatorContext, getCreatorIdentity } from "@/lib/identity";
 import type { CreatorRole } from "@/lib/identity";
 
@@ -32,10 +33,10 @@ export async function registerBrowserProfileAction(formData: FormData) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(installationId)) throw new Error("Paste the installation ID shown by this Chrome profile’s THOT OS extension.");
   const id = crypto.randomUUID();
   const { DB } = cloudflareEnv();
+  const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,?,?,?,?)").bind(id, context.creator.creator_id, label, context.email, installationId),
-    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "browser_profile_registered", id, JSON.stringify({ label, installationId })),
+    identityAuditStatement(DB, actor, "browser_profile_registered", id, { label, installationId }),
   ]);
   revalidatePath("/creators");
 }
@@ -50,12 +51,12 @@ export async function assignBrowserProfileAction(formData: FormData) {
     DB.prepare("SELECT id FROM browser_profiles WHERE id=? AND creator_id=? AND status<>'revoked'").bind(profileId, context.creator.creator_id).first<{ id: string }>(),
   ]);
   if (!account || !profile) throw new Error("Choose an available account and Chrome profile.");
+  const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare(`INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by)
       VALUES (?,?,?,?,?) ON CONFLICT(creator_id,account_id) DO UPDATE SET profile_id=excluded.profile_id,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP,verified_at=NULL`)
       .bind(context.creator.creator_id, account.id, account.platform, profile.id, context.email),
-    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "browser_profile_assigned", account.id, JSON.stringify({ profileId: profile.id, platform: account.platform })),
+    identityAuditStatement(DB, actor, "browser_profile_assigned", account.id, { profileId: profile.id, platform: account.platform }),
   ]);
   revalidatePath("/creators");
 }
@@ -66,10 +67,10 @@ export async function revokeBridgeCredentialsAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const account = await DB.prepare("SELECT id,platform FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, context.creator.creator_id).first<{ id: string; platform: string }>();
   if (!account) throw new Error("That account is outside this creator workspace.");
+  const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_id=? AND status='active'").bind(context.creator.creator_id, account.id),
-    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "bridge_credentials_revoked", account.id, JSON.stringify({ platform: account.platform })),
+    identityAuditStatement(DB, actor, "bridge_credentials_revoked", account.id, { platform: account.platform }),
   ]);
   revalidatePath("/creators");
 }
@@ -87,12 +88,12 @@ export async function saveCreatorMembershipAction(formData: FormData) {
   if (conflicting) throw new Error("Creator-only identities cannot be combined with another active workspace or agency role.");
   const existingUser = await DB.prepare("SELECT status FROM users WHERE lower(email)=?").bind(email).first<{ status: string }>();
   if (existingUser?.status === "suspended") throw new Error("This user is globally suspended. A creator workspace cannot reactivate them.");
+  const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?,'active')").bind(email, displayName),
     DB.prepare(`INSERT INTO creator_memberships (creator_id,user_email,role,status) VALUES (?,?,?,'active')
       ON CONFLICT(creator_id,user_email) DO UPDATE SET role=excluded.role,status='active',updated_at=CURRENT_TIMESTAMP`).bind(context.creator.creator_id, email, role),
-    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "creator_membership_saved", email, JSON.stringify({ role })),
+    identityAuditStatement(DB, actor, "creator_membership_saved", email, { role }),
   ]);
   revalidatePath("/creators");
 }
@@ -105,10 +106,10 @@ export async function suspendCreatorMembershipAction(formData: FormData) {
   const membership = await DB.prepare("SELECT role FROM creator_memberships WHERE creator_id=? AND lower(user_email)=? AND status='active'")
     .bind(context.creator.creator_id, email).first<{ role: CreatorRole }>();
   if (!membership) throw new Error("That active membership does not exist in this workspace.");
+  const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("UPDATE creator_memberships SET status='suspended',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND lower(user_email)=?").bind(context.creator.creator_id, email),
-    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(), context.creator.creator_id, context.email, "creator_membership_suspended", email, JSON.stringify({ role: membership.role })),
+    identityAuditStatement(DB, actor, "creator_membership_suspended", email, { role: membership.role }),
   ]);
   revalidatePath("/creators");
 }

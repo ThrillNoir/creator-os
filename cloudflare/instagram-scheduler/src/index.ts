@@ -363,7 +363,7 @@ async function syncInstagramMessages(env: Env, creatorId: string, force = false)
     env.DB.prepare("UPDATE messaging_connections SET status='connected',read_enabled=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(connection.messaging_connection_id, creatorId),
     env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_messages_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_messages_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.messaging_connection_id),
   ];
-  if (!previousSync || newMessageCount) completionStatements.push(env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'instagram_messages_synced','service:instagram-scheduler',?)").bind(crypto.randomUUID(), creatorId, connection.messaging_connection_id, JSON.stringify({ threadCount, newMessageCount, newInboundCount })));
+  if (!previousSync || newMessageCount) completionStatements.push(env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'instagram_messages_synced','service:instagram-scheduler','service',?)").bind(crypto.randomUUID(), creatorId, connection.messaging_connection_id, JSON.stringify({ threadCount, newMessageCount, newInboundCount })));
   await env.DB.batch(completionStatements);
   return { threadCount, newMessageCount, newInboundCount };
 }
@@ -460,7 +460,7 @@ async function validateInstagramReplyTarget(request: Request, env: Env) {
   await env.DB.batch([
     env.DB.prepare("UPDATE message_threads SET participant_external_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, thread.id, input.creatorId),
     env.DB.prepare("UPDATE messaging_connections SET outbound_validated=1,status='connected',last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(connection.messaging_connection_id, input.creatorId),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_reply_target_validated','service:instagram-scheduler',?)")
+    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_target_validated','service:instagram-scheduler','service',?)")
       .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, JSON.stringify({ messageCount, recipientIdStored: true, liveMessageSent: false })),
   ]);
   return Response.json({ ok: true, participantUsername: recipient.username ? `@${recipient.username.replace(/^@/, "")}` : null, messageCount });
@@ -483,10 +483,12 @@ async function markInstagramThreadSeen(request: Request, env: Env) {
     ig_user_id: connection.external_account_id,
     recipient_id: recipient.id,
   });
+  const auditActor = input.actor?.slice(0, 200) || "service:instagram-scheduler";
+  const auditActorRole = input.actor ? await humanActorRole(env, input.creatorId, input.actor) : "service";
   await env.DB.batch([
     env.DB.prepare("UPDATE message_threads SET unread_count=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(thread.id, input.creatorId),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_thread_marked_seen',?,?)")
-      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, input.actor?.slice(0, 200) || "service:instagram-scheduler", JSON.stringify({ providerConfirmed: true })),
+    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_thread_marked_seen',?,?,?)")
+      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, auditActor, auditActorRole, JSON.stringify({ providerConfirmed: true })),
   ]);
   return Response.json({ ok: true, markedSeen: true });
 }
@@ -526,8 +528,9 @@ async function sendInstagramReply(request: Request, env: Env) {
   const claim = await env.DB.prepare(`UPDATE instagram_reply_drafts SET status='sending',approved_by=requested_by,approved_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND creator_id=? AND status='draft'`).bind(draft.id, input.creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "instagram_reply_already_claimed" }, { status: 409 });
-  await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_reply_approved', ?, ?)")
-    .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, draft.requested_by, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
+  const requestedByRole = await humanActorRole(env, input.creatorId, draft.requested_by);
+  await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_approved', ?, ?, ?)")
+    .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, draft.requested_by, requestedByRole, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
 
   let sendAttempted = false;
   try {
@@ -545,7 +548,7 @@ async function sendInstagramReply(request: Request, env: Env) {
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
         VALUES (?,? ,?,?,'outbound','agency',?,CURRENT_TIMESTAMP,'sent')`).bind(messageId, input.creatorId, draft.thread_id, providerMessageId, draft.body),
       env.DB.prepare("UPDATE message_threads SET participant_external_id=?,last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, draft.thread_id, input.creatorId),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'instagram_reply_sent', 'instagram-scheduler', ?)")
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_sent', 'service:instagram-scheduler', 'service', ?)")
         .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, JSON.stringify({ draftId: draft.id, providerMessageId })),
     ]);
     return Response.json({ ok: true, sent: true, providerMessageId });
@@ -559,7 +562,7 @@ async function sendInstagramReply(request: Request, env: Env) {
       env.DB.prepare("UPDATE instagram_reply_drafts SET status=?,error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(status, safeMessage, draft.id, input.creatorId),
       ...(definitiveRejection ? [env.DB.prepare("UPDATE messaging_connections SET outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
         .bind("Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, input.creatorId)] : []),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?,?,'instagram-scheduler',?)")
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?,?,'service:instagram-scheduler','service',?)")
         .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, uncertain ? "instagram_reply_uncertain" : "instagram_reply_failed", JSON.stringify({ draftId: draft.id, error: safeMessage })),
     ]);
     return Response.json({ ok: false, sent: false, uncertain, error: safeMessage }, { status: uncertain ? 502 : 409 });
@@ -570,7 +573,7 @@ async function markFailed(env: Env, post: DuePost, message: string, uncertain = 
   const safeMessage = `${uncertain ? "Outcome uncertain; verify Instagram before retrying. " : ""}${message}`.slice(0, 2000);
   await env.DB.batch([
     env.DB.prepare("UPDATE social_posts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(safeMessage, post.id, post.creator_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'instagram-scheduler','publish_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: safeMessage, uncertain })),
+    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','publish_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: safeMessage, uncertain })),
   ]);
 }
 
@@ -601,7 +604,7 @@ async function publishPost(env: Env, post: DuePost) {
     }
     await env.DB.batch([
       env.DB.prepare("UPDATE social_posts SET provider_container_id=?,provider_container_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(containerId, kind, post.id, post.creator_id),
-      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'instagram-scheduler','container_created',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ containerId, kind })),
+      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','container_created',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ containerId, kind })),
     ]);
   }
 
@@ -631,10 +634,10 @@ async function publishPost(env: Env, post: DuePost) {
   }
   const statements = [
     env.DB.prepare("UPDATE social_posts SET status='published',published_at=CURRENT_TIMESTAMP,external_post_id=?,external_url=?,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(externalPostId, permalink, post.id, post.creator_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'instagram-scheduler','publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, containerId, kind, permalink })),
+    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, containerId, kind, permalink })),
     env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(post.creator_id),
   ];
-  if (receiptWarning) statements.push(env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'instagram-scheduler','receipt_enrichment_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: receiptWarning })));
+  if (receiptWarning) statements.push(env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','receipt_enrichment_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: receiptWarning })));
   await env.DB.batch(statements);
   return { published: true, failed: false };
 }
@@ -709,6 +712,16 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function humanActorRole(env: Env, creatorId: string, actor: string) {
+  const membership = await env.DB.prepare(`SELECT m.role FROM creator_memberships m
+    JOIN users u ON lower(u.email)=lower(m.user_email)
+    WHERE m.creator_id=? AND lower(m.user_email)=lower(?)
+      AND m.status='active' AND u.status='active'`)
+    .bind(creatorId, actor).first<{ role: "agency_admin" | "operator" | "creator" | "viewer" }>();
+  if (!membership) throw new Error("Authenticated actor is not authorised for this creator.");
+  return membership.role;
+}
+
 async function startConnection(request: Request, env: Env) {
   const input = await request.json<{ callbackUrl?: string; creatorId?: string; actor?: string }>();
   if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
@@ -743,12 +756,13 @@ async function completeConnection(request: Request, env: Env) {
     if (expected?.handle && expected.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
       throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${expected.handle}.`);
     }
+    const actorRole = await humanActorRole(env, input.creatorId, input.actor);
     await env.DB.batch([
       env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.connected_account_id, instagramUserId, identity.id, `@${identity.username.replace(/^@/, "")}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
       env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
       env.DB.prepare("UPDATE messaging_connections SET handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
-      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,event_type,subject,detail) VALUES (?,?,?,'instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, JSON.stringify({ username: identity.username })),
+      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,'instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, actorRole, JSON.stringify({ username: identity.username })),
     ]);
     return Response.json({ ok: true, displayName: `@${identity.username.replace(/^@/, "")}` });
   } catch (error) {

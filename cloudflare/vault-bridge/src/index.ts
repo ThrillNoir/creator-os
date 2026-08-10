@@ -130,7 +130,7 @@ async function claimJob(request: Request, env: Env, identity: BridgeIdentity) {
     WHERE id=? AND creator_id=? AND account_id=? AND (status='approved' OR (status='claimed' AND claimed_at<datetime('now','-2 minutes')))
   `).bind(candidate.id, identity.creator_id, identity.account_id).run();
   if (!claimed.meta.changes) return json(request, { ok: true, job: null });
-  await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'fansly-device','job_claimed','{}')").bind(crypto.randomUUID(), candidate.id, identity.creator_id).run();
+  await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:fansly-device','service','job_claimed','{}')").bind(crypto.randomUUID(), candidate.id, identity.creator_id).run();
   return json(request, { ok: true, job: { ...candidate, mediaUrl: `${new URL(request.url).origin}/jobs/${candidate.id}/media` } });
 }
 
@@ -158,7 +158,7 @@ async function recordReceipt(request: Request, env: Env, identity: BridgeIdentit
     WHERE id=? AND creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'
   `).bind(status, error, receipt, jobId, identity.creator_id, identity.account_id).run();
   if (!updated.meta.changes) return json(request, { ok: false, error: "Vault job is no longer claimable." }, 409);
-  await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'fansly-device',?,?)")
+  await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:fansly-device','service',?,?)")
     .bind(crypto.randomUUID(), jobId, identity.creator_id, status === "staged" ? "file_staged" : "staging_failed", JSON.stringify({ error })).run();
   return json(request, { ok: true, status });
 }
@@ -252,7 +252,7 @@ async function ingestFanslyMessages(request: Request, env: Env, identity: Bridge
   if (importedThreads > 0) await env.DB.prepare(`UPDATE messaging_connections
     SET status='connected',read_enabled=1,outbound_validated=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND creator_id=? AND (status<>'connected' OR read_enabled<>1 OR outbound_validated<>1 OR last_error IS NOT NULL OR last_synced_at IS NULL OR last_synced_at<datetime('now','-5 minutes'))`).bind(connection.id, identity.creator_id).run();
-  if (importedMessages > 0 || changedThreads > 0) await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'fansly_messages_synced','service:vault-bridge',?)")
+  if (importedMessages > 0 || changedThreads > 0) await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'fansly_messages_synced','service:vault-bridge','service',?)")
     .bind(crypto.randomUUID(), identity.creator_id, connection.id, JSON.stringify({ importedThreads, importedMessages, changedThreads })).run();
   return json(request, { ok: true, importedThreads, importedMessages, changedThreads });
 }
@@ -316,7 +316,7 @@ async function fanslyOutbox(request: Request, env: Env, identity: BridgeIdentity
   const statements = [
     env.DB.prepare("UPDATE premium_message_drafts SET status=?,completed_at=CURRENT_TIMESTAMP,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
       .bind(sent ? "sent" : "failed", error, JSON.stringify(input.receipt ?? {}).slice(0, 12_000), job.id, identity.creator_id),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?,?,'fansly-device',?)")
+    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?,?,'service:fansly-device','service',?)")
       .bind(crypto.randomUUID(), identity.creator_id, job.connection_id, job.thread_id, sent ? "fansly_device_send_submitted" : "fansly_device_send_failed", JSON.stringify({ draftId: job.id, error })),
   ];
   if (sent) statements.push(
@@ -352,7 +352,7 @@ async function claimRedditJob(request: Request, env: Env, identity: RedditBridge
       AND (device_claimed_at IS NULL OR device_claimed_at<datetime('now','-10 minutes'))
   `).bind(candidate.id, identity.creator_id, identity.account_id).run();
   if (!claimed.meta.changes) return json(request, { ok: true, job: null });
-  await env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'reddit-device','native_job_claimed','{}')")
+  await env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_job_claimed','{}')")
     .bind(crypto.randomUUID(), candidate.id, identity.creator_id).run();
   return json(request, { ok: true, job: { ...candidate, mediaUrl: `${new URL(request.url).origin}/reddit/jobs/${encodeURIComponent(candidate.id)}/media` } });
 }
@@ -386,7 +386,7 @@ async function recordRedditReceipt(request: Request, env: Env, identity: RedditB
     const error = `${prefix}${String(input.error || "Native Reddit publishing failed.")}`.slice(0, 2000);
     await env.DB.batch([
       env.DB.prepare("UPDATE social_posts SET status='failed',error=?,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND account_id=? AND status='publishing'").bind(error, receipt, postId, identity.creator_id, identity.account_id),
-      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'reddit-device','native_publish_failed',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ error, uncertain: Boolean(input.uncertain) })),
+      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_publish_failed',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ error, uncertain: Boolean(input.uncertain) })),
     ]);
     return json(request, { ok: true, status: "failed" });
   }
@@ -406,7 +406,7 @@ async function recordRedditReceipt(request: Request, env: Env, identity: RedditB
   }
   await env.DB.batch([
     env.DB.prepare("UPDATE social_posts SET status='published',published_at=CURRENT_TIMESTAMP,external_post_id=?,external_url=?,error=?,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND account_id=? AND status='publishing'").bind(externalPostId, externalUrl.toString(), warning || null, receipt, postId, identity.creator_id, identity.account_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,event_type,detail) VALUES (?,?,?,'reddit-device','native_publish_completed',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ externalPostId, externalUrl: externalUrl.toString(), warning })),
+    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_publish_completed',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ externalPostId, externalUrl: externalUrl.toString(), warning })),
     env.DB.prepare("UPDATE operational_accounts SET connection_status='connected',publishing_mode='local_bridge',publishing_authority='device_only',last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(identity.account_id, identity.creator_id),
   ]);
   return json(request, { ok: true, status: "published", externalPostId, externalUrl: externalUrl.toString(), warning });
