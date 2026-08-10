@@ -11,7 +11,10 @@ export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
     return Response.json({ ok: false }, { status: 403 });
   }
-  const input: Record<string, unknown> = await request.json<Record<string, unknown>>().catch(() => ({}));
+  const contentType = request.headers.get("content-type") ?? "";
+  const input: Record<string, unknown> = contentType.includes("application/json")
+    ? await request.json<Record<string, unknown>>().catch(() => ({}))
+    : Object.fromEntries(await request.formData().catch(() => new FormData()));
   try {
     rejectClientActorRole(input);
   } catch {

@@ -103,13 +103,14 @@ test("audit provenance is never an authorization input", async () => {
 });
 
 test("identity storage enforces creator-owned profiles and exclusive identity classes", async () => {
-  const [migration, auditMigration, actions, page, humanProbe, serviceProbe] = await Promise.all([
+  const [migration, auditMigration, actions, page, humanProbe, serviceProbe, qaPage] = await Promise.all([
     source("../../thot-os-app/migrations/0018_creator_identity_profiles.sql"),
     source("../../thot-os-app/migrations/0019_actor_role_audit.sql"),
     source("../src/app/identity-actions.ts"),
     source("../src/app/creators/page.tsx"),
     source("../src/app/api/staging/qa/human-mutation/route.ts"),
     source("../src/app/api/staging/qa/service-mutation/route.ts"),
+    source("../src/app/staging-qa/page.tsx"),
   ]);
   assert.match(migration, /browser_profiles[\s\S]*creator_id TEXT NOT NULL/);
   assert.match(migration, /installation_id TEXT NOT NULL UNIQUE/);
@@ -132,6 +133,11 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
   assert.match(humanProbe, /requireCreatorContext\("mutate", creatorId\)/);
   assert.match(humanProbe, /rejectClientActorRole/);
   assert.match(humanProbe, /isSameOriginRequest\(request\)/);
+  assert.match(humanProbe, /request\.formData\(\)/);
+  assert.match(qaPage, /requireCreatorContext\("view", creatorId\)/);
+  assert.match(qaPage, /Write own-creator audit probe/);
+  assert.match(qaPage, /name="actor_role" value="agency_admin"/);
+  assert.match(qaPage, /never publish, message, upload or retrieve media/i);
   assert.match(serviceProbe, /requireServiceAuditActor/);
   assert.match(serviceProbe, /actorRole: service\.actor\.role/);
 });
