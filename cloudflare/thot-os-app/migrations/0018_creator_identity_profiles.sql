@@ -108,31 +108,56 @@ CREATE TABLE IF NOT EXISTS telegram_bot_state (
 INSERT OR IGNORE INTO telegram_bot_state (id) VALUES ('shared');
 
 -- A human identity is either a creator locked to one workspace, or agency staff.
--- Enforce this in D1 as well as the server action so concurrent writes cannot create a mixed class.
-CREATE TRIGGER IF NOT EXISTS creator_memberships_identity_class_insert
-BEFORE INSERT ON creator_memberships WHEN NEW.status='active'
+-- Keep one abort condition per trigger: D1's remote migration parser cannot reliably
+-- split a trigger containing a nested CASE ... END before the trigger's own END.
+CREATE TRIGGER IF NOT EXISTS creator_memberships_creator_workspace_insert
+BEFORE INSERT ON creator_memberships
+WHEN NEW.status='active' AND NEW.role='creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND creator_id<>NEW.creator_id
+)
 BEGIN
-  SELECT CASE
-    WHEN NEW.role='creator' AND EXISTS (
-      SELECT 1 FROM creator_memberships WHERE lower(user_email)=lower(NEW.user_email) AND status='active' AND creator_id<>NEW.creator_id
-    ) THEN RAISE(ABORT, 'creator_identity_must_be_single_workspace')
-    WHEN NEW.role<>'creator' AND EXISTS (
-      SELECT 1 FROM creator_memberships WHERE lower(user_email)=lower(NEW.user_email) AND status='active' AND role='creator' AND creator_id<>NEW.creator_id
-    ) THEN RAISE(ABORT, 'creator_identity_cannot_be_staff')
-  END;
+  SELECT RAISE(ABORT, 'creator_identity_must_be_single_workspace');
 END;
 
-CREATE TRIGGER IF NOT EXISTS creator_memberships_identity_class_update
-BEFORE UPDATE OF role,status ON creator_memberships WHEN NEW.status='active'
+CREATE TRIGGER IF NOT EXISTS creator_memberships_staff_class_insert
+BEFORE INSERT ON creator_memberships
+WHEN NEW.status='active' AND NEW.role<>'creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND role='creator'
+    AND creator_id<>NEW.creator_id
+)
 BEGIN
-  SELECT CASE
-    WHEN NEW.role='creator' AND EXISTS (
-      SELECT 1 FROM creator_memberships WHERE lower(user_email)=lower(NEW.user_email) AND status='active' AND creator_id<>NEW.creator_id
-    ) THEN RAISE(ABORT, 'creator_identity_must_be_single_workspace')
-    WHEN NEW.role<>'creator' AND EXISTS (
-      SELECT 1 FROM creator_memberships WHERE lower(user_email)=lower(NEW.user_email) AND status='active' AND role='creator' AND creator_id<>NEW.creator_id
-    ) THEN RAISE(ABORT, 'creator_identity_cannot_be_staff')
-  END;
+  SELECT RAISE(ABORT, 'creator_identity_cannot_be_staff');
+END;
+
+CREATE TRIGGER IF NOT EXISTS creator_memberships_creator_workspace_update
+BEFORE UPDATE OF role,status ON creator_memberships
+WHEN NEW.status='active' AND NEW.role='creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND creator_id<>NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'creator_identity_must_be_single_workspace');
+END;
+
+CREATE TRIGGER IF NOT EXISTS creator_memberships_staff_class_update
+BEFORE UPDATE OF role,status ON creator_memberships
+WHEN NEW.status='active' AND NEW.role<>'creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND role='creator'
+    AND creator_id<>NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'creator_identity_cannot_be_staff');
 END;
 
 -- Preserve the current Adelaide operator and all existing data/functionality.

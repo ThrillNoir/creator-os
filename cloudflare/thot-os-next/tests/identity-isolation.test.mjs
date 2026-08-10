@@ -44,8 +44,11 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
   assert.match(migration, /browser_profiles[\s\S]*creator_id TEXT NOT NULL/);
   assert.match(migration, /installation_id TEXT NOT NULL UNIQUE/);
   assert.match(migration, /FOREIGN KEY \(profile_id, creator_id\)/);
-  assert.match(migration, /creator_memberships_identity_class_insert/);
-  assert.match(migration, /creator_memberships_identity_class_update/);
+  assert.match(migration, /creator_memberships_creator_workspace_insert/);
+  assert.match(migration, /creator_memberships_staff_class_insert/);
+  assert.match(migration, /creator_memberships_creator_workspace_update/);
+  assert.match(migration, /creator_memberships_staff_class_update/);
+  assert.doesNotMatch(migration, /SELECT CASE/);
   assert.match(actions, /browser_profiles WHERE id=\? AND creator_id=\?/);
   assert.match(page, /browser_profiles WHERE creator_id=\?/);
   assert.doesNotMatch(actions, /ON CONFLICT\(email\) DO UPDATE SET[\s\S]{0,120}status='active'/);
