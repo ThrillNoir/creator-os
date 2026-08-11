@@ -96,7 +96,7 @@ function insertAudit(db, { id, creator = "adelaide", actor, role, action = "qa_a
 }
 
 test("fresh Wrangler replay applies migrations 0001 through 0019", async () => {
-  assert.equal(migrationNames.at(-1), "0019_actor_role_audit.sql");
+  assert.equal(migrationNames[18], "0019_actor_role_audit.sql");
   const workspace = await createWorkspace(19);
   try {
     assertSucceeded(applyMigrations(workspace));

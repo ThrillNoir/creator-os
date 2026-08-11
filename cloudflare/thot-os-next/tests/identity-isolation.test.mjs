@@ -84,6 +84,8 @@ test("new audit writers supply derived human roles or service and never legacy",
     source("../../reddit-scheduler/src/index.ts"),
     source("../../telegram-bridge/src/index.ts"),
     source("../../vault-bridge/src/index.ts"),
+    source("../src/app/identity-actions.ts"),
+    source("../src/lib/audit-identity.ts"),
   ]);
   const rolelessActorColumn = /INSERT(?: OR IGNORE)? INTO (?:asset_classification_events|social_post_events|reddit_community_events|vault_upload_events|messaging_audit_events)\s*\([^)]*\bactor\s*,\s*(?:event_type|detail|snapshot)\b/g;
   for (const writer of writers) {
@@ -92,7 +94,9 @@ test("new audit writers supply derived human roles or service and never legacy",
   }
   assert.match(writers[0], /identity\.creator\.role/);
   assert.match(writers[1], /humanAuditActor\(identity\)/);
-  for (const worker of writers.slice(2)) assert.match(worker, /['"]service['"]/);
+  for (const worker of writers.slice(2, 6)) assert.match(worker, /['"]service['"]/);
+  assert.match(writers[6], /humanAuditActor\(context\)/);
+  assert.match(writers[7], /actor\.role/);
 });
 
 test("audit provenance is never an authorization input", async () => {
@@ -103,9 +107,10 @@ test("audit provenance is never an authorization input", async () => {
 });
 
 test("identity storage enforces creator-owned profiles and exclusive identity classes", async () => {
-  const [migration, auditMigration, actions, page, humanProbe, serviceProbe, qaPage] = await Promise.all([
+  const [migration, auditMigration, contractMigration, actions, page, humanProbe, serviceProbe, qaPage] = await Promise.all([
     source("../../thot-os-app/migrations/0018_creator_identity_profiles.sql"),
     source("../../thot-os-app/migrations/0019_actor_role_audit.sql"),
+    source("../../thot-os-app/migrations/0020_actor_role_contract.sql"),
     source("../src/app/identity-actions.ts"),
     source("../src/app/creators/page.tsx"),
     source("../src/app/api/staging/qa/human-mutation/route.ts"),
@@ -130,6 +135,9 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
   assert.match(auditMigration, /audit_human_actor_scope_invalid/);
   assert.match(auditMigration, /audit_service_actor_scope_invalid/);
   assert.match(auditMigration, /unixepoch\(s\.expires_at\)>unixepoch\(CURRENT_TIMESTAMP\)/);
+  assert.equal((contractMigration.match(/CREATE TRIGGER/g) ?? []).length, 12);
+  assert.match(contractMigration, /NEW\.actor_role NOT IN \('agency_admin','operator','creator','viewer','service'\)/);
+  assert.match(contractMigration, /OLD\.actor_role='legacy'/);
   assert.match(humanProbe, /requireCreatorContext\("mutate", creatorId\)/);
   assert.match(humanProbe, /rejectClientActorRole/);
   assert.match(humanProbe, /isSameOriginRequest\(request\)/);
