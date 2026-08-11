@@ -140,6 +140,7 @@ button, input, textarea, select { font: inherit; }
 .creator-list small { margin-top: 4px; color: var(--muted); }
 .creator-list .state { margin-left: auto; color: var(--green); font-size: 10px; }
 .creator-picker { display: grid; grid-template-columns: auto minmax(0,1fr); height: auto; }
+.creator-portal-card { display: grid; grid-template-columns: auto minmax(0,1fr); height: auto; }
 .creator-picker label { min-width: 0; }
 .creator-picker select { width: 100%; border: 0; background: transparent; color: var(--ink); font-weight: 750; }
 .creator-picker button { grid-column: 2; width: fit-content; padding: 4px 0; border: 0; background: transparent; color: var(--purple2); cursor: pointer; }
@@ -408,7 +409,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .sidebar { position: relative; height: auto; }
   .sidebar nav { display: flex; gap: 6px; overflow-x: auto; }
   .nav-item { flex: none; }
-  .migration-card, .creator-card, .nav-label { display: none; }
+  .migration-card, .creator-card:not(.creator-portal-card), .nav-label { display: none; }
   .signed-in-card { margin-top: 14px; }
   .brand { padding-bottom: 14px; }
   .workspace { padding: 25px; }

@@ -6,6 +6,8 @@ import { AssetCard } from "@/components/asset-card";
 import { objectIdFor } from "@/lib/library";
 import { getInstagramAnalytics, getInstagramSchedulerStatus, getOperationsOverview, getPlatformOperations, getRedditBridgePairing, getRedditSchedulerStatus, getVaultOperations, isOperationPlatform, operationPlatforms, type OperationalAccount, type OperationPlatform, type SocialPost } from "@/lib/operations";
 import { requireCreatorContext } from "@/lib/identity";
+import { notFound } from "next/navigation";
+import { roleCan } from "@/lib/authorization";
 
 const redditSections = [
   ["upcoming", "Upcoming"],
@@ -77,7 +79,7 @@ async function OperationsOverview({ creatorId }: { creatorId: string }) {
   </>;
 }
 
-async function RedditWorkspace({ creatorId, section, saved, connected, connectionError, edit, published, delivery, reviewed, community }: { creatorId: string; section: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string; community?: string }) {
+async function RedditWorkspace({ creatorId, section, saved, connected, connectionError, edit, published, delivery, reviewed, community, canManageIdentity }: { creatorId: string; section: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string; community?: string; canManageIdentity: boolean }) {
   const [data, scheduler, pairing] = await Promise.all([getPlatformOperations(creatorId, "reddit"), getRedditSchedulerStatus(creatorId), getRedditBridgePairing(creatorId)]);
   const upcoming = data.posts.filter((post) => ["draft", "scheduled", "publishing"].includes(post.status));
   const past = data.posts.filter((post) => ["published", "failed", "cancelled"].includes(post.status));
@@ -86,8 +88,8 @@ async function RedditWorkspace({ creatorId, section, saved, connected, connectio
     <nav className="ops-subnav" aria-label="Reddit operations">{redditSections.map(([id, label]) => <Link className={section === id ? "active" : ""} href={`/operations?platform=reddit&section=${id}`} key={id}>{label}</Link>)}</nav>
     {connected === "reddit" && <div className="success">Reddit OAuth is connected and the creator identity has been verified. Pair the signed browser below for native delivery.</div>}
     {connectionError && <div className="connection-banner blocked"><div><strong>Reddit connection failed</strong><span>{connectionError}</span></div></div>}
-    {data.account?.connection_status !== "connected" && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account?.warning_message || "Reconnect Reddit before native publishing."}</span></div><form action={startRedditReconnectAction}><button className="secondary-action" type="submit">Reconnect Reddit</button></form></div>}
-    {data.account?.connection_status === "connected" && <div className={`connection-banner ${pairing?.last_seen_at ? "connected" : "attention"}`}><div><strong>{data.account.handle || scheduler?.connection?.display_name || "Reddit connected"}</strong><span>{pairing?.last_seen_at ? `Native browser paired · last seen ${formatDate(pairing.last_seen_at)}` : "Pair this creator’s signed Reddit browser before scheduling native posts."}</span></div><form action={openRedditBridgeAction} target="_blank"><button className="secondary-action" type="submit">Open & pair Reddit ↗</button></form></div>}
+    {data.account?.connection_status !== "connected" && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account?.warning_message || "Reconnect Reddit before native publishing."}</span></div>{canManageIdentity && <form action={startRedditReconnectAction}><button className="secondary-action" type="submit">Reconnect Reddit</button></form>}</div>}
+    {data.account?.connection_status === "connected" && <div className={`connection-banner ${pairing?.last_seen_at ? "connected" : "attention"}`}><div><strong>{data.account.handle || scheduler?.connection?.display_name || "Reddit connected"}</strong><span>{pairing?.last_seen_at ? `Native browser paired · last seen ${formatDate(pairing.last_seen_at)}` : "Pair this creator’s signed Reddit browser before scheduling native posts."}</span></div>{canManageIdentity && <form action={openRedditBridgeAction} target="_blank"><button className="secondary-action" type="submit">Open & pair Reddit ↗</button></form>}</div>}
     <div className="success">Reddit images and videos now enter the native device queue. THOT OS will never silently publish a Dropbox link instead.</div>
     {published === "now" && <div className="success">Reddit published successfully. Its verified receipt is shown below.</div>}
     {delivery === "failed" && <div className="connection-banner blocked"><div><strong>Reddit did not return a verified delivery</strong><span>Review the failed item below before attempting anything else.</span></div></div>}
@@ -121,7 +123,7 @@ async function RedditWorkspace({ creatorId, section, saved, connected, connectio
   </>;
 }
 
-async function InstagramWorkspace({ creatorId, section, saved, connected, connectionError, edit, published, delivery, reviewed }: { creatorId: string; section: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string }) {
+async function InstagramWorkspace({ creatorId, section, saved, connected, connectionError, edit, published, delivery, reviewed, canManageIdentity }: { creatorId: string; section: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string; canManageIdentity: boolean }) {
   const [data, scheduler, analytics] = await Promise.all([getPlatformOperations(creatorId, "instagram"), getInstagramSchedulerStatus(creatorId), getInstagramAnalytics(creatorId)]);
   const upcoming = data.posts.filter((post) => ["draft", "scheduled", "publishing"].includes(post.status));
   const past = data.posts.filter((post) => ["published", "failed", "cancelled"].includes(post.status));
@@ -130,7 +132,7 @@ async function InstagramWorkspace({ creatorId, section, saved, connected, connec
     <nav className="ops-subnav" aria-label="Instagram operations">{instagramSections.map(([id, label]) => <Link className={section === id ? "active" : ""} href={`/operations?platform=instagram&section=${id}`} key={id}>{label}</Link>)}</nav>
     {connected === "instagram" && <div className="success">Instagram is connected and {data.account?.handle || "the creator account"} has been verified. Scheduled delivery is active.</div>}
     {connectionError && <div className="connection-banner blocked"><div><strong>Instagram connection failed</strong><span>{connectionError}</span></div></div>}
-    {data.account?.warning_message && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account.warning_message}</span></div><form action={startInstagramReconnectAction}><button className="secondary-action" type="submit">Reconnect Instagram</button></form></div>}
+    {data.account?.warning_message && <div className={`connection-banner ${statusClass(data.account)}`}><div><strong>{statusLabel(data.account)}</strong><span>{data.account.warning_message}</span></div>{canManageIdentity && <form action={startInstagramReconnectAction}><button className="secondary-action" type="submit">Reconnect Instagram</button></form>}</div>}
     {!data.account?.warning_message && <div className="connection-banner connected"><div><strong>{data.account?.handle || scheduler?.connection?.display_name || "Instagram connected"}</strong><span>Photos and Reels can publish now or from the scheduled queue.</span></div><span>{scheduler?.lastRun ? `Last check ${formatDate(scheduler.lastRun.completed_at ?? scheduler.lastRun.started_at)}` : "Scheduler ready"}</span></div>}
     {published === "now" && <div className="success">Instagram published successfully. Its verified media receipt is shown below.</div>}
     {delivery === "failed" && <div className="connection-banner blocked"><div><strong>Instagram did not return a verified delivery</strong><span>Review the failed item below before attempting anything else.</span></div></div>}
@@ -149,7 +151,7 @@ async function InstagramWorkspace({ creatorId, section, saved, connected, connec
   </>;
 }
 
-async function VaultWorkspace({ creatorId, section, saved }: { creatorId: string; section: string; saved?: string }) {
+async function VaultWorkspace({ creatorId, section, saved, canManageIdentity }: { creatorId: string; section: string; saved?: string; canManageIdentity: boolean }) {
   const data = await getVaultOperations(creatorId);
   const fansly = data.accounts.find((account) => account.platform === "fansly") ?? null;
   const myroomz = data.accounts.find((account) => String(account.platform) === "myroomz") ?? null;
@@ -170,7 +172,7 @@ async function VaultWorkspace({ creatorId, section, saved }: { creatorId: string
     {saved === "vault_verified" && <div className="success">The staged asset is now recorded as verified in this creator’s Fansly vault.</div>}
     {saved === "retry_queued" && <div className="success">The failed upload was safely returned to the queue.</div>}
     <section className="ops-grid vault-account-grid">
-      <article className="platform-card"><div className="platform-card-top"><span className="platform-mark">F</span><span className={`account-status ${statusClass(fansly)}`}>Device bridge</span></div><h2>Fansly Vault</h2><p>{fansly?.handle || "Account not configured"}</p><dl><div><dt>Last verified</dt><dd>{formatDate(fansly?.last_success_at ?? null)}</dd></div><div><dt>Device</dt><dd>{data.pairing?.last_seen_at ? "Seen" : "Pair when opened"}</dd></div></dl><form action="/api/fansly/pair" method="post" target="_blank"><input type="hidden" name="destination" value="vault" /><button className="primary" type="submit">Open & pair Fansly vault ↗</button></form></article>
+      <article className="platform-card"><div className="platform-card-top"><span className="platform-mark">F</span><span className={`account-status ${statusClass(fansly)}`}>Device bridge</span></div><h2>Fansly Vault</h2><p>{fansly?.handle || "Account not configured"}</p><dl><div><dt>Last verified</dt><dd>{formatDate(fansly?.last_success_at ?? null)}</dd></div><div><dt>Device</dt><dd>{data.pairing?.last_seen_at ? "Seen" : "Pair when opened"}</dd></div></dl>{canManageIdentity && <form action="/api/fansly/pair" method="post" target="_blank"><input type="hidden" name="destination" value="vault" /><button className="primary" type="submit">Open & pair Fansly vault ↗</button></form>}</article>
       <article className="platform-card"><div className="platform-card-top"><span className="platform-mark">MR</span><span className="account-status attention">First proof needed</span></div><h2>MyRoomz Vault</h2><p>{myroomz?.warning_message || "The protected upload link is valid and targets Vault."}</p><dl><div><dt>Mode</dt><dd>Direct upload</dd></div><div><dt>Status</dt><dd>Controlled test next</dd></div></dl></article>
     </section>
     {section === "create" && <section className="panel reddit-create"><div className="section-heading"><div><span className="eyebrow">FANSLY VAULT</span><h2>Send approved content to the vault</h2><p>Select paid-ready content, approve it, then finish the transfer in this creator’s signed Fansly browser.</p></div></div><form action={createFanslyVaultJobsAction}><div className="form-section"><span className="step-number">1</span><div><h3>Choose content</h3><p>Only assets tagged Subscription or PPV are available. Multi-creator content must already have paid-use consent recorded.</p></div></div><div className="ops-asset-picker">{data.assets.map((asset) => { const objectId = objectIdFor(asset); const extension = asset.extension.toLowerCase().replace(/^\./, ""); return <label key={asset.id}><input type="checkbox" name="assetId" value={asset.id} /><span className="picker-preview">{objectId ? <Image src={`/api/preview/${objectId}`} width={180} height={180} unoptimized alt={asset.basename} /> : <span>No preview</span>}</span><strong title={asset.basename}>{asset.basename}</strong><small>{["mp4", "mov"].includes(extension) ? "Video" : "Photo"} · {asset.safety || "needs review"}</small></label>; })}</div><div className="form-actions"><button className="primary" type="submit">Approve selected for Fansly</button><Link className="secondary-action" href="/library?destination=subscription">Classify more content</Link></div></form></section>}
@@ -194,12 +196,14 @@ async function GenericPlatformWorkspace({ creatorId, platform }: { creatorId: st
 export default async function OperationsPage({ searchParams }: { searchParams: Promise<{ platform?: string; section?: string; saved?: string; connected?: string; connectionError?: string; edit?: string; published?: string; delivery?: string; reviewed?: string; community?: string }> }) {
   const query = await searchParams;
   const context = await requireCreatorContext();
+  if (context.creator.role === "viewer") notFound();
   const creatorId = context.creator.creator_id;
+  const canManageIdentity = roleCan(context.creator.role, "manage_identity");
   const platform = isOperationPlatform(query.platform) ? query.platform : undefined;
   const section = [...redditSections, ...instagramSections, ...vaultSections].some(([id]) => id === query.section) ? query.section! : platform === "fansly" ? "queue" : "upcoming";
   const activeDefinition = platform ? operationPlatforms.find((item) => item.id === platform) : null;
   return <AppShell active="Operations"><PageHeader title={activeDefinition ? `${activeDefinition.label} Operations` : "Operations"} subtitle={activeDefinition ? `Account health, content and publishing activity for ${activeDefinition.label}.` : "Every social platform, account warning and publishing workflow in one place."} />
     <PlatformNavigation active={platform} />
-    {!platform ? <OperationsOverview creatorId={creatorId} /> : platform === "reddit" ? <RedditWorkspace creatorId={creatorId} section={section} saved={query.saved} connected={query.connected} connectionError={query.connectionError} edit={query.edit} published={query.published} delivery={query.delivery} reviewed={query.reviewed} community={query.community} /> : platform === "instagram" ? <InstagramWorkspace creatorId={creatorId} section={section} saved={query.saved} connected={query.connected} connectionError={query.connectionError} edit={query.edit} published={query.published} delivery={query.delivery} reviewed={query.reviewed} /> : platform === "fansly" ? <VaultWorkspace creatorId={creatorId} section={section} saved={query.saved} /> : <GenericPlatformWorkspace creatorId={creatorId} platform={platform} />}
+    {!platform ? <OperationsOverview creatorId={creatorId} /> : platform === "reddit" ? <RedditWorkspace creatorId={creatorId} section={section} saved={query.saved} connected={query.connected} connectionError={query.connectionError} edit={query.edit} published={query.published} delivery={query.delivery} reviewed={query.reviewed} community={query.community} canManageIdentity={canManageIdentity} /> : platform === "instagram" ? <InstagramWorkspace creatorId={creatorId} section={section} saved={query.saved} connected={query.connected} connectionError={query.connectionError} edit={query.edit} published={query.published} delivery={query.delivery} reviewed={query.reviewed} canManageIdentity={canManageIdentity} /> : platform === "fansly" ? <VaultWorkspace creatorId={creatorId} section={section} saved={query.saved} canManageIdentity={canManageIdentity} /> : <GenericPlatformWorkspace creatorId={creatorId} platform={platform} />}
   </AppShell>;
 }
