@@ -94,3 +94,21 @@ secret, platform session, or authenticated service-identity verification.
 The workflow's concrete status names must be captured from its first successful
 run before protection is configured. That final configuration step is blocked
 by the GitHub plan limitation above; no simulated rule was recorded.
+
+## Redacted CI security receipt
+
+Manual review of the workflow confirms that it uses the `pull_request` event
+(not a privileged target event), exposes only `contents: read`, disables
+persisted checkout credentials, pins its two GitHub Actions dependencies by
+immutable revision, and contains no deployment, Cloudflare, platform, browser,
+secret, or service-identity command. It also cancels superseded pull-request
+runs.
+
+The first successful run used these checks: `Root verification`, `Cloudflare
+application`, `Worker - Instagram scheduler`, `Worker - Reddit scheduler`,
+`Worker - Telegram bridge`, and `Worker - Vault bridge`.
+
+The Codex Security workbench rejected the attempted diff-scan launch because
+the selected working-tree digest changed before launch. It was not retried as a
+replacement scan. Consequently this is a manual security receipt, not a sealed
+workbench report, and remains a certification blocker.
