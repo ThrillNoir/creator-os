@@ -11,28 +11,28 @@ browser-profile, membership, pairing, platform, Chrome, or Telegram change.
 
 The blocking controls are:
 
-1. GitHub rejects both the repository ruleset and branch-protection APIs for
-   this private repository on its current plan. The required main-branch
-   protection therefore cannot be configured or validated.
-2. The Cloudflare Access dashboard had no authenticated session. Live Access
-   application/policy parity and fail-closed production enforcement could not
-   be inspected without a sign-in; no sign-in was attempted.
-3. The reviewed repository configuration and the accessible Cloudflare account
+1. No reviewed production Cloudflare topology exists. The reviewed repository
+   configuration and the accessible Cloudflare account
    describe staging resources only. There is no reviewed production Worker,
    D1, R2, Queue, route/domain, Access, backup, or rollback configuration to
    certify.
+2. The sealed Codex Security scan cannot complete on this host because its
+   required preflight helper needs `tomllib` or `tomli`, neither of which is
+   available to the host Python runtime. The durable scan remains unsealed.
 
 ## Read-only evidence
 
 | Surface | Result | Limitation |
 | --- | --- | --- |
 | Git base | Clean `main` at `0636ba374cf54c71b79222e2f22612685eee0430` before this branch | None |
+| GitHub protection | GitHub Pro permits classic protection; `main` now requires a PR and the six observed Actions checks, requires the branch to be current, and blocks force pushes/deletion | Zero required approvals preserve the emergency administrator recovery path; protections apply to future PRs |
 | Staging D1 | 20 migrations applied; no migrations pending; `quick_check` returned `ok` | Staging only |
 | Identity migrations 0018--0020 | Cloudflare application tests replay migrations locally and exercise creator isolation; staging reports all migrations applied | No production database was available for comparison |
 | Creator/profile preservation | Redacted staging checks confirm the named creator records, Adelaide's two assignments and two active credentials, and no cross-creator assignment or credential rows | IDs, emails, credentials, and pairing data were not read or recorded |
 | Staging topology | One staging D1, four staging R2 buckets, two staging queues, and five staging Workers were visible in the accessible account | Does not prove resources in another account do not exist |
 | Worker versions and secrets | Each visible staging Worker had deployment history; required secret names were present, but values were not requested or read | Staging only; no production Worker was configured |
-| Access | Source tests reject requests without an Access JWT | Dashboard policy/application review remains blocked by missing authenticated session |
+| Access | Source tests reject requests without an Access JWT; dashboard review confirmed a primary staging application with four approved identities and a wildcard-preview application with one approved identity | Staging only; no production Access application exists |
+| Billing | THOT OS reports zero current/projected cost and no invoices; R2 Paid is active with zero billable usage within included limits | Billing is not a production-readiness substitute |
 | QA fixture | `STAGING_QA_ENABLED` is present only in the staging application configuration | A production configuration is absent, so live exclusion cannot yet be proved |
 | Health and logs | The health endpoint is intentionally authenticated; no unauthenticated probe or log-tail was performed | Production health/log readiness is unverified |
 
@@ -91,9 +91,9 @@ Next and OpenNext builds, all standalone Worker TypeScript checks, and Telegram
 unit tests. It deliberately contains no deployment command, Cloudflare token,
 secret, platform session, or authenticated service-identity verification.
 
-The workflow's concrete status names must be captured from its first successful
-run before protection is configured. That final configuration step is blocked
-by the GitHub plan limitation above; no simulated rule was recorded.
+The first successful run established the six concrete status names, and those
+same GitHub Actions contexts are now required on `main`; no unavailable or
+synthetic context was added.
 
 ## Redacted CI security receipt
 
@@ -108,7 +108,7 @@ The first successful run used these checks: `Root verification`, `Cloudflare
 application`, `Worker - Instagram scheduler`, `Worker - Reddit scheduler`,
 `Worker - Telegram bridge`, and `Worker - Vault bridge`.
 
-The Codex Security workbench rejected the attempted diff-scan launch because
-the selected working-tree digest changed before launch. It was not retried as a
-replacement scan. Consequently this is a manual security receipt, not a sealed
+The current durable Codex Security scan targets the stable PR head, but cannot
+pass its mandatory preflight on this host because Python lacks `tomllib` and
+`tomli`. Consequently this is a manual security receipt, not a sealed
 workbench report, and remains a certification blocker.
