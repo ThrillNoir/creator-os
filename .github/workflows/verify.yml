@@ -34,7 +34,7 @@ jobs:
       - run: npm ci
       - run: mkdir -p .creator-os
       - run: >-
-          node --experimental-strip-types --input-type=module
+          node --conditions=react-server --experimental-strip-types --input-type=module
           -e 'import("./src/lib/db.ts").then(({ getCreators }) => getCreators())'
       - run: npm run verify
       - run: npx tsc --noEmit
