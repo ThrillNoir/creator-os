@@ -14,16 +14,38 @@ const permissions: Record<CreatorRole, ReadonlySet<CreatorPermission>> = {
   viewer: new Set(["view"]),
 };
 
+export function isCreatorPortalRole(role: string): role is "creator" | "viewer" {
+  return role === "creator" || role === "viewer";
+}
+
+export function isCreatorPortalIdentity(memberships: readonly CreatorMembership[]) {
+  return memberships.some((membership) => isCreatorPortalRole(membership.role));
+}
+
+export function selectCreatorPortalMembership(
+  memberships: readonly CreatorMembership[],
+  requestedCreatorId?: string | null,
+) {
+  if (memberships.length !== 1) return null;
+  const membership = memberships[0];
+  if (!isCreatorPortalRole(membership.role)) return null;
+  if (requestedCreatorId && requestedCreatorId !== membership.creator_id) return null;
+  return membership;
+}
+
 export function selectCreatorMembership(
   memberships: readonly CreatorMembership[],
   requestedCreatorId?: string | null,
   cookieCreatorId?: string | null,
 ) {
-  const creatorMemberships = memberships.filter((item) => item.role === "creator");
-  const lockedCreatorId = creatorMemberships.length ? creatorMemberships[0].creator_id : null;
-  const desiredCreatorId = requestedCreatorId || lockedCreatorId || cookieCreatorId || memberships[0]?.creator_id;
+  if (isCreatorPortalIdentity(memberships)) {
+    // Creator-portal scope comes from the sole active membership. The workspace
+    // selector cookie is deliberately not an input for creator or viewer users.
+    return selectCreatorPortalMembership(memberships, requestedCreatorId);
+  }
+  const desiredCreatorId = requestedCreatorId || cookieCreatorId || memberships[0]?.creator_id;
   const membership = memberships.find((item) => item.creator_id === desiredCreatorId);
-  if (!membership || (lockedCreatorId && membership.creator_id !== lockedCreatorId)) return null;
+  if (!membership) return null;
   return membership;
 }
 

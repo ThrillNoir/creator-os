@@ -376,7 +376,8 @@ test("multi-creator identity, permissions and Chrome-profile pairing are D1-back
   assert.match(migration, /CREATE TABLE IF NOT EXISTS identity_audit_events/);
   assert.match(identity, /requireCreatorContext/);
   assert.match(authorization, /manage_identity/);
-  assert.match(authorization, /lockedCreatorId/);
+  assert.match(authorization, /selectCreatorPortalMembership/);
+  assert.match(authorization, /memberships\.length !== 1/);
   assert.doesNotMatch(access, /claims\.email\?\.toLowerCase\(\) !== env\.ACCESS_ALLOWED_EMAIL/);
   assert.match(shell, /switchCreatorAction/);
   assert.match(creators, /platform handle is descriptive only/);

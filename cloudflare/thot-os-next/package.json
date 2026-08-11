@@ -9,6 +9,7 @@
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "health:staging": "node scripts/check-authenticated-health.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "verify": "npm test && npm run build && opennextjs-cloudflare build"
   },

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { humanAuditActor, isSameOriginRequest, rejectClientActorRole, requireServiceAuditActor } from "../src/lib/audit-identity.ts";
-import { authorizeCreatorScope, roleCan, selectCreatorMembership } from "../src/lib/authorization.ts";
+import { authorizeCreatorScope, roleCan, selectCreatorMembership, selectCreatorPortalMembership } from "../src/lib/authorization.ts";
 import { readFile } from "node:fs/promises";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
@@ -29,10 +29,12 @@ test("an agency administrator cannot forge an unauthorized creator cookie or req
   assert.deepEqual(authorizeCreatorScope([admin], "manage_identity", "second", null), { ok: false, status: 404 });
 });
 
-test("creator-role identities cannot use a cookie to enter another membership", () => {
-  const selected = selectCreatorMembership([adelaide, secondCreator], null, "second");
-  assert.equal(selected?.creator_id, "adelaide");
+test("creator-portal identities require one membership and cannot use a cookie to enter another workspace", () => {
+  assert.equal(selectCreatorMembership([adelaide], null, "second")?.creator_id, "adelaide");
+  assert.equal(selectCreatorMembership([adelaide, secondCreator], null, "second"), null);
   assert.equal(selectCreatorMembership([adelaide, secondCreator], "second", null), null);
+  assert.equal(selectCreatorPortalMembership([], null), null);
+  assert.equal(selectCreatorPortalMembership([adelaide, secondCreator], null), null);
 });
 
 test("viewer memberships cannot mutate", () => {
