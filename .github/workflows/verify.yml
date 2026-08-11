@@ -1,0 +1,140 @@
+name: Verify
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# Pull-request verification is intentionally read-only. It has no deploy, Cloudflare,
+# browser, platform, or repository-write credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  root-verification:
+    name: Root verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: git diff --check
+
+  cloudflare-application:
+    name: Cloudflare application
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: cloudflare/thot-os-next
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/thot-os-next/package-lock.json
+      - run: npm ci --prefix ../..
+      - run: npm ci
+      # Includes local D1 migration replay and creator-isolation coverage.
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: npx opennextjs-cloudflare build
+
+  instagram-scheduler:
+    name: Worker - Instagram scheduler
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare/instagram-scheduler
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/instagram-scheduler/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
+  reddit-scheduler:
+    name: Worker - Reddit scheduler
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare/reddit-scheduler
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/reddit-scheduler/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
+  telegram-bridge:
+    name: Worker - Telegram bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare/telegram-bridge
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/telegram-bridge/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  vault-bridge:
+    name: Worker - Vault bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare/vault-bridge
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/vault-bridge/package-lock.json
+      - run: npm ci
+      - run: npm run check
