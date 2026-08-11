@@ -4,21 +4,22 @@ Date: 2026-08-11
 
 ## Decision
 
-**NO-GO for production promotion and main-branch merge.**
+**PR #5: ready to merge once its required checks are green. Production: NO-GO.**
 
 This review made no production deployment, database, Access-policy, secret,
 browser-profile, membership, pairing, platform, Chrome, or Telegram change.
 
-The blocking controls are:
+Production remains blocked because:
 
 1. No reviewed production Cloudflare topology exists. The reviewed repository
    configuration and the accessible Cloudflare account
    describe staging resources only. There is no reviewed production Worker,
    D1, R2, Queue, route/domain, Access, backup, or rollback configuration to
    certify.
-2. The sealed Codex Security scan cannot complete on this host because its
-   required preflight helper needs `tomllib` or `tomli`, neither of which is
-   available to the host Python runtime. The durable scan remains unsealed.
+2. Production bindings, an Access application, a verified backup/restore
+   rehearsal, a rollback plan, and an approved deployment procedure have not
+   been defined or reviewed. The staging review and CI controls do not certify
+   any production rollout.
 
 ## Read-only evidence
 
@@ -26,6 +27,7 @@ The blocking controls are:
 | --- | --- | --- |
 | Git base | Clean `main` at `0636ba374cf54c71b79222e2f22612685eee0430` before this branch | None |
 | GitHub protection | GitHub Pro permits classic protection; `main` now requires a PR and the six observed Actions checks, requires the branch to be current, and blocks force pushes/deletion | Zero required approvals preserve the emergency administrator recovery path; protections apply to future PRs |
+| Sealed security scan | A sealed final-head Codex Security review found zero reportable findings in the PR changes and their directly relevant CI, authorization, audit, bridge and Worker-boundary controls | This is a PR-readiness review, not a full repository or production certification |
 | Staging D1 | 20 migrations applied; no migrations pending; `quick_check` returned `ok` | Staging only |
 | Identity migrations 0018--0020 | Cloudflare application tests replay migrations locally and exercise creator isolation; staging reports all migrations applied | No production database was available for comparison |
 | Creator/profile preservation | Redacted staging checks confirm the named creator records, Adelaide's two assignments and two active credentials, and no cross-creator assignment or credential rows | IDs, emails, credentials, and pairing data were not read or recorded |
@@ -108,7 +110,8 @@ The first successful run used these checks: `Root verification`, `Cloudflare
 application`, `Worker - Instagram scheduler`, `Worker - Reddit scheduler`,
 `Worker - Telegram bridge`, and `Worker - Vault bridge`.
 
-The current durable Codex Security scan targets the stable PR head, but cannot
-pass its mandatory preflight on this host because Python lacks `tomllib` and
-`tomli`. Consequently this is a manual security receipt, not a sealed
-workbench report, and remains a certification blocker.
+The mandatory scanner preflight was satisfied by the existing Homebrew-managed
+Python 3.13 runtime, which resolves `tomllib`; macOS system Python and THOT OS
+dependencies were not changed. The sealed final-head review found zero
+reportable findings. Its review scope is explicitly limited to this PR and its
+direct security controls, so it does not alter the production NO-GO decision.
