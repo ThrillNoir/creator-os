@@ -12,6 +12,7 @@ import {
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { MessageQuickReply } from "@/components/message-quick-reply";
 import { getUnifiedMessages, isMessagePlatform, messagePlatforms, type MessageAttachment, type MessagingConnection } from "@/lib/messages";
+import { requireCreatorContext } from "@/lib/identity";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,7 @@ function InstagramReplyComposer({ data, connection }: { data: UnifiedMessagesDat
   const participant = thread.participant_name || thread.participant_handle || "this Instagram user";
   return <div className="instagram-replies">
     <div className="reply-heading"><div><strong>Reply to {participant}</strong><small>Press Enter to send immediately.</small></div>{!replyWindowOpen ? <span className="account-status blocked">reply window closed</span> : connection?.outbound_validated ? <span className="account-status ready">ready</span> : <span className="account-status attention">send locked</span>}</div>
-    {!replyWindowOpen && <div className="connection-banner blocked"><div><strong>Instagram will not accept a reply to this older conversation.</strong><span>Ask {participant} to send Adelaide a new Instagram message, refresh the inbox, then reply within the active window.</span></div></div>}
+    {!replyWindowOpen && <div className="connection-banner blocked"><div><strong>Instagram will not accept a reply to this older conversation.</strong><span>Ask {participant} to send the creator a new Instagram message, refresh the inbox, then reply within the active window.</span></div></div>}
     {!connection?.outbound_validated && connection?.status === "connected" && <form action={validateInstagramReplyTargetAction} className="reply-validation"><input type="hidden" name="threadId" value={thread.id} /><p>Validate the Instagram-scoped recipient for this exact conversation. This check does not send a message.</p><button className="secondary-action" type="submit">Validate reply target</button></form>}
     {canSend ? <MessageQuickReply platform="instagram" threadId={thread.id} participant={participant} /> : connection?.outbound_validated ? <div className="empty"><b>Instagram sending is locked.</b><span>{data.paused ? "Resume messaging controls first." : "Reconnect Instagram and wait for a new inbound message."}</span></div> : null}
     <details className="reply-drafts"><summary><span><strong>Instagram sends & receipts</strong><small>{data.instagramDrafts.length ? `${data.instagramDrafts.length} recorded` : "Nothing recorded yet"}</small></span><b>View</b></summary><div className="reply-draft-list">{data.instagramDrafts.map((send) => <article className="reply-draft" key={send.id}><div><span className={`post-state ${send.status}`}>{statusLabel(send.status)}</span><small>{formatDate(send.completed_at ?? send.created_at)}</small></div><p>{send.body}</p>{send.provider_message_id && <small>Instagram receipt: {send.provider_message_id}</small>}{send.error && <strong className="reply-error">{send.error}</strong>}</article>)}{!data.instagramDrafts.length && <div className="empty"><b>No Instagram sends yet.</b><span>Confirmed attempts and receipts will stay here.</span></div>}</div></details>
@@ -63,11 +64,11 @@ function InstagramReplyComposer({ data, connection }: { data: UnifiedMessagesDat
 
 function TelegramComposer({ data, connection }: { data: UnifiedMessagesData; connection: MessagingConnection | undefined }) {
   const thread = data.selectedThread?.platform === "telegram" ? data.selectedThread : null;
-  if (!thread) return <div className="reply-placeholder"><textarea disabled placeholder="Choose Adelaide’s Telegram conversation." /><button className="primary" disabled>Send</button></div>;
+  if (!thread) return <div className="reply-placeholder"><textarea disabled placeholder="Choose the creator’s Telegram conversation." /><button className="primary" disabled>Send</button></div>;
   const canSend = connection?.status === "connected" && Boolean(connection.write_enabled) && Boolean(connection.outbound_validated) && !data.paused;
   return <div className="instagram-replies">
-    <div className="reply-heading"><div><strong>Message Adelaide</strong><small>Sent through the paired private agency bot.</small></div><span className={`account-status ${canSend ? "ready" : "attention"}`}>{canSend ? "ready" : "send locked"}</span></div>
-    {canSend ? <MessageQuickReply platform="telegram" threadId={thread.id} participant="Adelaide" /> : <div className="empty"><b>Telegram sending is locked.</b><span>Validate the bot, enable sending, and make sure the emergency pause is off.</span></div>}
+    <div className="reply-heading"><div><strong>Message creator</strong><small>Sent through the paired private agency bot.</small></div><span className={`account-status ${canSend ? "ready" : "attention"}`}>{canSend ? "ready" : "send locked"}</span></div>
+    {canSend ? <MessageQuickReply platform="telegram" threadId={thread.id} participant="the creator" /> : <div className="empty"><b>Telegram sending is locked.</b><span>Validate the bot, enable sending, and make sure the emergency pause is off.</span></div>}
     <details className="reply-drafts"><summary><span><strong>Telegram receipts</strong><small>{data.telegramLog.length ? `${data.telegramLog.length} recorded` : "Nothing recorded yet"}</small></span><b>View</b></summary><div className="reply-draft-list">{data.telegramLog.map((item) => <article className="reply-draft" key={item.id}><div><span className={`post-state ${item.status}`}>{statusLabel(item.status)}</span><small>{formatDate(item.completed_at ?? item.created_at)}</small></div><p>{item.message_text}</p>{item.error ? <strong className="reply-error">{item.error}</strong> : null}</article>)}{!data.telegramLog.length ? <div className="empty"><b>No Telegram sends yet.</b><span>Confirmed attempts will stay here.</span></div> : null}</div></details>
   </div>;
 }
@@ -79,7 +80,7 @@ function FanslyComposer({ data, connection }: { data: UnifiedMessagesData; conne
   const canSend = connection?.status === "connected" && Boolean(connection.write_enabled) && Boolean(connection.outbound_validated) && !data.paused;
   const conversationUrl = `https://fansly.com${thread.external_thread_id}`;
   return <div className="instagram-replies">
-    <div className="reply-heading"><div><strong>Reply to {participant}</strong><small>Fansly uses Adelaide’s paired browser; THOT OS never stores her login.</small></div><span className={`account-status ${canSend ? "ready" : "attention"}`}>{canSend ? "device ready" : "send locked"}</span></div>
+    <div className="reply-heading"><div><strong>Reply to {participant}</strong><small>Fansly uses the assigned creator profile; THOT OS never stores the login.</small></div><span className={`account-status ${canSend ? "ready" : "attention"}`}>{canSend ? "device ready" : "send locked"}</span></div>
     {canSend ? <MessageQuickReply platform="fansly" threadId={thread.id} participant={participant} /> : <div className="empty"><b>Fansly sending is locked.</b><span>Open and pair Fansly Messages, enable sending authority, and make sure the emergency pause is off.</span></div>}
     <details className="reply-drafts" open={data.premiumDrafts.some((send) => send.status === "approved" || send.status === "claimed")}><summary><span><strong>Fansly sends & device receipts</strong><small>{data.premiumDrafts.length ? `${data.premiumDrafts.length} recorded` : "Nothing recorded yet"}</small></span><b>View</b></summary><div className="reply-draft-list">{data.premiumDrafts.map((send) => <article className="reply-draft" key={send.id}><div><span className={`post-state ${send.status}`}>{send.status === "sent" ? "sent" : statusLabel(send.status)}</span><small>{formatDate(send.completed_at ?? send.created_at)}</small></div><p>{send.body}</p>{send.error ? <strong className="reply-error">{send.error}</strong> : null}{send.status === "approved" || send.status === "claimed" ? <div className="device-handoff"><span>{send.status === "claimed" ? "Adelaide’s paired browser is delivering this message." : "Queued for Adelaide’s paired browser. No Fansly action is required."}</span><a className="secondary-action" href={conversationUrl} target="_blank" rel="noreferrer">View conversation ↗</a></div> : null}{send.status === "sent" ? <small>The paired browser confirmed the native Fansly send and returned its receipt.</small> : null}</article>)}{!data.premiumDrafts.length ? <div className="empty"><b>No Fansly sends yet.</b><span>Queued attempts and confirmed receipts will remain here.</span></div> : null}</div></details>
   </div>;
@@ -87,8 +88,9 @@ function FanslyComposer({ data, connection }: { data: UnifiedMessagesData; conne
 
 export default async function MessagesPage({ searchParams }: { searchParams: Promise<{ platform?: string; thread?: string; saved?: string }> }) {
   const query = await searchParams;
+  const context = await requireCreatorContext();
   const platform = isMessagePlatform(query.platform) ? query.platform : undefined;
-  const data = await getUnifiedMessages(platform, query.thread);
+  const data = await getUnifiedMessages(context.creator.creator_id, platform, query.thread);
   const telegram = data.connections.find((connection) => connection.platform === "telegram");
   const instagram = data.connections.find((connection) => connection.platform === "instagram");
   const fansly = data.connections.find((connection) => connection.platform === "fansly");
@@ -97,7 +99,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
     {query.saved === "authority" && <div className="success">Messaging authority was updated and added to the audit log.</div>}
     {query.saved === "paused" && <div className="success">All outbound messaging is paused. Collection remains visible.</div>}
     {query.saved === "resumed" && <div className="success">Messaging controls were resumed. Unvalidated connectors still cannot send.</div>}
-    {query.saved === "telegram_validated" && <div className="success">The agency Telegram bot and Adelaide pairing were validated. No message was sent.</div>}
+    {query.saved === "telegram_validated" && <div className="success">The agency Telegram bot and creator pairing were validated. No message was sent.</div>}
     {query.saved === "telegram_sent" && <div className="success">Telegram confirmed the agency message. Its receipt is recorded below.</div>}
     {query.saved === "telegram_queued" && <div className="success">That Telegram message is already queued. THOT OS did not create a duplicate.</div>}
     {query.saved === "telegram_refreshed" && <div className="success">Telegram replies were refreshed and the selected conversation stayed open.</div>}
@@ -111,8 +113,8 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
     {query.saved === "instagram_messages_refreshed" && <div className="success">Instagram conversations were refreshed. New messages and available media are now shown.</div>}
     {query.saved === "instagram_thread_read" && <div className="success">Instagram confirmed this conversation as read.</div>}
     {query.saved === "thread_read" && <div className="success">This collected conversation is marked read in THOT OS.</div>}
-    {query.saved === "fansly_reply_queued" && <div className="success">Fansly reply queued. Adelaide’s paired browser will deliver it automatically and return the receipt here.</div>}
-    {query.saved === "fansly_pair_failed" && <div className="connection-banner blocked"><div><strong>Fansly pairing did not complete.</strong><span>Refresh this page, confirm Adelaide is signed into Fansly, then open the pairing tab again.</span></div></div>}
+    {query.saved === "fansly_reply_queued" && <div className="success">Fansly reply queued. The assigned creator browser will deliver it automatically and return the receipt here.</div>}
+    {query.saved === "fansly_pair_failed" && <div className="connection-banner blocked"><div><strong>Fansly pairing did not complete.</strong><span>Refresh this page, confirm the creator is signed into Fansly, then open the pairing tab again.</span></div></div>}
     <section className={`connection-banner ${data.paused ? "blocked" : "attention"}`}><div><strong>{data.paused ? "Emergency pause is active" : "Enter-to-send messaging"}</strong><span>{data.paused ? "THOT OS will not release an outbound message." : "Press Enter to send on Telegram, Instagram or Fansly. Use Shift+Enter for a new line; every attempt keeps a receipt."}</span></div><form action={setMessagingPauseAction}><input type="hidden" name="paused" value={data.paused ? "no" : "yes"} /><button className="secondary-action" type="submit">{data.paused ? "Resume controls" : "Pause all sending"}</button></form></section>
     <section className="ops-summary messages-summary"><article><b>{data.metrics.conversations}</b><span>Conversations</span></article><article><b>{data.metrics.unread}</b><span>Unread</span></article><article><b>{data.metrics.sent}</b><span>Recorded sends</span></article><article><b>{data.metrics.attention}</b><span>Connections need attention</span></article></section>
     <nav className="message-streams" aria-label="Message streams"><Link className={!platform ? "active" : ""} href={platformHref()}><span>ALL</span><strong>All streams</strong><small>{data.metrics.conversations} conversations</small></Link>{messagePlatforms.map((item) => { const connection = data.connections.find((candidate) => candidate.platform === item); return <Link className={platform === item ? "active" : ""} href={platformHref(item)} key={item}><span>{item.slice(0,2).toUpperCase()}</span><strong>{labels[item]}</strong><small>{connection ? `${statusLabel(connection.status)} · ${connection.thread_count} threads` : "Not configured"}</small></Link>; })}</nav>

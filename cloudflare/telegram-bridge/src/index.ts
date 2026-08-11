@@ -12,15 +12,22 @@ type Connector = {
 };
 
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
-const CREATOR_ID = "adelaide";
-const THREAD_ID = "adelaide-telegram-private";
+
+function threadId(creatorId: string) {
+  return `${creatorId}-telegram-private`;
+}
 
 function record(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : undefined;
 }
 
-async function executeTool<T>(env: Env, slug: string, args: Record<string, unknown>) {
-  const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
+export async function executeTelegramTool<T>(
+  env: Pick<Env, "COMPOSIO_API_KEY" | "COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID" | "COMPOSIO_TELEGRAM_USER_ID">,
+  slug: string,
+  args: Record<string, unknown>,
+  fetcher: typeof fetch = fetch,
+) {
+  const response = await fetcher(`${COMPOSIO_V31}/tools/execute/${slug}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
     body: JSON.stringify({ connected_account_id: env.COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID, user_id: env.COMPOSIO_TELEGRAM_USER_ID, version: "latest", arguments: args }),
@@ -33,37 +40,43 @@ async function executeTool<T>(env: Env, slug: string, args: Record<string, unkno
   return (payload.data ?? payload) as T;
 }
 
-async function connector(env: Env) {
-  return env.DB.prepare("SELECT * FROM telegram_connector_state WHERE creator_id=?").bind(CREATOR_ID).first<Connector>();
+async function connector(env: Env, creatorId: string) {
+  return env.DB.prepare("SELECT * FROM telegram_connector_state WHERE creator_id=?").bind(creatorId).first<Connector>();
 }
 
-async function validateIdentity(env: Env) {
-  const state = await connector(env);
-  if (!state) throw new Error("Adelaide’s Telegram pairing has not been migrated.");
+async function activeConnectors(env: Env) {
+  return env.DB.prepare("SELECT * FROM telegram_connector_state WHERE status IN ('connected','needs_check','failed')").all<Connector>();
+}
+
+async function validateIdentity(env: Env, creatorId: string) {
+  const state = await connector(env, creatorId);
+  if (!state) throw new Error("This creator’s Telegram pairing has not been configured.");
   try {
-    const response = await executeTool<{ ok?: boolean; result?: { id?: number; username?: string; first_name?: string; is_bot?: boolean } }>(env, "TELEGRAM_GET_ME", {});
+    const response = await executeTelegramTool<{ ok?: boolean; result?: { id?: number; username?: string; first_name?: string; is_bot?: boolean } }>(env, "TELEGRAM_GET_ME", {});
     const identity = response.result;
     const expected = state.expected_bot_username.replace(/^@/, "").toLowerCase();
     if (!response.ok || !identity?.id || !identity.is_bot || identity.username?.toLowerCase() !== expected) {
       throw new Error(`Telegram bot identity did not match @${expected}.`);
     }
     await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_connector_state SET status='connected',identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(CREATOR_ID),
-      env.DB.prepare("UPDATE messaging_connections SET status='connected',outbound_validated=1,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, CREATOR_ID),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'telegram_identity_validated','telegram-bridge',?)").bind(crypto.randomUUID(), CREATOR_ID, state.connection_id, JSON.stringify({ username: `@${identity.username}` })),
+      env.DB.prepare("UPDATE telegram_connector_state SET status='connected',identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
+      env.DB.prepare("UPDATE messaging_connections SET status='connected',outbound_validated=1,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, creatorId),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_identity_validated','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, JSON.stringify({ username: `@${identity.username}` })),
     ]);
     return { ok: true, username: `@${identity.username}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram validation failed.";
     await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_connector_state SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(message.slice(0, 1000), CREATOR_ID),
-      env.DB.prepare("UPDATE messaging_connections SET status='needs_check',outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(message.slice(0, 1000), state.connection_id, CREATOR_ID),
+      env.DB.prepare("UPDATE telegram_connector_state SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(message.slice(0, 1000), creatorId),
+      env.DB.prepare("UPDATE messaging_connections SET status='needs_check',outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(message.slice(0, 1000), state.connection_id, creatorId),
     ]);
     throw error;
   }
 }
 
 async function importUpdate(env: Env, state: Connector, update: TelegramUpdate) {
+  const creatorId = state.creator_id;
+  const creatorThreadId = threadId(creatorId);
   const message = update.message ?? update.edited_message;
   const updateId = update.update_id;
   if (updateId == null) return { imported: false, nextOffset: state.next_update_id };
@@ -75,124 +88,168 @@ async function importUpdate(env: Env, state: Connector, update: TelegramUpdate) 
   const body = String(message.text ?? message.caption ?? attachmentLabel).trim().slice(0, 20_000);
   if (!body || /^\/start\s+cos_/i.test(body)) return { imported: false, nextOffset };
   const sentAt = message.date ? new Date(message.date * 1000).toISOString() : new Date().toISOString();
-  const participantName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || state.display_name || "Adelaide";
+  const participantName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || state.display_name || "Creator";
   const participantHandle = message.from?.username ? `@${message.from.username}` : state.telegram_username ? `@${state.telegram_username.replace(/^@/, "")}` : "";
   const externalMessageId = String(message.message_id ?? `update-${updateId}`);
-  const existing = await env.DB.prepare("SELECT id FROM messages WHERE creator_id=? AND thread_id=? AND external_message_id=?").bind(CREATOR_ID, THREAD_ID, externalMessageId).first<{ id: string }>();
+  const existing = await env.DB.prepare("SELECT id FROM messages WHERE creator_id=? AND thread_id=? AND external_message_id=?").bind(creatorId, creatorThreadId, externalMessageId).first<{ id: string }>();
   const statements = [
     env.DB.prepare(`INSERT INTO message_threads (id,creator_id,connection_id,external_thread_id,participant_name,participant_handle,subject,unread_count,last_message_at,status)
-      VALUES (?,'adelaide',?,'telegram-private',?,?, 'Agency ↔ creator',?,?,'open')
+      VALUES (?,?,?,? ,?,?, 'Agency ↔ creator',?,?,'open')
       ON CONFLICT(id) DO UPDATE SET participant_name=excluded.participant_name,participant_handle=excluded.participant_handle,
         unread_count=message_threads.unread_count+excluded.unread_count,last_message_at=excluded.last_message_at,updated_at=CURRENT_TIMESTAMP`)
-      .bind(THREAD_ID, state.connection_id, participantName, participantHandle, existing ? 0 : 1, sentAt),
+      .bind(creatorThreadId, creatorId, state.connection_id, `${creatorId}-telegram-private`, participantName, participantHandle, existing ? 0 : 1, sentAt),
   ];
   if (existing) {
-    statements.push(env.DB.prepare("UPDATE messages SET body=?,sent_at=?,delivery_status='received' WHERE id=? AND creator_id=?").bind(body, sentAt, existing.id, CREATOR_ID));
+    statements.push(env.DB.prepare("UPDATE messages SET body=?,sent_at=?,delivery_status='received' WHERE id=? AND creator_id=?").bind(body, sentAt, existing.id, creatorId));
   } else {
     statements.push(
       env.DB.prepare(`INSERT INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-        VALUES (?,'adelaide',?,?,'inbound','creator',?,?,'received')`).bind(`telegram-in-${updateId}`, THREAD_ID, externalMessageId, body, sentAt),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'telegram_reply_collected','telegram-bridge',?)").bind(crypto.randomUUID(), CREATOR_ID, state.connection_id, THREAD_ID, JSON.stringify({ updateId, externalMessageId })),
+        VALUES (?,?,?,?, 'inbound','creator',?,?,'received')`).bind(`telegram-in-${creatorId}-${updateId}`, creatorId, creatorThreadId, externalMessageId, body, sentAt),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'telegram_reply_collected','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, creatorThreadId, JSON.stringify({ updateId, externalMessageId })),
     );
   }
   await env.DB.batch(statements);
   return { imported: !existing, nextOffset };
 }
 
-async function pollUpdates(env: Env, trigger: string) {
-  const runId = crypto.randomUUID();
-  await env.DB.prepare("INSERT INTO telegram_poll_runs (id,creator_id,status) VALUES (?,?,'running')").bind(runId, CREATOR_ID).run();
-  let seen = 0, imported = 0;
+async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?: string) {
+  await env.DB.prepare("INSERT OR IGNORE INTO telegram_bot_state (id) VALUES ('shared')").run();
+  const claimed = await env.DB.prepare(`UPDATE telegram_bot_state SET claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+    WHERE id='shared' AND (claimed_at IS NULL OR claimed_at<datetime('now','-5 minutes'))`).run();
+  if (!claimed.meta.changes) return { ok: true, busy: true, seen: 0, imported: 0 };
+  let states: Connector[] = [];
+  const runs = new Map<string, { id: string; seen: number; imported: number }>();
+  let totalSeen = 0, totalImported = 0;
   try {
-    let state = await connector(env);
-    if (!state) throw new Error("Adelaide’s Telegram pairing has not been migrated.");
-    if (state.status !== "connected") { await validateIdentity(env); state = await connector(env); }
-    if (!state || state.status !== "connected") throw new Error("Telegram identity is not validated.");
+    const configured = (await activeConnectors(env)).results;
+    if (requestedCreatorId && !configured.some((state) => state.creator_id === requestedCreatorId)) throw new Error("This creator’s Telegram pairing has not been configured.");
+    for (const state of configured) if (state.status !== "connected") await validateIdentity(env, state.creator_id).catch(() => undefined);
+    states = (await activeConnectors(env)).results.filter((state) => state.status === "connected");
+    if (requestedCreatorId && !states.some((state) => state.creator_id === requestedCreatorId)) throw new Error("This creator’s Telegram identity is not validated.");
+    const stateByChat = new Map(states.map((state) => [state.chat_id, state]));
+    for (const state of states) {
+      const run = { id: crypto.randomUUID(), seen: 0, imported: 0 };
+      runs.set(state.creator_id, run);
+      await env.DB.prepare("INSERT INTO telegram_poll_runs (id,creator_id,status) VALUES (?,?,'running')").bind(run.id, state.creator_id).run();
+    }
+    let botState = await env.DB.prepare("SELECT next_update_id FROM telegram_bot_state WHERE id='shared'").first<{ next_update_id: number }>();
+    if (!botState) throw new Error("Telegram shared cursor is unavailable.");
     for (let page = 0; page < 5; page++) {
-      const response = await executeTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, "TELEGRAM_GET_UPDATES", { offset: state.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message", "edited_message"] });
+      const response: { ok?: boolean; result?: TelegramUpdate[] } = await executeTelegramTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, "TELEGRAM_GET_UPDATES", { offset: botState.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message", "edited_message"] });
       if (!response.ok) throw new Error("Telegram did not confirm getUpdates.");
-      const updates = response.result ?? [];
+      const updates: TelegramUpdate[] = response.result ?? [];
       if (!updates.length) break;
       for (const update of updates) {
-        const result = await importUpdate(env, state, update);
-        seen++;
-        if (result.imported) imported++;
-        if (result.nextOffset > state.next_update_id) {
-          await env.DB.prepare("UPDATE telegram_connector_state SET next_update_id=?,last_polled_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND next_update_id<?").bind(result.nextOffset, CREATOR_ID, result.nextOffset).run();
-          state = { ...state, next_update_id: result.nextOffset };
+        const updateId: number | undefined = update.update_id;
+        if (updateId == null) continue;
+        totalSeen++;
+        const message = update.message ?? update.edited_message;
+        const state = message?.chat?.id ? stateByChat.get(String(message.chat.id)) : undefined;
+        if (state) {
+          const result = await importUpdate(env, state, update);
+          const run = runs.get(state.creator_id);
+          if (run) { run.seen++; if (result.imported) run.imported++; }
+          if (result.imported) totalImported++;
         }
+        const nextOffset: number = updateId + 1;
+        await env.DB.prepare("UPDATE telegram_bot_state SET next_update_id=?,last_polled_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id='shared' AND next_update_id<?").bind(nextOffset, nextOffset).run();
+        botState = { next_update_id: Math.max(botState.next_update_id, nextOffset) };
       }
       if (updates.length < 100) break;
     }
-    await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_connector_state SET last_polled_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(CREATOR_ID),
-      env.DB.prepare("UPDATE messaging_connections SET read_enabled=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, CREATOR_ID),
-      env.DB.prepare("UPDATE telegram_poll_runs SET status='completed',updates_seen=?,messages_imported=?,completed_at=CURRENT_TIMESTAMP WHERE id=?").bind(seen, imported, runId),
-    ]);
-    console.log(JSON.stringify({ event: "telegram_poll_completed", trigger, runId, seen, imported }));
-    return { ok: true, runId, seen, imported };
+    for (const state of states) {
+      const run = runs.get(state.creator_id)!;
+      await env.DB.batch([
+        env.DB.prepare("UPDATE telegram_connector_state SET last_polled_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(state.creator_id),
+        env.DB.prepare("UPDATE messaging_connections SET read_enabled=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, state.creator_id),
+        env.DB.prepare("UPDATE telegram_poll_runs SET status='completed',updates_seen=?,messages_imported=?,completed_at=CURRENT_TIMESTAMP WHERE id=?").bind(run.seen, run.imported, run.id),
+      ]);
+    }
+    const requested = requestedCreatorId ? runs.get(requestedCreatorId) : undefined;
+    console.log(JSON.stringify({ event: "telegram_poll_completed", trigger, seen: totalSeen, imported: totalImported }));
+    return { ok: true, runId: requested?.id, seen: requested?.seen ?? totalSeen, imported: requested?.imported ?? totalImported };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram polling failed.";
-    await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_poll_runs SET status='failed',updates_seen=?,messages_imported=?,error=?,completed_at=CURRENT_TIMESTAMP WHERE id=?").bind(seen, imported, message.slice(0, 1000), runId),
-      env.DB.prepare("UPDATE telegram_connector_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(message.slice(0, 1000), CREATOR_ID),
-    ]);
-    console.error(JSON.stringify({ event: "telegram_poll_failed", trigger, runId, message }));
+    for (const state of states) {
+      const run = runs.get(state.creator_id)!;
+      await env.DB.batch([
+        env.DB.prepare("UPDATE telegram_poll_runs SET status='failed',updates_seen=?,messages_imported=?,error=?,completed_at=CURRENT_TIMESTAMP WHERE id=?").bind(run.seen, run.imported, message.slice(0, 1000), run.id),
+        env.DB.prepare("UPDATE telegram_connector_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(message.slice(0, 1000), state.creator_id),
+      ]);
+    }
+    await env.DB.prepare("UPDATE telegram_bot_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id='shared'").bind(message.slice(0, 1000)).run();
+    console.error(JSON.stringify({ event: "telegram_poll_failed", trigger, message }));
     throw error;
+  } finally {
+    await env.DB.prepare("UPDATE telegram_bot_state SET claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id='shared'").run();
   }
 }
 
 async function sendMessage(request: Request, env: Env) {
-  const input = await request.json<{ logId?: string }>();
-  if (!input.logId) return Response.json({ ok: false, error: "missing_log_id" }, { status: 400 });
+  const input = await request.json<{ logId?: string; creatorId?: string }>();
+  if (!input.logId || !input.creatorId) return Response.json({ ok: false, error: "missing_log_or_creator_id" }, { status: 400 });
+  const creatorId = input.creatorId;
   const row = await env.DB.prepare(`SELECT l.id,l.message_text,l.status,l.claimed_at,c.id AS connection_id,c.write_enabled,c.outbound_validated,c.emergency_paused,c.status AS connection_status,s.chat_id
     FROM telegram_send_log l JOIN messaging_connections c ON c.id=l.connection_id AND c.creator_id=l.creator_id
     JOIN telegram_connector_state s ON s.creator_id=l.creator_id AND s.connection_id=c.id
-    WHERE l.id=? AND l.creator_id=?`).bind(input.logId, CREATOR_ID).first<{ id: string; message_text: string; status: string; claimed_at: string | null; connection_id: string; write_enabled: number; outbound_validated: number; emergency_paused: number; connection_status: string; chat_id: string }>();
+    WHERE l.id=? AND l.creator_id=?`).bind(input.logId, creatorId).first<{ id: string; message_text: string; status: string; claimed_at: string | null; connection_id: string; write_enabled: number; outbound_validated: number; emergency_paused: number; connection_status: string; chat_id: string }>();
   if (!row || row.status !== "queued" || row.claimed_at) return Response.json({ ok: false, error: "message_not_sendable" }, { status: 409 });
   if (row.emergency_paused || !row.write_enabled || !row.outbound_validated || row.connection_status !== "connected") return Response.json({ ok: false, error: "outbound_not_authorised" }, { status: 409 });
-  const claim = await env.DB.prepare("UPDATE telegram_send_log SET claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='queued' AND claimed_at IS NULL").bind(row.id, CREATOR_ID).run();
+  const claim = await env.DB.prepare("UPDATE telegram_send_log SET claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='queued' AND claimed_at IS NULL").bind(row.id, creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "message_already_claimed" }, { status: 409 });
   try {
-    const result = await executeTool<{ ok?: boolean; result?: { message_id?: number; date?: number } }>(env, "TELEGRAM_SEND_MESSAGE", { chat_id: row.chat_id, text: row.message_text, disable_web_page_preview: true });
+    const result = await executeTelegramTool<{ ok?: boolean; result?: { message_id?: number; date?: number } }>(env, "TELEGRAM_SEND_MESSAGE", { chat_id: row.chat_id, text: row.message_text, disable_web_page_preview: true });
     if (!result.ok || !result.result?.message_id) throw new Error("Telegram did not confirm the message.");
     const providerId = String(result.result.message_id);
     const sentAt = result.result.date ? new Date(result.result.date * 1000).toISOString() : new Date().toISOString();
     await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_send_log SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(providerId, row.id, CREATOR_ID),
+      env.DB.prepare("UPDATE telegram_send_log SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(providerId, row.id, creatorId),
       env.DB.prepare(`INSERT INTO message_threads (id,creator_id,connection_id,external_thread_id,participant_name,subject,unread_count,last_message_at,status)
-        VALUES (?,'adelaide',?,'telegram-private','Adelaide','Agency ↔ creator',0,?,'open') ON CONFLICT(id) DO UPDATE SET last_message_at=excluded.last_message_at,updated_at=CURRENT_TIMESTAMP`).bind(THREAD_ID, row.connection_id, sentAt),
+        VALUES (?,?,?,?,?,'Agency ↔ creator',0,?,'open') ON CONFLICT(id) DO UPDATE SET last_message_at=excluded.last_message_at,updated_at=CURRENT_TIMESTAMP`).bind(threadId(creatorId), creatorId, row.connection_id, `${creatorId}-telegram-private`, "Creator", sentAt),
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-        VALUES (?,'adelaide',?,?,'outbound','agency',?,?,'sent')`).bind(`telegram-out-${providerId}`, THREAD_ID, providerId, row.message_text, sentAt),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,detail) VALUES (?,?,?,?, 'telegram_message_sent','telegram-bridge',?)").bind(crypto.randomUUID(), CREATOR_ID, row.connection_id, THREAD_ID, JSON.stringify({ logId: row.id, providerMessageId: providerId })),
+        VALUES (?,?,?,?, 'outbound','agency',?,?,'sent')`).bind(`telegram-out-${creatorId}-${providerId}`, creatorId, threadId(creatorId), providerId, row.message_text, sentAt),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'telegram_message_sent','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, threadId(creatorId), JSON.stringify({ logId: row.id, providerMessageId: providerId })),
     ]);
     return Response.json({ ok: true, logId: row.id, providerMessageId: providerId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram delivery failed.";
     await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_send_log SET status='failed',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(message.slice(0, 1000), row.id, CREATOR_ID),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,detail) VALUES (?,?,?,'telegram_message_failed','telegram-bridge',?)").bind(crypto.randomUUID(), CREATOR_ID, row.connection_id, JSON.stringify({ logId: row.id, error: message })),
+      env.DB.prepare("UPDATE telegram_send_log SET status='failed',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(message.slice(0, 1000), row.id, creatorId),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_message_failed','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, JSON.stringify({ logId: row.id, error: message })),
     ]);
     return Response.json({ ok: false, error: message }, { status: 502 });
   }
 }
 
-async function status(env: Env) {
+async function status(env: Env, creatorId: string) {
   const [state, lastRun] = await Promise.all([
-    env.DB.prepare("SELECT status,telegram_username,display_name,identity_confirmed_at,last_polled_at,last_error,updated_at FROM telegram_connector_state WHERE creator_id=?").bind(CREATOR_ID).first(),
-    env.DB.prepare("SELECT status,updates_seen,messages_imported,error,started_at,completed_at FROM telegram_poll_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(CREATOR_ID).first(),
+    env.DB.prepare("SELECT status,telegram_username,display_name,identity_confirmed_at,last_polled_at,last_error,updated_at FROM telegram_connector_state WHERE creator_id=?").bind(creatorId).first(),
+    env.DB.prepare("SELECT status,updates_seen,messages_imported,error,started_at,completed_at FROM telegram_poll_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(creatorId).first(),
   ]);
   return Response.json({ ok: true, state, lastRun });
+}
+
+function requiredCreatorId(value: unknown) {
+  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(value)) throw new Error("A valid creatorId is required.");
+  return value;
+}
+
+async function creatorIdFromBody(request: Request) {
+  return requiredCreatorId((await request.json<{ creatorId?: string }>()).creatorId);
+}
+
+async function pollAllCreators(env: Env) {
+  await pollSharedUpdates(env, "cron");
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
-      if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env));
-      if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollUpdates(env, "service"));
+      if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env, await creatorIdFromBody(request)));
+      if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollSharedUpdates(env, "service", await creatorIdFromBody(request)));
       if (request.method === "POST" && url.pathname === "/send") return sendMessage(request, env);
-      if (request.method === "GET" && url.pathname === "/status") return status(env);
+      if (request.method === "GET" && url.pathname === "/status") return status(env, requiredCreatorId(url.searchParams.get("creator")));
       return new Response("Not found", { status: 404 });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Telegram bridge failed.";
@@ -201,6 +258,6 @@ export default {
     }
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(pollUpdates(env, "cron"));
+    ctx.waitUntil(pollAllCreators(env));
   },
 } satisfies ExportedHandler<Env>;

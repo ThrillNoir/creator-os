@@ -24,7 +24,7 @@ export interface CreatorFriend { id: number; display_name: string; stage_name: s
 export interface AttachedFriend extends CreatorFriend { evidence_platform: string | null; confirmed_at: string | null }
 export interface AssetEvent { id: string; actor: string; event_type: string; snapshot: string; created_at: string }
 
-export async function getLibrarySummary() {
+export async function getLibrarySummary(creatorId: string) {
   const { DB } = cloudflareEnv();
   return DB.prepare(`
     SELECT COUNT(*) AS assets,
@@ -33,14 +33,14 @@ export async function getLibrarySummary() {
       SUM(CASE WHEN c.safety IS NULL THEN 1 ELSE 0 END) AS needs_review,
       SUM(CASE WHEN a.preview_r2_key IS NOT NULL THEN 1 ELSE 0 END) AS previews
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-    WHERE a.creator_id='adelaide' AND a.source_available=1
-  `).first<{ assets: number; sfw: number; nsfw: number; needs_review: number; previews: number }>();
+    WHERE a.creator_id=? AND a.source_available=1
+  `).bind(creatorId).first<{ assets: number; sfw: number; nsfw: number; needs_review: number; previews: number }>();
 }
 
-export async function getLibraryAssets(filters: LibraryFilters = {}) {
+export async function getLibraryAssets(creatorId: string, filters: LibraryFilters = {}) {
   const { DB } = cloudflareEnv();
   const conditions = ["a.creator_id=?", "a.source_available=1"];
-  const values: unknown[] = ["adelaide"];
+  const values: unknown[] = [creatorId];
   if (filters.safety === "review") conditions.push("c.safety IS NULL");
   if (filters.safety === "sfw" || filters.safety === "nsfw") { conditions.push("c.safety=?"); values.push(filters.safety); }
   if (destinations.includes(filters.destination as Destination)) {
@@ -61,34 +61,34 @@ export async function getLibraryAssets(filters: LibraryFilters = {}) {
   return result.results;
 }
 
-export async function getAssetByObjectId(objectId: string) {
-  const key = `creators/adelaide/assets/${objectId}/preview.jpg`;
+export async function getAssetByObjectId(creatorId: string, objectId: string) {
+  const key = `creators/${creatorId}/assets/${objectId}/preview.jpg`;
   return cloudflareEnv().DB.prepare(`
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-    WHERE a.creator_id='adelaide' AND a.preview_r2_key=? AND a.source_available=1
-  `).bind(key).first<AssetRow>();
+    WHERE a.creator_id=? AND a.preview_r2_key=? AND a.source_available=1
+  `).bind(creatorId, key).first<AssetRow>();
 }
 
 export function objectIdFor(asset: AssetRow) {
   return asset.preview_r2_key?.match(/\/([a-f0-9]{64})\/preview\.jpg$/)?.[1] ?? null;
 }
 
-export async function getCreatorFriends() {
-  return (await cloudflareEnv().DB.prepare("SELECT id,display_name,stage_name,consent_status FROM people WHERE creator_id='adelaide' ORDER BY display_name").all<CreatorFriend>()).results;
+export async function getCreatorFriends(creatorId: string) {
+  return (await cloudflareEnv().DB.prepare("SELECT id,display_name,stage_name,consent_status FROM people WHERE creator_id=? ORDER BY display_name").bind(creatorId).all<CreatorFriend>()).results;
 }
 
-export async function getAttachedFriends(assetId: string) {
+export async function getAttachedFriends(creatorId: string, assetId: string) {
   return (await cloudflareEnv().DB.prepare(`
     SELECT p.id,p.display_name,p.stage_name,p.consent_status,att.evidence_platform,att.confirmed_at
     FROM asset_people ap JOIN people p ON p.id=ap.person_id AND p.creator_id=ap.creator_id
     LEFT JOIN asset_paid_consent_attestations att ON att.asset_id=ap.asset_id AND att.person_id=ap.person_id AND att.revoked_at IS NULL
-    WHERE ap.creator_id='adelaide' AND ap.asset_id=? ORDER BY p.display_name
-  `).bind(assetId).all<AttachedFriend>()).results;
+    WHERE ap.creator_id=? AND ap.asset_id=? ORDER BY p.display_name
+  `).bind(creatorId, assetId).all<AttachedFriend>()).results;
 }
 
-export async function getAssetEvents(assetId: string) {
-  return (await cloudflareEnv().DB.prepare(`SELECT id,actor,event_type,snapshot,created_at FROM asset_classification_events WHERE creator_id='adelaide' AND asset_id=? ORDER BY created_at DESC LIMIT 30`).bind(assetId).all<AssetEvent>()).results;
+export async function getAssetEvents(creatorId: string, assetId: string) {
+  return (await cloudflareEnv().DB.prepare(`SELECT id,actor,event_type,snapshot,created_at FROM asset_classification_events WHERE creator_id=? AND asset_id=? ORDER BY created_at DESC LIMIT 30`).bind(creatorId, assetId).all<AssetEvent>()).results;
 }

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "verify:identity": "node scripts/verify-service-identity.mjs",
     "deploy": "wrangler deploy",
     "types": "wrangler types"
   },

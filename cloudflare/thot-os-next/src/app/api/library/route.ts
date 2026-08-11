@@ -1,10 +1,10 @@
-import { requireAccessIdentity } from "@/lib/access";
 import { getLibraryAssets } from "@/lib/library";
+import { getCreatorContext } from "@/lib/identity";
 
 export async function GET(request: Request) {
-  await requireAccessIdentity();
   const url = new URL(request.url);
   const creatorId = url.searchParams.get("creator")?.trim() || "";
-  if (creatorId !== "adelaide") return Response.json({ ok: false, error: "creator_not_found" }, { status: 404 });
-  return Response.json({ ok: true, creatorId, assets: await getLibraryAssets() }, { headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+  const context = await getCreatorContext(creatorId);
+  if (!context) return Response.json({ ok: false, error: "creator_not_found" }, { status: 404 });
+  return Response.json({ ok: true, creatorId, assets: await getLibraryAssets(context.creator.creator_id) }, { headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }

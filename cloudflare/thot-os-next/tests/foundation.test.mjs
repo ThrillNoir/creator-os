@@ -15,7 +15,9 @@ test("OpenNext worker keeps the existing private D1 and R2 bindings", async () =
 
 test("cloud library writes are creator scoped and audited", async () => {
   const actions = await source("src/app/actions.ts");
-  assert.match(actions, /creator_id='adelaide'/);
+  assert.match(actions, /requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /creatorPrepare\(DB, creatorId/);
+  assert.doesNotMatch(actions, /creator_id=['"]adelaide['"]/i);
   assert.match(actions, /asset_classification_events/);
   assert.match(actions, /NSFW assets can only be marked for X, Reddit, subscription or PPV/);
   assert.match(actions, /slice\(0, 50\)/);
@@ -23,10 +25,10 @@ test("cloud library writes are creator scoped and audited", async () => {
   assert.match(actions, /peopleMode/);
 });
 
-test("private previews require a matching Adelaide D1 asset", async () => {
+test("private previews require a matching authorised creator D1 asset", async () => {
   const route = await source("src/app/api/preview/[objectId]/route.ts");
-  assert.match(route, /requireAccessIdentity/);
-  assert.match(route, /creator_id='adelaide' AND preview_r2_key=\?/);
+  assert.match(route, /requireCreatorContext/);
+  assert.match(route, /creator_id=\? AND preview_r2_key=\?/);
   assert.match(route, /private, max-age=86400/);
 });
 
@@ -56,9 +58,9 @@ test("asset classification progressively reveals valid destinations and enforces
 test("health and library APIs preserve authenticated staging contracts", async () => {
   const [health, library] = await Promise.all([source("src/app/health/route.ts"), source("src/app/api/library/route.ts")]);
   assert.match(health, /nextjs-opennext/);
-  assert.match(health, /requireAccessIdentity/);
-  assert.match(library, /creatorId !== "adelaide"/);
-  assert.match(library, /requireAccessIdentity/);
+  assert.match(health, /requireCreatorContext/);
+  assert.match(library, /getCreatorContext\(creatorId\)/);
+  assert.match(library, /status: 404/);
 });
 
 test("all social platform workspaces are consolidated under Operations", async () => {
@@ -72,7 +74,8 @@ test("all social platform workspaces are consolidated under Operations", async (
 
 test("Operations data and Reddit scheduling stay creator scoped and audited", async () => {
   const [operations, page, actions, migration, communityEvents] = await Promise.all([source("src/lib/operations.ts"), source("src/app/operations/page.tsx"), source("src/app/actions.ts"), source("../thot-os-app/migrations/0003_operations_foundation.sql"), source("../thot-os-app/migrations/0017_reddit_community_events.sql")]);
-  assert.match(operations, /creator_id='adelaide'/);
+  assert.match(operations, /creator_id=\?/);
+  assert.doesNotMatch(operations, /creator_id=['"]adelaide['"]/i);
   assert.match(actions, /createRedditPostAction/);
   assert.match(actions, /saveRedditCommunityAction/);
   assert.match(actions, /ON CONFLICT\(creator_id,name\) DO UPDATE/);
@@ -116,10 +119,11 @@ test("Reddit delivery uses a private cron worker with claims and receipts", asyn
   assert.match(bridge, /DROPBOX_GET_TEMPORARY_LINK/);
   assert.match(bridge, /native_publish_completed/);
   assert.match(bridge, /REDDIT_POST_REDDIT_COMMENT/);
-  assert.match(bridge, /The signed-in Reddit browser does not match Adelaide/);
+  assert.match(bridge, /bridge_credentials/);
+  assert.match(bridge, /x-thot-os-installation-id/);
   assert.match(nativeMigration, /CREATE TABLE reddit_bridge_tokens/);
-  assert.match(manifest, /0\.7\.4/);
-  assert.match(background, /creator_os_reddit_pair/);
+  assert.match(manifest, /0\.8\.1/);
+  assert.match(background, /creator_os_bridge_pair/);
   assert.match(background, /prepareAndSubmitRedditPost/);
   assert.match(migration, /CREATE TABLE scheduler_runs/);
   assert.match(migration, /CREATE TABLE provider_connections/);
@@ -144,7 +148,7 @@ test("Instagram Operations uses verified OAuth, explicit approval, and a private
   assert.match(actions, /refreshInstagramDataAction/);
   assert.match(operations, /InstagramWorkspace/);
   assert.match(operations, /Instagram performance/);
-  assert.match(callback, /requireAccessIdentity/);
+  assert.match(callback, /requireCreatorContext/);
   assert.match(scheduler, /INSTAGRAM_GET_USER_INFO/);
   assert.match(scheduler, /INSTAGRAM_CREATE_MEDIA_CONTAINER/);
   assert.match(scheduler, /INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH/);
@@ -181,8 +185,9 @@ test("Vault Operations exposes the signed Fansly queue and protects device claim
   assert.match(bridge, /DROPBOX_GET_TEMPORARY_LINK/);
   assert.match(bridge, /status='claimed'/);
   assert.match(migration, /CREATE TABLE vault_bridge_tokens/);
-  assert.match(manifest, /0\.7\.4/);
-  assert.match(background, /creator-os-cloud-pair-token/);
+  assert.match(bridge, /bridge_credentials/);
+  assert.match(manifest, /0\.8\.1/);
+  assert.match(background, /trusted cloud pairing/);
 });
 
 test("Unified Messages is creator scoped, auditable and fail-closed for outbound delivery", async () => {
@@ -199,7 +204,8 @@ test("Unified Messages is creator scoped, auditable and fail-closed for outbound
   assert.match(shell, /"Messages", "\/messages"/);
   assert.match(page, /Enter-to-send messaging/);
   assert.match(page, /Telegram receipts/);
-  assert.match(messages, /creator_id='adelaide'/);
+  assert.match(messages, /creator_id=\?/);
+  assert.doesNotMatch(messages, /creator_id=['"]adelaide['"]/i);
   assert.match(actions, /Controlled outbound validation is required/);
   assert.match(actions, /messaging_audit_events/);
   assert.match(migration, /CREATE TABLE messaging_connections/);
@@ -261,7 +267,7 @@ test("Telegram and Fansly operate inside the unified thread with explicit device
   assert.match(extension, /messageBridgeRequest\(config,"\/ingest"/);
   assert.match(extension, /Fansly surface readiness/);
   assert.match(extension, /textarea\.message-input/);
-  assert.match(manifest, /"version": "0\.7\.4"/);
+  assert.match(manifest, /"version": "0\.8\.1"/);
   assert.match(extension, /app-button\.send-button\.can-send/);
   assert.match(extension, /fanslyMessageGroup/);
   assert.match(extension, /pageHidden/);
@@ -335,8 +341,8 @@ test("Instagram message refresh stores private media and keeps read state provid
   assert.match(scheduler, /INSTAGRAM_MARK_SEEN/);
   assert.match(scheduler, /MAX_MESSAGE_MEDIA_BYTES/);
   assert.match(schedulerConfig, /"binding": "PREVIEWS"/);
-  assert.match(attachmentRoute, /requireAccessIdentity/);
-  assert.match(attachmentRoute, /creator_id='adelaide'/);
+  assert.match(attachmentRoute, /requireCreatorContext/);
+  assert.match(attachmentRoute, /a\.creator_id=\?/);
   assert.match(attachmentRoute, /PREVIEWS\.get/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS message_attachments/);
   assert.match(migration, /"privateR2Media":true/);
@@ -347,4 +353,52 @@ test("review fixes preserve platform-specific queue IDs and messaging authority"
   assert.match(actions, /postId = `reddit-/);
   assert.match(actions, /Reconnect and verify Instagram before approving delivery/);
   assert.doesNotMatch(scheduler, /SET status='connected',read_enabled=1,write_enabled=0,last_synced_at/);
+});
+
+test("multi-creator identity, permissions and Chrome-profile pairing are D1-backed", async () => {
+  const [migration, identity, authorization, access, shell, creators, bridge, extension] = await Promise.all([
+    source("../thot-os-app/migrations/0018_creator_identity_profiles.sql"),
+    source("src/lib/identity.ts"),
+    source("src/lib/authorization.ts"),
+    source("src/lib/access.ts"),
+    source("src/components/app-shell.tsx"),
+    source("src/app/creators/page.tsx"),
+    source("../vault-bridge/src/index.ts"),
+    source("../../public/local-bridge-extension/background.js"),
+  ]);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS users/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS creator_memberships/);
+  assert.match(migration, /agency_admin.*operator.*creator.*viewer/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS account_browser_profiles/);
+  assert.match(migration, /UNIQUE \(profile_id, platform\)/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS bridge_credentials/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS service_credentials/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS identity_audit_events/);
+  assert.match(identity, /requireCreatorContext/);
+  assert.match(authorization, /manage_identity/);
+  assert.match(authorization, /lockedCreatorId/);
+  assert.doesNotMatch(access, /claims\.email\?\.toLowerCase\(\) !== env\.ACCESS_ALLOWED_EMAIL/);
+  assert.match(shell, /switchCreatorAction/);
+  assert.match(creators, /a social handle alone never establishes identity/);
+  assert.match(creators, /assignBrowserProfileAction/);
+  assert.match(bridge, /bridge_credentials/);
+  assert.match(bridge, /installation_id/);
+  assert.match(extension, /creatorOsInstallationId/);
+});
+
+test("all live runtime creator scopes are derived rather than hard-coded", async () => {
+  const paths = [
+    "src/app/actions.ts",
+    "src/lib/library.ts",
+    "src/lib/messages.ts",
+    "src/lib/operations.ts",
+    "../vault-bridge/src/index.ts",
+    "../reddit-scheduler/src/index.ts",
+    "../instagram-scheduler/src/index.ts",
+    "../telegram-bridge/src/index.ts",
+  ];
+  const runtime = (await Promise.all(paths.map(source))).join("\n");
+  assert.doesNotMatch(runtime, /creator_id\s*=\s*['"]adelaide['"]/i);
+  assert.doesNotMatch(runtime, /CREATOR_ID\s*=\s*['"]adelaide['"]/i);
+  assert.match(runtime, /service:(?:reddit|instagram|telegram|vault-bridge|dropbox)/);
 });
