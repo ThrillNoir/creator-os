@@ -31,6 +31,15 @@ export function roleCan(role: string, permission: CreatorPermission) {
   return permissions[role as CreatorRole]?.has(permission) ?? false;
 }
 
+export function creatorRoleLabel(role: CreatorRole) {
+  return ({
+    agency_admin: "Agency administrator",
+    operator: "Operator",
+    creator: "Creator",
+    viewer: "Viewer",
+  } satisfies Record<CreatorRole, string>)[role];
+}
+
 export function authorizeCreatorScope(
   memberships: readonly CreatorMembership[],
   permission: CreatorPermission,

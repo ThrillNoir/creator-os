@@ -16,17 +16,24 @@ function membershipEmail(value: FormDataEntryValue | null) {
   return email;
 }
 
+function requireConfirmation(formData: FormData, expected: string) {
+  if (formData.get("confirmation") !== expected) throw new Error("Explicit confirmation is required for this administrative action.");
+}
+
 export async function switchCreatorAction(formData: FormData) {
   const identity = await getCreatorIdentity();
   const creatorId = String(formData.get("creatorId") ?? "");
-  if (!identity.memberships.some((membership) => membership.creator_id === creatorId && membership.role === "agency_admin")) throw new Error("Only an agency admin can switch to that creator workspace.");
+  const membership = identity.memberships.find((item) => item.creator_id === creatorId && item.role === "agency_admin");
+  if (!membership) throw new Error("Only an agency administrator can switch to that creator workspace.");
+  const { DB } = cloudflareEnv();
+  await identityAuditStatement(DB, humanAuditActor({ email: identity.email, creator: membership }), "creator_workspace_selected", creatorId, { administrativeAction: true }).run();
   const localBypass = (cloudflareEnv() as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string }).LOCAL_ACCESS_BYPASS;
   (await cookies()).set("thot_os_creator", creatorId, { httpOnly: true, sameSite: "lax", secure: localBypass !== "1", path: "/", maxAge: 60 * 60 * 24 * 365 });
   redirect("/");
 }
 
-export async function registerBrowserProfileAction(formData: FormData) {
-  const context = await requireCreatorContext("manage_identity");
+export async function registerBrowserProfileAction(creatorId: string, formData: FormData) {
+  const context = await requireCreatorContext("manage_identity", creatorId);
   const label = String(formData.get("label") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
   const installationId = String(formData.get("installationId") ?? "").trim().toLowerCase();
   if (label.length < 2) throw new Error("Enter a recognisable Chrome profile label.");
@@ -36,13 +43,13 @@ export async function registerBrowserProfileAction(formData: FormData) {
   const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,?,?,?,?)").bind(id, context.creator.creator_id, label, context.email, installationId),
-    identityAuditStatement(DB, actor, "browser_profile_registered", id, { label, installationId }),
+    identityAuditStatement(DB, actor, "browser_profile_registered", id, { label, installationIdSuffix: installationId.slice(-6), administrativeAction: true }),
   ]);
   revalidatePath("/creators");
 }
 
-export async function assignBrowserProfileAction(formData: FormData) {
-  const context = await requireCreatorContext("manage_identity");
+export async function assignBrowserProfileAction(creatorId: string, formData: FormData) {
+  const context = await requireCreatorContext("manage_identity", creatorId);
   const accountId = String(formData.get("accountId") ?? "");
   const profileId = String(formData.get("profileId") ?? "");
   const { DB } = cloudflareEnv();
@@ -56,13 +63,14 @@ export async function assignBrowserProfileAction(formData: FormData) {
     DB.prepare(`INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by)
       VALUES (?,?,?,?,?) ON CONFLICT(creator_id,account_id) DO UPDATE SET profile_id=excluded.profile_id,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP,verified_at=NULL`)
       .bind(context.creator.creator_id, account.id, account.platform, profile.id, context.email),
-    identityAuditStatement(DB, actor, "browser_profile_assigned", account.id, { profileId: profile.id, platform: account.platform }),
+    identityAuditStatement(DB, actor, "browser_profile_assigned", account.id, { profileId: profile.id, platform: account.platform, administrativeAction: true }),
   ]);
   revalidatePath("/creators");
 }
 
-export async function revokeBridgeCredentialsAction(formData: FormData) {
-  const context = await requireCreatorContext("manage_identity");
+export async function revokeBridgeCredentialsAction(creatorId: string, formData: FormData) {
+  requireConfirmation(formData, "revoke-bridge");
+  const context = await requireCreatorContext("manage_identity", creatorId);
   const accountId = String(formData.get("accountId") ?? "");
   const { DB } = cloudflareEnv();
   const account = await DB.prepare("SELECT id,platform FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, context.creator.creator_id).first<{ id: string; platform: string }>();
@@ -70,13 +78,13 @@ export async function revokeBridgeCredentialsAction(formData: FormData) {
   const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_id=? AND status='active'").bind(context.creator.creator_id, account.id),
-    identityAuditStatement(DB, actor, "bridge_credentials_revoked", account.id, { platform: account.platform }),
+    identityAuditStatement(DB, actor, "bridge_credentials_revoked", account.id, { platform: account.platform, confirmed: true, administrativeAction: true }),
   ]);
   revalidatePath("/creators");
 }
 
-export async function saveCreatorMembershipAction(formData: FormData) {
-  const context = await requireCreatorContext("manage_identity");
+export async function saveCreatorMembershipAction(creatorId: string, formData: FormData) {
+  const context = await requireCreatorContext("manage_identity", creatorId);
   const email = membershipEmail(formData.get("email"));
   const displayName = String(formData.get("displayName") ?? "").replace(/\s+/g, " ").trim().slice(0, 100) || email;
   const role = String(formData.get("role") ?? "") as CreatorRole;
@@ -93,13 +101,14 @@ export async function saveCreatorMembershipAction(formData: FormData) {
     DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?,'active')").bind(email, displayName),
     DB.prepare(`INSERT INTO creator_memberships (creator_id,user_email,role,status) VALUES (?,?,?,'active')
       ON CONFLICT(creator_id,user_email) DO UPDATE SET role=excluded.role,status='active',updated_at=CURRENT_TIMESTAMP`).bind(context.creator.creator_id, email, role),
-    identityAuditStatement(DB, actor, "creator_membership_saved", email, { role }),
+    identityAuditStatement(DB, actor, "creator_membership_saved", email, { role, administrativeAction: true }),
   ]);
   revalidatePath("/creators");
 }
 
-export async function suspendCreatorMembershipAction(formData: FormData) {
-  const context = await requireCreatorContext("manage_identity");
+export async function suspendCreatorMembershipAction(creatorId: string, formData: FormData) {
+  requireConfirmation(formData, "suspend-membership");
+  const context = await requireCreatorContext("manage_identity", creatorId);
   const email = membershipEmail(formData.get("email"));
   if (email === context.email) throw new Error("Switch to another agency administrator before suspending your own membership.");
   const { DB } = cloudflareEnv();
@@ -109,7 +118,7 @@ export async function suspendCreatorMembershipAction(formData: FormData) {
   const actor = humanAuditActor(context);
   await DB.batch([
     DB.prepare("UPDATE creator_memberships SET status='suspended',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND lower(user_email)=?").bind(context.creator.creator_id, email),
-    identityAuditStatement(DB, actor, "creator_membership_suspended", email, { role: membership.role }),
+    identityAuditStatement(DB, actor, "creator_membership_suspended", email, { role: membership.role, confirmed: true, administrativeAction: true }),
   ]);
   revalidatePath("/creators");
 }

@@ -379,7 +379,7 @@ test("multi-creator identity, permissions and Chrome-profile pairing are D1-back
   assert.match(authorization, /lockedCreatorId/);
   assert.doesNotMatch(access, /claims\.email\?\.toLowerCase\(\) !== env\.ACCESS_ALLOWED_EMAIL/);
   assert.match(shell, /switchCreatorAction/);
-  assert.match(creators, /a social handle alone never establishes identity/);
+  assert.match(creators, /platform handle is descriptive only/);
   assert.match(creators, /assignBrowserProfileAction/);
   assert.match(bridge, /bridge_credentials/);
   assert.match(bridge, /installation_id/);

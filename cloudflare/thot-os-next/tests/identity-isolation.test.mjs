@@ -22,6 +22,13 @@ test("an unassigned creator scope is concealed", () => {
   assert.deepEqual(authorizeCreatorScope([adelaide], "view", "second", null), { ok: false, status: 404 });
 });
 
+test("an agency administrator cannot forge an unauthorized creator cookie or request", () => {
+  const admin = { ...adelaide, role: "agency_admin" };
+  assert.equal(selectCreatorMembership([admin], null, "second"), null);
+  assert.equal(selectCreatorMembership([admin], "second", null), null);
+  assert.deepEqual(authorizeCreatorScope([admin], "manage_identity", "second", null), { ok: false, status: 404 });
+});
+
 test("creator-role identities cannot use a cookie to enter another membership", () => {
   const selected = selectCreatorMembership([adelaide, secondCreator], null, "second");
   assert.equal(selected?.creator_id, "adelaide");
@@ -126,7 +133,7 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
   assert.match(migration, /creator_memberships_staff_class_update/);
   assert.doesNotMatch(migration, /SELECT CASE/);
   assert.match(actions, /browser_profiles WHERE id=\? AND creator_id=\?/);
-  assert.match(page, /browser_profiles WHERE creator_id=\?/);
+  assert.match(page, /FROM browser_profiles bp[\s\S]*WHERE bp\.creator_id=\?/);
   assert.doesNotMatch(actions, /ON CONFLICT\(email\) DO UPDATE SET[\s\S]{0,120}status='active'/);
   assert.match(actions, /globally suspended/);
   assert.match(auditMigration, /actor_role TEXT NOT NULL/);

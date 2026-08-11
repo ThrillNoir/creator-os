@@ -39,4 +39,4 @@ export async function requireCreatorContext(permission: CreatorPermission = "vie
   return { ...identity, creator: decision.membership };
 }
 
-export { roleCan } from "./authorization";
+export { creatorRoleLabel, roleCan } from "./authorization";
