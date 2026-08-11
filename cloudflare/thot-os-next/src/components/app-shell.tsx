@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { requireCreatorContext } from "@/lib/identity";
 import { switchCreatorAction } from "@/app/identity-actions";
+import { creatorRoleLabel } from "@/lib/authorization";
 
 const available = [
   ["⌂", "Overview", "/"],
@@ -11,19 +12,24 @@ const available = [
   ["◇", "Creators", "/creators"],
 ] as const;
 
-export async function AppShell({ active, children }: { active: string; children: ReactNode }) {
-  const identity = await requireCreatorContext();
+export async function AppShell({ active, children, creatorId }: { active: string; children: ReactNode; creatorId?: string }) {
+  const identity = await requireCreatorContext("view", creatorId);
+  const roleLabel = creatorRoleLabel(identity.creator.role);
   return <main className="shell">
     <aside className="sidebar">
       <Link className="brand" href="/"><span className="brand-mark">T</span><span><strong>THOT OS</strong><small>Private agency workspace</small></span></Link>
       <p className="nav-label">WORKSPACE</p>
       <nav>{available.map(([icon, label, href]) => <Link className={`nav-item ${active === label ? "active" : ""}`} href={href} key={label}><b>{icon}</b>{label}</Link>)}</nav>
       <Link className={`migration-card ${active === "Migration" ? "active" : ""}`} href="/migration"><span><b>Migration progress</b><small>View the rollout plan</small></span><strong>6 live</strong></Link>
+      <section className="signed-in-card" aria-label="Signed-in identity">
+        <small>Signed in</small><strong>{identity.email}</strong><span>{roleLabel}</span>
+      </section>
       <form className="creator-card creator-picker" action={switchCreatorAction}>
-        <span>{identity.creator.creator_initials}</span><label><small>Active creator · {identity.creator.role}</small>
+        <span>{identity.creator.creator_initials}</span><label><small>Selected creator workspace</small>
           {identity.creator.role === "agency_admin" ? <select name="creatorId" defaultValue={identity.creator.creator_id} aria-label="Active creator">
             {identity.memberships.filter((membership) => membership.role === "agency_admin").map((membership) => <option key={membership.creator_id} value={membership.creator_id}>{membership.creator_name}</option>)}
-          </select> : <strong>{identity.creator.creator_name}</strong>}</label>{identity.creator.role === "agency_admin" && <button type="submit">Switch</button>}
+          </select> : <strong>{identity.creator.creator_name}</strong>}</label>{identity.creator.role === "agency_admin" && <button type="submit">Switch workspace</button>}
+        <small className="creator-scope-note">You remain signed in as {roleLabel}; switching never impersonates the creator.</small>
       </form>
     </aside>
     <section className="workspace">{children}</section>
