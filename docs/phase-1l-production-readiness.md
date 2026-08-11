@@ -83,8 +83,10 @@ Before any production application:
 `.github/workflows/verify.yml` runs only for pull requests to `main`, cancels
 superseded runs, grants `GITHUB_TOKEN` only `contents: read`, uses immutable
 checkout and Node setup action revisions, and uses `npm ci` in every package.
-It runs the root verification suite, root TypeScript check and diff check,
-Cloudflare application tests (including local migration replay and isolation),
+It runs reproducible root lint, tests, build, TypeScript, and diff checks;
+the root database integrity/isolation scripts remain data-dependent local
+checks and were run locally in this review. Cloudflare application tests
+include local migration replay and isolation coverage,
 Next and OpenNext builds, all standalone Worker TypeScript checks, and Telegram
 unit tests. It deliberately contains no deployment command, Cloudflare token,
 secret, platform session, or authenticated service-identity verification.
