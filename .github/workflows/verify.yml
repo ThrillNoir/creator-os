@@ -32,6 +32,10 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
+      - run: mkdir -p .creator-os
+      - run: >-
+          node --experimental-strip-types --input-type=module
+          -e 'import("./src/lib/db.ts").then(({ getCreators }) => getCreators())'
       - run: npm run verify
       - run: npx tsc --noEmit
       - run: git diff --check
@@ -52,6 +56,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: cloudflare/thot-os-next/package-lock.json
+      - run: npm ci --prefix ../..
       - run: npm ci
       # Includes local D1 migration replay and creator-isolation coverage.
       - run: npm test

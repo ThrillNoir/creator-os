@@ -8,8 +8,11 @@ import Database from "better-sqlite3";
 test("Adelaide export imports into the THOT OS D1-compatible schema", async () => {
   const root = process.cwd();
   const migration = await readFile(path.join(root, "cloudflare/thot-os-app/migrations/0001_adelaide_library.sql"), "utf8");
-  const importSql = await readFile(path.join(root, "output/cloudflare/adelaide-d1-import.sql"), "utf8");
-  const manifest = JSON.parse(await readFile(path.join(root, "output/cloudflare/adelaide-manifest.json"), "utf8"));
+  // This checked-in fixture is synthetic. CI must not depend on the ignored
+  // local export, which can contain private creator-library metadata.
+  const fixtureRoot = path.join(root, "tests/fixtures/cloudflare-adelaide-migration");
+  const importSql = await readFile(path.join(fixtureRoot, "adelaide-d1-import.sql"), "utf8");
+  const manifest = JSON.parse(await readFile(path.join(fixtureRoot, "adelaide-manifest.json"), "utf8"));
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "thot-os-d1-"));
   const databasePath = path.join(temporaryDirectory, "staging.sqlite");
   const db = new Database(databasePath);
