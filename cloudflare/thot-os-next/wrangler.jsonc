@@ -19,7 +19,12 @@
     { "binding": "VAULT_BRIDGE", "service": "thot-os-vault-bridge-staging" }
   ],
   "secrets": {
-    "required": ["CATALOGUE_SYNC_TOKEN"]
+    "required": [
+      "INTERNAL_INSTAGRAM_SCHEDULER_TOKEN",
+      "INTERNAL_REDDIT_SCHEDULER_TOKEN",
+      "INTERNAL_TELEGRAM_BRIDGE_TOKEN",
+      "INTERNAL_VAULT_CATALOGUE_TOKEN"
+    ]
   },
   "vars": {
     "ACCESS_AUD": "96650f7d7a89fb932d2941213c418198999c22ba3abbb9c3d7d566b4375cb930",

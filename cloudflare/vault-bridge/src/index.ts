@@ -1,4 +1,5 @@
 import { verifyRedditPostMetadata, type RedditPublicPost } from "./reddit-verification";
+import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 
 type BridgeIdentity = { creator_id: string; account_id: string; profile_id: string; platform: "fansly" };
 type RedditBridgeIdentity = { creator_id: string; account_id: string; profile_id: string };
@@ -182,13 +183,18 @@ function relativeDropboxPath(root: string, entry: DropboxListEntry) {
 }
 
 async function refreshDropboxCatalogue(request: Request, env: Env) {
-  const authorization = request.headers.get("authorization") ?? "";
-  if (!env.CATALOGUE_SYNC_TOKEN || authorization !== `Bearer ${env.CATALOGUE_SYNC_TOKEN}`) return json(request, { ok: false, error: "unauthorized" }, 401);
   const input = await request.json().catch(() => null) as { creatorId?: unknown } | null;
   const creatorId = typeof input?.creatorId === "string" ? input.creatorId.trim() : "";
   if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
+  let service;
+  try {
+    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue");
+  } catch {
+    return json(request, { ok: false, error: "unauthorized" }, 401);
+  }
   const creator = await env.DB.prepare("SELECT dropbox_root FROM creators WHERE id=? AND status='active'").bind(creatorId).first<{ dropbox_root: string | null }>();
   if (!creator?.dropbox_root) return json(request, { ok: false, error: "Dropbox root is not configured for this creator." }, 409);
+  await internalServiceAuditStatement(env.DB, service, "/catalogue/refresh").run();
   const entries = await listDropboxFiles(env, creatorId, creator.dropbox_root);
   const supported = new Set(["jpg", "jpeg", "png", "webp", "heic", "mov", "mp4"]);
   const files = entries.flatMap((entry) => {

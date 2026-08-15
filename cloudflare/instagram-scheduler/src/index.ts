@@ -1,4 +1,5 @@
 type UnknownRecord = Record<string, unknown>;
+import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 type DuePost = {
   id: string;
   creator_id: string;
@@ -467,7 +468,7 @@ async function validateInstagramReplyTarget(request: Request, env: Env) {
 }
 
 async function markInstagramThreadSeen(request: Request, env: Env) {
-  const input = await request.json<{ threadId?: string; actor?: string; creatorId?: string }>();
+  const input = await request.json<{ threadId?: string; creatorId?: string }>();
   if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
@@ -483,12 +484,10 @@ async function markInstagramThreadSeen(request: Request, env: Env) {
     ig_user_id: connection.external_account_id,
     recipient_id: recipient.id,
   });
-  const auditActor = input.actor?.slice(0, 200) || "service:instagram-scheduler";
-  const auditActorRole = input.actor ? await humanActorRole(env, input.creatorId, input.actor) : "service";
   await env.DB.batch([
     env.DB.prepare("UPDATE message_threads SET unread_count=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(thread.id, input.creatorId),
     env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_thread_marked_seen',?,?,?)")
-      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, auditActor, auditActorRole, JSON.stringify({ providerConfirmed: true })),
+      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, "service:thot-os-web-instagram", "service", JSON.stringify({ providerConfirmed: true })),
   ]);
   return Response.json({ ok: true, markedSeen: true });
 }
@@ -528,7 +527,7 @@ async function sendInstagramReply(request: Request, env: Env) {
   const claim = await env.DB.prepare(`UPDATE instagram_reply_drafts SET status='sending',approved_by=requested_by,approved_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND creator_id=? AND status='draft'`).bind(draft.id, input.creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "instagram_reply_already_claimed" }, { status: 409 });
-  const requestedByRole = await humanActorRole(env, input.creatorId, draft.requested_by);
+  const requestedByRole = await storedHumanActorRole(env, input.creatorId, draft.requested_by);
   await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_approved', ?, ?, ?)")
     .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, draft.requested_by, requestedByRole, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
 
@@ -712,19 +711,21 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function humanActorRole(env: Env, creatorId: string, actor: string) {
+// This is used only for the already-persisted human who requested a reply
+// draft. Never call it with an HTTP-supplied actor value.
+async function storedHumanActorRole(env: Env, creatorId: string, actor: string) {
   const membership = await env.DB.prepare(`SELECT m.role FROM creator_memberships m
     JOIN users u ON lower(u.email)=lower(m.user_email)
     WHERE m.creator_id=? AND lower(m.user_email)=lower(?)
       AND m.status='active' AND u.status='active'`)
     .bind(creatorId, actor).first<{ role: "agency_admin" | "operator" | "creator" | "viewer" }>();
-  if (!membership) throw new Error("Authenticated actor is not authorised for this creator.");
+  if (!membership) throw new Error("The original draft requester is no longer authorised for this creator.");
   return membership.role;
 }
 
 async function startConnection(request: Request, env: Env) {
-  const input = await request.json<{ callbackUrl?: string; creatorId?: string; actor?: string }>();
-  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
+  const input = await request.json<{ callbackUrl?: string; creatorId?: string }>();
+  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
   const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='instagram'").bind(input.creatorId).first();
   if (!account) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   const state = `${crypto.randomUUID()}${crypto.randomUUID()}`;
@@ -740,8 +741,8 @@ async function startConnection(request: Request, env: Env) {
 }
 
 async function completeConnection(request: Request, env: Env) {
-  const input = await request.json<{ state?: string; creatorId?: string; actor?: string }>();
-  if (!input.state || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
+  const input = await request.json<{ state?: string; creatorId?: string }>();
+  if (!input.state || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const attempt = await env.DB.prepare("SELECT id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='instagram' AND state_hash=? AND status='pending'")
     .bind(input.creatorId, await sha256(input.state)).first<{ id: string; connected_account_id: string; expires_at: string }>();
   if (!attempt || new Date(attempt.expires_at).getTime() < Date.now()) return Response.json({ ok: false, error: "invalid_or_expired_state" }, { status: 400 });
@@ -756,13 +757,12 @@ async function completeConnection(request: Request, env: Env) {
     if (expected?.handle && expected.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
       throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${expected.handle}.`);
     }
-    const actorRole = await humanActorRole(env, input.creatorId, input.actor);
     await env.DB.batch([
       env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.connected_account_id, instagramUserId, identity.id, `@${identity.username.replace(/^@/, "")}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
       env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
       env.DB.prepare("UPDATE messaging_connections SET handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
-      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,'instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, actorRole, JSON.stringify({ username: identity.username })),
+      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,'service','instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, "service:thot-os-web-instagram", JSON.stringify({ username: identity.username })),
     ]);
     return Response.json({ ok: true, displayName: `@${identity.username.replace(/^@/, "")}` });
   } catch (error) {
@@ -792,6 +792,16 @@ async function requestedCreatorId(request: Request) {
   return input.creatorId;
 }
 
+async function authenticatedCreatorId(request: Request, env: Env, url: URL) {
+  const candidate = request.method === "GET"
+    ? url.searchParams.get("creator")
+    : (await request.clone().json<{ creatorId?: unknown }>()).creatorId;
+  if (typeof candidate !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(candidate)) throw new Error("Creator scope is required.");
+  const service = await requireInternalServiceForCreator(request, env.DB, candidate, "thot-os-web-instagram");
+  await internalServiceAuditStatement(env.DB, service, url.pathname).run();
+  return candidate;
+}
+
 async function syncAllCreators(env: Env) {
   const creators = await env.DB.prepare("SELECT creator_id FROM provider_connections WHERE service='instagram' AND status='active'").all<{ creator_id: string }>();
   return Promise.allSettled(creators.results.map((row) => syncInstagram(env, row.creator_id)));
@@ -801,16 +811,22 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
+      let creatorId: string;
+      try {
+        creatorId = await authenticatedCreatorId(request, env, url);
+      } catch {
+        return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+      }
       if (request.method === "POST" && url.pathname === "/connections/instagram/start") return startConnection(request, env);
       if (request.method === "POST" && url.pathname === "/connections/instagram/complete") return completeConnection(request, env);
       if (request.method === "POST" && url.pathname === "/posts/instagram/publish") return publishOne(request, env);
       if (request.method === "POST" && url.pathname === "/messages/instagram/validate") return validateInstagramReplyTarget(request, env);
       if (request.method === "POST" && url.pathname === "/messages/instagram/send") return sendInstagramReply(request, env);
       if (request.method === "POST" && url.pathname === "/messages/instagram/seen") return markInstagramThreadSeen(request, env);
-      if (request.method === "POST" && url.pathname === "/run") return Response.json(await processDue(env, "service"));
+      if (request.method === "POST" && url.pathname === "/run") return new Response("Not found", { status: 404 });
       if (request.method === "POST" && url.pathname === "/sync") return Response.json(await syncInstagram(env, await requestedCreatorId(request), true));
       if (request.method === "POST" && url.pathname === "/sync/messages") return Response.json(await syncInstagramMessagesOnly(env, await requestedCreatorId(request)));
-      if (request.method === "GET" && url.pathname === "/status") return status(env, url.searchParams.get("creator") ?? "");
+      if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);
       return new Response("Not found", { status: 404 });
     } catch (error) {
       console.error(JSON.stringify({ event: "instagram_scheduler_request_error", path: url.pathname, message: error instanceof Error ? error.message : "Unknown error" }));

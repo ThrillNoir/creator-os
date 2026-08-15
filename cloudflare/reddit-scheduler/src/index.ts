@@ -1,6 +1,7 @@
 import { findPublishedImage, imageMimeType, parseMediaLease, parseRedditFlairChoices, parseRedditMediaReceipt, parseRedditPostRequirements, redditApiErrors, redditSubmissionWebsocketUrl, type RedditMediaReceipt } from "./reddit-api";
 
 type UnknownRecord = Record<string, unknown>;
+import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 type DuePost = {
   id: string; creator_id: string; asset_id: string; title: string; caption: string;
   content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; bytes: number; dropbox_root: string;
@@ -297,19 +298,9 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function humanActorRole(env: Env, creatorId: string, actor: string) {
-  const membership = await env.DB.prepare(`SELECT m.role FROM creator_memberships m
-    JOIN users u ON lower(u.email)=lower(m.user_email)
-    WHERE m.creator_id=? AND lower(m.user_email)=lower(?)
-      AND m.status='active' AND u.status='active'`)
-    .bind(creatorId, actor).first<{ role: "agency_admin" | "operator" | "creator" | "viewer" }>();
-  if (!membership) throw new Error("Authenticated actor is not authorised for this creator.");
-  return membership.role;
-}
-
 async function startConnection(request: Request, env: Env) {
-  const input = await request.json<{ callbackUrl?: string; actor?: string; creatorId?: string }>();
-  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
+  const input = await request.json<{ callbackUrl?: string; creatorId?: string }>();
+  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
   const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='reddit'").bind(input.creatorId).first();
   if (!account) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   const state = `${crypto.randomUUID()}${crypto.randomUUID()}`;
@@ -325,8 +316,8 @@ async function startConnection(request: Request, env: Env) {
 }
 
 async function completeConnection(request: Request, env: Env) {
-  const input = await request.json<{ state?: string; creatorId?: string; actor?: string }>();
-  if (!input.state || !input.creatorId || !input.actor) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
+  const input = await request.json<{ state?: string; creatorId?: string }>();
+  if (!input.state || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const stateHash = await sha256(input.state);
   const attempt = await env.DB.prepare("SELECT id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='reddit' AND state_hash=? AND status='pending'").bind(input.creatorId, stateHash).first<{ id: string; connected_account_id: string; expires_at: string }>();
   if (!attempt || new Date(attempt.expires_at).getTime() < Date.now()) return Response.json({ ok: false, error: "invalid_or_expired_state" }, { status: 400 });
@@ -336,7 +327,6 @@ async function completeConnection(request: Request, env: Env) {
     const identity = await redditIdentity(env, attempt.connected_account_id);
     const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='reddit' ORDER BY label LIMIT 1").bind(input.creatorId).first<{ handle: string }>();
     if (expected?.handle && expected.handle.replace(/^u\//i, "").toLowerCase() !== identity.name.toLowerCase()) throw new Error(`Authorized u/${identity.name}, but the configured creator account is ${expected.handle}.`);
-    const actorRole = await humanActorRole(env, input.creatorId, input.actor);
     await env.DB.batch([
       env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'reddit',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP")
         .bind(input.creatorId, attempt.connected_account_id, `creator-os:${input.creatorId}:service:reddit`, identity.id, `u/${identity.name}`),
@@ -344,7 +334,7 @@ async function completeConnection(request: Request, env: Env) {
       env.DB.prepare(`UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',
         warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,
         updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='reddit'`).bind(`u/${identity.name}`, input.creatorId),
-      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,'reddit_connection_verified','reddit',?)").bind(crypto.randomUUID(), input.creatorId, input.actor, actorRole, JSON.stringify({ displayName: `u/${identity.name}` })),
+      env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,'service','reddit_connection_verified','reddit',?)").bind(crypto.randomUUID(), input.creatorId, "service:thot-os-web-reddit", JSON.stringify({ displayName: `u/${identity.name}` })),
     ]);
     return Response.json({ ok: true, displayName: `u/${identity.name}` });
   } catch (error) {
@@ -366,16 +356,32 @@ async function status(env: Env, creatorId: string) {
   return Response.json({ ok: true, connection, lastRun, due: due?.count ?? 0 });
 }
 
+async function authenticatedCreatorId(request: Request, env: Env, url: URL) {
+  const candidate = request.method === "GET"
+    ? url.searchParams.get("creator")
+    : (await request.clone().json<{ creatorId?: unknown }>()).creatorId;
+  if (typeof candidate !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(candidate)) throw new Error("Creator scope is required.");
+  const service = await requireInternalServiceForCreator(request, env.DB, candidate, "thot-os-web-reddit");
+  await internalServiceAuditStatement(env.DB, service, url.pathname).run();
+  return candidate;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
+      let creatorId: string;
+      try {
+        creatorId = await authenticatedCreatorId(request, env, url);
+      } catch {
+        return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+      }
       if (request.method === "POST" && url.pathname === "/connections/reddit/start") return startConnection(request, env);
       if (request.method === "POST" && url.pathname === "/connections/reddit/complete") return completeConnection(request, env);
       if (request.method === "POST" && url.pathname === "/communities/reddit/flairs/refresh") return refreshCommunityFlairs(request, env);
       if (request.method === "POST" && url.pathname === "/posts/reddit/publish") return publishOne(request, env);
-      if (request.method === "POST" && url.pathname === "/run") return Response.json(await processDue(env, "service"));
-      if (request.method === "GET" && url.pathname === "/status") return status(env, url.searchParams.get("creator") ?? "");
+      if (request.method === "POST" && url.pathname === "/run") return new Response("Not found", { status: 404 });
+      if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);
       return new Response("Not found", { status: 404 });
     } catch (error) {
       console.error(JSON.stringify({ event: "reddit_scheduler_request_error", path: url.pathname, message: error instanceof Error ? error.message : "Unknown error" }));

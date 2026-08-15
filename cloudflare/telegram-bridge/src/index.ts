@@ -1,4 +1,5 @@
 type UnknownRecord = Record<string, unknown>;
+import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 type TelegramMessage = {
   message_id?: number; text?: string; caption?: string; date?: number;
   photo?: unknown[]; video?: unknown; document?: unknown; voice?: unknown; audio?: unknown; sticker?: unknown;
@@ -238,6 +239,16 @@ async function creatorIdFromBody(request: Request) {
   return requiredCreatorId((await request.json<{ creatorId?: string }>()).creatorId);
 }
 
+async function authenticatedCreatorId(request: Request, env: Env, url: URL) {
+  const candidate = request.method === "GET"
+    ? url.searchParams.get("creator")
+    : (await request.clone().json<{ creatorId?: unknown }>()).creatorId;
+  const creatorId = requiredCreatorId(candidate);
+  const service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-telegram");
+  await internalServiceAuditStatement(env.DB, service, url.pathname).run();
+  return creatorId;
+}
+
 async function pollAllCreators(env: Env) {
   await pollSharedUpdates(env, "cron");
 }
@@ -246,10 +257,16 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
-      if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env, await creatorIdFromBody(request)));
-      if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollSharedUpdates(env, "service", await creatorIdFromBody(request)));
+      let creatorId: string;
+      try {
+        creatorId = await authenticatedCreatorId(request, env, url);
+      } catch {
+        return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+      }
+      if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env, creatorId));
+      if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollSharedUpdates(env, "service", creatorId));
       if (request.method === "POST" && url.pathname === "/send") return sendMessage(request, env);
-      if (request.method === "GET" && url.pathname === "/status") return status(env, requiredCreatorId(url.searchParams.get("creator")));
+      if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);
       return new Response("Not found", { status: 404 });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Telegram bridge failed.";

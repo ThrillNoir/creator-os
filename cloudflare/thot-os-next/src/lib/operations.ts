@@ -1,4 +1,5 @@
 import { cloudflareEnv } from "./cloudflare";
+import { fetchInternalService } from "./internal-service";
 import type { AssetRow, Destination } from "./library";
 
 export const operationPlatforms = [
@@ -186,7 +187,8 @@ export async function getPlatformOperations(creatorId: string, platform: Operati
 
 export async function getInstagramSchedulerStatus(creatorId: string): Promise<PlatformSchedulerStatus | null> {
   try {
-    const response = await cloudflareEnv().INSTAGRAM_SCHEDULER.fetch(`https://instagram-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
+    const env = cloudflareEnv();
+    const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, `https://instagram-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
     if (!response.ok) return null;
     return await response.json() as PlatformSchedulerStatus;
   } catch {
@@ -230,7 +232,8 @@ export async function getVaultOperations(creatorId: string) {
 
 export async function getRedditSchedulerStatus(creatorId: string): Promise<RedditSchedulerStatus | null> {
   try {
-    const response = await cloudflareEnv().REDDIT_SCHEDULER.fetch(`https://reddit-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
+    const env = cloudflareEnv();
+    const response = await fetchInternalService(env, "reddit", env.REDDIT_SCHEDULER, `https://reddit-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
     if (!response.ok) return null;
     return await response.json() as RedditSchedulerStatus;
   } catch {

@@ -58,7 +58,7 @@
           "directory": "cloudflare/thot-os-next",
           "worker": "thot-os-staging",
           "deployable": true,
-          "requiredSecrets": ["CATALOGUE_SYNC_TOKEN"],
+          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN"],
           "resources": {
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
@@ -120,7 +120,7 @@
           "directory": "cloudflare/vault-bridge",
           "worker": "thot-os-vault-bridge-staging",
           "deployable": true,
-          "requiredSecrets": ["CATALOGUE_SYNC_TOKEN", "COMPOSIO_API_KEY"],
+          "requiredSecrets": ["COMPOSIO_API_KEY"],
           "resources": {
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-previews-staging"],

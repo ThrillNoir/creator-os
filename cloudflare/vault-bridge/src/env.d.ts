@@ -3,5 +3,4 @@ interface Env {
   PREVIEWS: R2Bucket;
   PREVIEW_QUEUE: Queue<PreviewQueueMessage>;
   COMPOSIO_API_KEY: string;
-  CATALOGUE_SYNC_TOKEN: string;
 }

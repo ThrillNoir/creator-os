@@ -8,6 +8,7 @@ import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { destinations, type Destination } from "@/lib/library";
 import { issueFanslyBridgePairing } from "@/lib/fansly-pairing";
+import { fetchInternalService } from "@/lib/internal-service";
 
 function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
@@ -28,7 +29,7 @@ function browserInstallationId(value: FormDataEntryValue | null) {
 }
 
 async function requestRedditFlairRefresh(env: CloudflareEnv, creatorId: string, communityId: number) {
-  const response = await env.REDDIT_SCHEDULER.fetch("https://reddit-scheduler/communities/reddit/flairs/refresh", {
+  const response = await fetchInternalService(env, "reddit", env.REDDIT_SCHEDULER, "https://reddit-scheduler/communities/reddit/flairs/refresh", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ creatorId, communityId }),
@@ -143,19 +144,19 @@ export async function confirmFanslyIdentityAction(formData: FormData) {
 export async function syncDropboxCatalogueAction() {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
-  const env = cloudflareEnv() as CloudflareEnv & { VAULT_BRIDGE: Fetcher; CATALOGUE_SYNC_TOKEN: string };
+  const env = cloudflareEnv();
   let notice = "sync_failed";
   let detail = "";
   try {
-    const response = await env.VAULT_BRIDGE.fetch("https://vault-bridge/catalogue/refresh", {
+    const response = await fetchInternalService(env, "vault_catalogue", env.VAULT_BRIDGE, "https://vault-bridge/catalogue/refresh", {
       method: "POST",
-      headers: { authorization: `Bearer ${env.CATALOGUE_SYNC_TOKEN}`, "content-type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ creatorId }),
     });
     const result = await response.json().catch(() => ({})) as { ok?: boolean; assets?: number; previews?: { ready?: number; queued?: number; processing?: number; failed?: number }; error?: string };
     if (!response.ok || !result.ok || typeof result.assets !== "number") throw new Error(result.error || `Dropbox catalogue refresh failed (${response.status}).`);
     const previews = result.previews ?? {};
-    await identityAuditStatement(env.DB, humanAuditActor(identity), "dropbox_catalogue_refreshed", creatorId, { assets: result.assets, previewsQueued: previews.queued ?? 0, previewsReady: previews.ready ?? 0, previewsFailed: previews.failed ?? 0, readOnlySource: true });
+    await identityAuditStatement(env.DB, humanAuditActor(identity), "dropbox_catalogue_refreshed", creatorId, { assets: result.assets, previewsQueued: previews.queued ?? 0, previewsReady: previews.ready ?? 0, previewsFailed: previews.failed ?? 0, readOnlySource: true }).run();
     revalidatePath("/library");
     revalidatePath("/operations");
     notice = `sync_complete&count=${result.assets}&previewQueued=${previews.queued ?? 0}&previewReady=${previews.ready ?? 0}&previewFailed=${previews.failed ?? 0}`;
@@ -181,7 +182,7 @@ export async function saveDropboxCatalogueSourceAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   const updated = await creatorPrepare(DB, creatorId, "UPDATE creators SET dropbox_root=?,dropbox_link=? WHERE id=@creator AND status='active'").bind(root, link || null).run();
   if (!updated.meta?.changes) throw new Error("This creator workspace is not available.");
-  await identityAuditStatement(DB, humanAuditActor(identity), "dropbox_catalogue_source_saved", creatorId, { hasReferenceLink: Boolean(link), readOnlySource: true });
+  await identityAuditStatement(DB, humanAuditActor(identity), "dropbox_catalogue_source_saved", creatorId, { hasReferenceLink: Boolean(link), readOnlySource: true }).run();
   revalidatePath("/accounts");
   revalidatePath("/library");
   redirect("/accounts?saved=dropbox_source_saved");
@@ -333,7 +334,7 @@ export async function createRedditPostAction(formData: FormData) {
   revalidatePath("/operations");
   if (intent === "publish_now") {
     try {
-      const response = await env.REDDIT_SCHEDULER.fetch("https://reddit-scheduler/posts/reddit/publish", {
+      const response = await fetchInternalService(env, "reddit", env.REDDIT_SCHEDULER, "https://reddit-scheduler/posts/reddit/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ postId, creatorId }),
@@ -463,13 +464,14 @@ export async function startRedditReconnectAction() {
   const identity = await requireCreatorContext("manage_identity");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/operations/reddit/callback", env.APP_BASE_URL).toString();
-  const response = await env.REDDIT_SCHEDULER.fetch("https://reddit-scheduler/connections/reddit/start", {
+  const response = await fetchInternalService(env, "reddit", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ callbackUrl, actor: identity.email, creatorId: identity.creator.creator_id }),
+    body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id }),
   });
   const result = await response.json() as { ok?: boolean; redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Reddit reconnection could not be started.");
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "reddit_connection_requested", "reddit", { providerCallback: true }).run();
   redirect(result.redirectUrl);
 }
 
@@ -532,7 +534,7 @@ export async function createInstagramPostAction(formData: FormData) {
   revalidatePath("/operations");
   if (intent === "publish_now") {
     try {
-      const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/posts/instagram/publish", {
+      const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/posts/instagram/publish", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ postId, creatorId }),
       });
       const result = await response.json() as { post?: { status?: string } };
@@ -575,18 +577,19 @@ export async function startInstagramReconnectAction() {
   const identity = await requireCreatorContext("manage_identity");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/operations/instagram/callback", env.APP_BASE_URL).toString();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/connections/instagram/start", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callbackUrl, actor: identity.email, creatorId: identity.creator.creator_id }),
+  const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/start", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id }),
   });
   const result = await response.json() as { redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Instagram reconnection could not be started.");
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "instagram_connection_requested", "instagram", { providerCallback: true }).run();
   redirect(result.redirectUrl);
 }
 
 export async function refreshInstagramDataAction() {
   const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; errors?: string[]; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.errors?.join(" ") || result.error || "Instagram data could not be refreshed.");
   revalidatePath("/operations");
@@ -598,7 +601,7 @@ export async function refreshInstagramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Instagram messages could not be refreshed.");
   revalidatePath("/messages");
@@ -610,13 +613,14 @@ export async function markInstagramThreadReadAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   if (!threadId) throw new Error("Choose an Instagram conversation to mark as read.");
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/messages/instagram/seen", {
+  const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/seen", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ threadId, actor: identity.email, creatorId: identity.creator.creator_id }),
+    body: JSON.stringify({ threadId, creatorId: identity.creator.creator_id }),
   });
   const result = await response.json() as { ok?: boolean; markedSeen?: boolean; error?: string };
   if (!response.ok || !result.ok || !result.markedSeen) throw new Error(result.error || "Instagram did not confirm that the conversation was marked as read.");
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "instagram_thread_marked_read", threadId, { providerConfirmed: true }).run();
   revalidatePath("/messages");
   redirect(`/messages?platform=instagram&thread=${encodeURIComponent(threadId)}&saved=instagram_thread_read`);
 }
@@ -668,7 +672,7 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
 
   let saved = "instagram_send_failed";
   try {
-    const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/messages/instagram/send", {
+    const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/send", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ draftId, creatorId }),
@@ -694,7 +698,7 @@ export async function validateInstagramReplyTargetAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   if (!threadId) throw new Error("Choose an Instagram conversation to validate.");
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/messages/instagram/validate", {
+  const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/validate", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ threadId, creatorId }),
@@ -830,7 +834,8 @@ export async function updateMessagingAuthorityAction(formData: FormData) {
 
 export async function validateTelegramConnectorAction() {
   const identity = await requireCreatorContext("manage_identity");
-  const response = await cloudflareEnv().TELEGRAM_BRIDGE.fetch("https://telegram-bridge/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const env = cloudflareEnv();
+  const response = await fetchInternalService(env, "telegram", env.TELEGRAM_BRIDGE, "https://telegram-bridge/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) redirect("/messages?platform=telegram&saved=telegram_failed");
   redirect("/messages?platform=telegram&saved=telegram_validated");
@@ -839,7 +844,8 @@ export async function validateTelegramConnectorAction() {
 export async function refreshTelegramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();
-  const response = await cloudflareEnv().TELEGRAM_BRIDGE.fetch("https://telegram-bridge/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const env = cloudflareEnv();
+  const response = await fetchInternalService(env, "telegram", env.TELEGRAM_BRIDGE, "https://telegram-bridge/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Telegram replies could not be refreshed.");
   revalidatePath("/messages");
@@ -873,7 +879,8 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
   if (!message || message.length > 4096) throw new Error("Telegram messages must contain between 1 and 4,096 characters.");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestId)) throw new Error("Refresh Messages before sending this Telegram message.");
   const actor = identity.email;
-  const { DB, TELEGRAM_BRIDGE } = cloudflareEnv();
+  const env = cloudflareEnv();
+  const { DB, TELEGRAM_BRIDGE } = env;
   const connection = await creatorPrepare(DB, creatorId, `SELECT id,status,write_enabled,outbound_validated,emergency_paused FROM messaging_connections
     WHERE creator_id=@creator AND platform='telegram' ORDER BY id LIMIT 1`).first<{ id: string; status: string; write_enabled: number; outbound_validated: number; emergency_paused: number }>();
   if (!connection || connection.status !== "connected" || !connection.outbound_validated) throw new Error("Validate this creator’s Telegram connection before sending.");
@@ -888,7 +895,7 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
   }
   await creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'telegram_message_approved',?,?,?)")
     .bind(`telegram-send-audit-${requestId}`, connection.id, actor, identity.creator.role, JSON.stringify({ logId, characters: message.length, enterToSend: true })).run();
-  const response = await TELEGRAM_BRIDGE.fetch("https://telegram-bridge/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ logId, creatorId }) });
+  const response = await fetchInternalService(env, "telegram", TELEGRAM_BRIDGE, "https://telegram-bridge/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ logId, creatorId }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   revalidatePath("/messages");
   redirect(`/messages?platform=telegram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=${response.ok && result.ok ? "telegram_sent" : "telegram_failed"}`);
