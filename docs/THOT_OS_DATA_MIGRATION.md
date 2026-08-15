@@ -179,4 +179,4 @@ THOT OS is **not ready for Phase 1D controlled data migration**. Another reconci
 4. Resolve Adelaide’s 202 target-newer asset records and the classification conflict.
 5. Design source-object checksum/R2 verification for the first media-backed slice.
 
-The safest eventual first slice remains **Adelaide asset metadata plus classifications/destinations**, restricted to explicitly reviewed source-only records and never including binary media or a D1 update. No such migration has been performed.
+No slice is ready to apply today. The smallest prospective first slice is **Bryshanagy's one source-only asset metadata record plus its classification**, after a fresh export confirms the same result and a human verifies its source-object identity. It must exclude binary-media upload, credentials, accounts, and any D1 update. Adelaide has no source-only asset in this run and has materially newer Cloud asset state, so it is not the first apply candidate.
