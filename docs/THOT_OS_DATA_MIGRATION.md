@@ -1,6 +1,6 @@
-# THOT OS — Phase 1C.5 Reconciliation Decisions & Migration Safety Contract
+# THOT OS — Phase 1C.6 Automated Reconciliation & Exception Handling
 
-**Status:** Read-only reconciliation, decision mapping, and local-only migration-safety preparation complete. No creator data migration, remote D1 write, R2 upload, deployment, credential provisioning, or SQLite mutation was performed.
+**Status:** Read-only reconciliation, evidence-based resolution, exception grouping, and local-only migration-safety preparation complete. No creator data migration, remote D1 write, R2 upload, deployment, credential provisioning, or SQLite mutation was performed.
 
 ## Executive decision
 
@@ -24,7 +24,7 @@ flowchart LR
 2. **No implicit source.** It requires absolute snapshot paths, rejects symlinks and live `.creator-os` paths, verifies SQLite integrity, and hashes the source before and after the run.
 3. **No implicit target.** It accepts only `staging`, verifies the deployment registry and canonical Wrangler D1 name/ID/account, and requires a local parse snapshot whose migration state exactly matches the declared remote `0001`–`0027` baseline. Local `0028_migration_ledger.sql` is deliberately pending and is not silently treated as deployed.
 4. **No production path.** Any other environment, including production, fails before opening a database.
-5. **No apply path.** `--apply` fails with `Migration apply is disabled by the Phase 1C.5 safety contract.`
+5. **No apply path.** `--apply` fails with `Migration apply is disabled by the Phase 1C.6 safety contract.`
 6. **No secret migration.** OAuth material, API keys, refresh tokens, session cookies, and device/bridge bearers are excluded by contract.
 7. **No binary migration.** Media reconciliation is metadata-only. An R2 key is evidence, not proof that an object may be overwritten or uploaded.
 
@@ -112,9 +112,9 @@ Credential treatment is deliberately separate from identity correspondence:
 
 ### Thrill Noir decision
 
-**Decision: D — manual owner decision required; no D1 creator or child record will be created.** The protected snapshot contains meaningful legacy scope (785 assets/classifications, 7 accounts, 33 threads, 239 messages, 10 post packages and 56 messaging-audit records), but no D1 creator has the exact stable ID and the available operational history cannot establish active canonical-creator intent, retention intent, or current consent policy. The source also contains provider/service/connection state that cannot be migrated as credentials.
+**Decision: `CREATE_CANONICAL_CREATOR` — owner-declared future Cloud authority.** Thrill Noir is an active THOT OS-managed brand and should eventually receive the canonical D1 creator/workspace `thrill-noir`. It is recorded in [creator-mappings.json](../config/migration/creator-mappings.json) as a **planning-only** future canonical mapping.
 
-Options A (create now), B (archive only), and C (ignore) remain available only after an owner decides the intended canonical creator and retention policy. Until then the Phase 0 snapshot is the protected archive, no automatic mapping is permitted, and all Thrill Noir domains remain excluded.
+It does **not** create a remote creator, authorize child record migration, import credentials, or make SQLite history active Cloud state. The automated inventory now classifies 706 source-object-present assets plus dependent classifications as a future candidate set; 79 source-missing assets and 56 audit records as archive/review; accounts/connections/bridge/vault state as reconnect or excluded; and people, publishing, messages, and threads as manual review. A dedicated creator-creation phase and later source-object/consent/target comparison remain prerequisites.
 
 ### Target-authoritative and precedence rule
 
@@ -249,3 +249,48 @@ THOT OS is **not ready for Phase 1D controlled data migration**. The migration s
 6. A separately approved implementation of the Phase 1D executor, with the safety contract still disabled until a reviewed manifest exists.
 
 There is **no safe first migration candidate today**. The formerly smallest candidate—Bryshanagy's one asset metadata record plus classification—is blocked because the source media/object identity is unverified and a same-basename/bytes/extension D1 candidate with different modification metadata, Dropbox revision, and preview R2 key exists. It must exclude binary-media upload, credentials, accounts, and any D1 update even after the identity issue is resolved. Adelaide has no source-only asset and has materially newer Cloud state, so it is not a first apply candidate.
+
+## Phase 1C.6 — automated reconciliation by exception
+
+The automated resolver is deliberately an **evidence and policy engine**, not an import engine:
+
+```mermaid
+flowchart LR
+  A["Protected snapshots"] --> B["Identity signals\nstrong / medium / weak"]
+  B --> C["Explainable confidence"]
+  C --> D["Safety policy\ncreator, consent, credential, target authority"]
+  D --> E["Safe non-destructive resolution"]
+  D --> F["Grouped exception\nonly where a decision remains"]
+  E --> G["Dry-run report / future manifest"]
+  F --> G
+```
+
+`scripts/migration/identity-resolver.mjs` classifies evidence as `DETERMINISTIC`, `HIGH_CONFIDENCE`, `PROBABLE`, `AMBIGUOUS`, `CONFLICT`, or `NO_MATCH`. Exact immutable provider/source/message/post IDs, content checksums, and verified source-object identities are strong; handles and path/size metadata are corroboration only; display names and textual similarity cannot resolve an identity. Signals are deduplicated by evidence family, so correlated facts cannot inflate confidence.
+
+`scripts/migration/resolution-policy.mjs` separately decides whether a result may be used as a non-destructive reconciliation link and whether it is a future candidate. No confidence level can bypass creator isolation, target authority, credential exclusion, consent, dependency, transformation, or apply-kill-switch controls. `AUTO_ELIGIBLE` is planning terminology only while `applyEnabled` remains `false`.
+
+### Automated investigation results
+
+The latest [automated reconciliation report](./migration-reports/2026-08-15T132002Z-automated-reconciliation.json) used the protected Phase 0 SQLite snapshot and a fresh read-only staging D1 export. It records only hashes/reason codes—never account identifiers, credentials, media paths, messages, or private notes.
+
+- Adelaide Fansly messaging is now **deterministically** mapped for read-only identity purposes: the resolver found independent exact provider-thread and provider-message ID overlap. This authorizes no message import and does not alter target messages.
+- Adelaide Instagram account/messaging remains **probable**: account continuity cannot be proven through an immutable source-to-target identity.
+- Bryshanagy Fansly remains unresolved because the target handle is not corroborated by an immutable provider identity.
+- Adelaide Reddit remains a grouped **conflict**: two local accounts and a different provider identity cannot be guessed into the active target account.
+- Bryshanagy's asset is `SOURCE_MISSING` and `POSSIBLE_DUPLICATE`: its stale SQLite availability flag was overruled by a read-only source-object existence check, and its same creator filename/size/extension D1 candidate has protected Dropbox/R2 metadata. It is `NOT_SAFE`.
+- Adelaide's 202 `TARGET_AUTHORITATIVE` assets remain protected and continue to produce zero proposed `UPDATE`s.
+
+### Exception and candidate contract
+
+`npm run migration:automated-reconcile` writes a machine-readable JSON report and compact Markdown operator summary. Exceptions are grouped by creator/domain/entity/classification/reason, have a stable hash ID, capped hashed samples, an aggregate checksum, attempted read-only investigation, risk, and recommended action. Routine matches, protected target records, archived records, reconnect-only rows, and source-only no-target services do not become individual operator tasks.
+
+Candidate discovery requires an exact mapped creator, proven `SOURCE_ONLY` identity, no target authority/conflict, no credential payload, satisfied consent/dependencies, verified source object where required, supported target transformation, and D1 schema support. Ranking is deterministic: risk, dependency count, verification complexity, affected count, creator, domain, record reference. The current report contains **no safe candidate**.
+
+### Phase 1C.6 safety invariants
+
+1. A resolver never downgrades `TARGET_AUTHORITATIVE` data.
+2. Weak evidence alone never maps identity; cross-creator candidates are ignored and recorded as an isolation block.
+3. Credentials, sessions, bridge material, and binary uploads remain excluded or reconnect-only.
+4. Thrill Noir future authority cannot create a creator or child record in this phase.
+5. The staging-only target baseline remains `0001`–`0027`; local ledger migration `0028` remains unapplied remotely.
+6. `--apply` still fails before snapshots are opened, production still rejects, and no path emits a D1 `UPDATE` operation.

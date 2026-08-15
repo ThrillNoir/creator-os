@@ -96,11 +96,11 @@ test("only explicit approved mappings and staging authority are accepted", () =>
   const registry = readDeploymentRegistry();
   registry.environments.staging.resources.d1["thot-os-staging"].id = "wrong-d1-id";
   assert.throws(() => validateTargetAuthority({ environment: "staging", registry }), /identity mismatch/);
-  assert.throws(() => reconcile({ apply: true }), /Migration apply is disabled by the Phase 1C\.5 safety contract\./);
-  assert.equal(MIGRATION_DISABLED_MESSAGE, "Migration apply is disabled by the Phase 1C.5 safety contract.");
+  assert.throws(() => reconcile({ apply: true }), /Migration apply is disabled by the Phase 1C\.6 safety contract\./);
+  assert.equal(MIGRATION_DISABLED_MESSAGE, "Migration apply is disabled by the Phase 1C.6 safety contract.");
 });
 
-test("Phase 1C.5 contract permits only the declared remote baseline while 0028 remains local", async () => {
+test("Phase 1C.6 contract permits only the declared remote baseline while 0028 remains local", async () => {
   const contract = loadSafetyContract();
   const { readdir } = await import("node:fs/promises");
   const migrations = (await readdir(path.join(process.cwd(), "cloudflare/thot-os-app/migrations"))).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
@@ -109,6 +109,7 @@ test("Phase 1C.5 contract permits only the declared remote baseline while 0028 r
   assert.deepEqual(verified.target, baseline);
   assert.equal(verified.pendingLocalMigration, "0028_migration_ledger.sql");
   assert.throws(() => verifyExpectedMigrations(baseline.slice(0, -1), contract), /declared staging baseline/);
+  assert.equal(loadMapping().futureCanonicalMappings[0].classification, "CREATE_CANONICAL_CREATOR");
 });
 
 test("dry-run manifests are idempotent and exclude credential material", () => {

@@ -17,6 +17,7 @@
     "migration:export-target": "node scripts/migration/export-target.mjs",
     "migration:reconcile": "node scripts/migration/reconcile.mjs",
     "migration:plan": "node scripts/migration/plan.mjs",
+    "migration:automated-reconcile": "node scripts/migration/automated-reconcile.mjs",
     "deployment:preflight": "node scripts/deployment-preflight.mjs",
     "deployment:receipt": "node scripts/deployment-receipt.mjs",
     "deploy": "node scripts/deploy-component.mjs",

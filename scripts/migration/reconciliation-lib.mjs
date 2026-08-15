@@ -5,7 +5,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { projectRoot, readDeploymentRegistry, readJsoncFile } from "../deployment-preflight.mjs";
 
-export const MIGRATION_DISABLED_MESSAGE = "Migration apply is disabled by the Phase 1C.5 safety contract.";
+export const MIGRATION_DISABLED_MESSAGE = "Migration apply is disabled by the Phase 1C.6 safety contract.";
 const creatorIdPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const remoteD1Name = "thot-os-staging";
 const migrationDirectory = path.join(projectRoot, "cloudflare/thot-os-app/migrations");
@@ -210,7 +210,7 @@ export function loadSafetyContract(contractPath = safetyContractPath) {
   const contract = JSON.parse(readFileSync(contractPath, "utf8"));
   if (
     contract.schemaVersion !== 1 ||
-    contract.phase !== "1C.5" ||
+    contract.phase !== "1C.6" ||
     contract.applyEnabled !== false ||
     contract.allowedEnvironment !== "staging" ||
     contract.targetMigrationBaseline?.requiredState !== "exact" ||
@@ -247,7 +247,7 @@ export function verifyExpectedMigrations(targetState, contract = loadSafetyContr
   const expected = readdirSync(migrationDirectory).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
   const lastApplied = contract.targetMigrationBaseline.lastApplied;
   const lastAppliedIndex = expected.indexOf(lastApplied);
-  if (lastAppliedIndex === -1 || expected[lastAppliedIndex + 1] !== contract.pendingLocalMigration) fail("Local migrations do not match the declared Phase 1C.5 target baseline.");
+  if (lastAppliedIndex === -1 || expected[lastAppliedIndex + 1] !== contract.pendingLocalMigration) fail("Local migrations do not match the declared Phase 1C.6 target baseline.");
   const targetExpected = expected.slice(0, lastAppliedIndex + 1);
   if (stableJson(targetExpected) !== stableJson(targetState)) fail("Target D1 migration state does not exactly match the declared staging baseline.");
   return { local: expected, target: targetExpected, pendingLocalMigration: contract.pendingLocalMigration };
@@ -280,7 +280,7 @@ export function buildManifest({ source, target, mapping, creatorId, domains, git
     migrationId: `phase1c-${identity.slice(0, 20)}`,
     mode: "DRY RUN",
     safetyContract: {
-      phase: "1C.5",
+      phase: loadSafetyContract().phase,
       applyEnabled: false,
       existingD1UpdateDefault: "DENY",
       precedence: loadSafetyContract().precedence
