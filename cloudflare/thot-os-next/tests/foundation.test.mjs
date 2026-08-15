@@ -142,8 +142,20 @@ test("health and library APIs preserve authenticated staging contracts", async (
   const [health, library] = await Promise.all([source("src/app/health/route.ts"), source("src/app/api/library/route.ts")]);
   assert.match(health, /nextjs-opennext/);
   assert.match(health, /requireCreatorContext/);
+  assert.match(health, /deployment: getDeploymentMetadata\(\)/);
   assert.match(library, /getCreatorContext\(creatorId\)/);
   assert.match(library, /status: 404/);
+});
+
+test("protected health metadata records a safe deployment identity", async () => {
+  const { getDeploymentMetadata } = await import("../src/lib/deployment-metadata.ts");
+  assert.deepEqual(getDeploymentMetadata({ component: "web", environment: "staging", gitSha: "abc123", gitBranch: "main", buildTime: "2026-08-15T00:00:00.000Z" }), {
+    component: "web",
+    environment: "staging",
+    gitSha: "abc123",
+    gitBranch: "main",
+    buildTime: "2026-08-15T00:00:00.000Z",
+  });
 });
 
 test("all social platform workspaces are consolidated under Operations", async () => {

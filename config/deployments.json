@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "canonicalApplication": "cloudflare/thot-os-next",
+  "namingConvention": "thot-os-<component>-<environment>",
+  "environments": {
+    "local": {
+      "kind": "local",
+      "provisioned": true,
+      "deployable": false,
+      "description": "Local development uses local bindings or sanitized fixtures. It has no Cloudflare deployment target and must not inherit staging credentials.",
+      "resources": {
+        "d1": {},
+        "r2": [],
+        "queues": [],
+        "workers": {}
+      },
+      "components": {}
+    },
+    "staging": {
+      "kind": "cloudflare",
+      "provisioned": true,
+      "deployable": true,
+      "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
+      "description": "The only real Cloudflare integration environment. Production credentials and resources are forbidden here.",
+      "resources": {
+        "d1": {
+          "thot-os-staging": {
+            "id": "174532e8-5ada-4e30-abba-1276b3540b3f",
+            "migrationsDir": "../thot-os-app/migrations"
+          }
+        },
+        "r2": [
+          "thot-os-media-staging",
+          "thot-os-previews-staging",
+          "thot-os-creator-intake-staging",
+          "thot-os-creator-packages-staging"
+        ],
+        "queues": [
+          "thot-os-intake-staging",
+          "thot-os-ai-jobs-staging",
+          "thot-os-preview-staging",
+          "thot-os-preview-dlq-staging"
+        ],
+        "workers": {
+          "web": "thot-os-staging",
+          "instagram": "thot-os-instagram-scheduler-staging",
+          "reddit": "thot-os-reddit-scheduler-staging",
+          "telegram": "thot-os-telegram-bridge-staging",
+          "vault": "thot-os-vault-bridge-staging",
+          "legacyWorker": "thot-os-legacy-staging",
+          "legacyGateway": "creator-os-staging-gateway"
+        }
+      },
+      "components": {
+        "web": {
+          "service": "thot-os-web",
+          "config": "cloudflare/thot-os-next/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-next",
+          "worker": "thot-os-staging",
+          "deployable": true,
+          "requiredSecrets": ["CATALOGUE_SYNC_TOKEN"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
+            "queues": [],
+            "services": {
+              "WORKER_SELF_REFERENCE": "thot-os-staging",
+              "REDDIT_SCHEDULER": "thot-os-reddit-scheduler-staging",
+              "INSTAGRAM_SCHEDULER": "thot-os-instagram-scheduler-staging",
+              "TELEGRAM_BRIDGE": "thot-os-telegram-bridge-staging",
+              "VAULT_BRIDGE": "thot-os-vault-bridge-staging"
+            }
+          }
+        },
+        "instagram": {
+          "service": "thot-os-instagram",
+          "config": "cloudflare/instagram-scheduler/wrangler.jsonc",
+          "directory": "cloudflare/instagram-scheduler",
+          "worker": "thot-os-instagram-scheduler-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID", "COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-previews-staging"],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "reddit": {
+          "service": "thot-os-reddit",
+          "config": "cloudflare/reddit-scheduler/wrangler.jsonc",
+          "directory": "cloudflare/reddit-scheduler",
+          "worker": "thot-os-reddit-scheduler-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_REDDIT_AUTH_CONFIG_ID", "COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": [],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "telegram": {
+          "service": "thot-os-telegram",
+          "config": "cloudflare/telegram-bridge/wrangler.jsonc",
+          "directory": "cloudflare/telegram-bridge",
+          "worker": "thot-os-telegram-bridge-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID", "COMPOSIO_TELEGRAM_USER_ID"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": [],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "vault": {
+          "service": "thot-os-vault",
+          "config": "cloudflare/vault-bridge/wrangler.jsonc",
+          "directory": "cloudflare/vault-bridge",
+          "worker": "thot-os-vault-bridge-staging",
+          "deployable": true,
+          "requiredSecrets": ["CATALOGUE_SYNC_TOKEN", "COMPOSIO_API_KEY"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-previews-staging"],
+            "queues": ["thot-os-preview-staging", "thot-os-preview-dlq-staging"],
+            "services": {}
+          }
+        },
+        "legacyWorker": {
+          "service": "thot-os-legacy-worker",
+          "config": "cloudflare/thot-os-app/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-app",
+          "worker": "thot-os-legacy-staging",
+          "deployable": false,
+          "retirement": "Preserve migration/reference source. It must never target the canonical web Worker.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "legacyGateway": {
+          "service": "thot-os-legacy-gateway",
+          "config": "cloudflare/staging-gateway/wrangler.jsonc",
+          "directory": "cloudflare/staging-gateway",
+          "worker": "creator-os-staging-gateway",
+          "deployable": false,
+          "retirement": "Known stale/broken callback queue architecture. Replace under a later Local Node job-plane change; do not repair or deploy in Phase 1A.",
+          "requiredSecrets": ["STAGING_GATEWAY_TOKEN"],
+          "resources": {
+            "d1": [],
+            "r2": ["thot-os-creator-intake-staging", "thot-os-creator-packages-staging"],
+            "queues": ["thot-os-intake-staging", "thot-os-ai-jobs-staging"],
+            "services": {}
+          }
+        }
+      }
+    },
+    "production": {
+      "kind": "cloudflare",
+      "provisioned": false,
+      "deployable": false,
+      "description": "Naming contract only. No production Cloudflare resource, account, credential, route or deployment exists.",
+      "resources": {
+        "d1": {
+          "thot-os-production": { "id": null, "migrationsDir": "../thot-os-app/migrations" }
+        },
+        "r2": ["thot-os-media-production", "thot-os-previews-production", "thot-os-creator-intake-production", "thot-os-creator-packages-production"],
+        "queues": ["thot-os-intake-production", "thot-os-ai-jobs-production", "thot-os-preview-production", "thot-os-preview-dlq-production"],
+        "workers": {
+          "web": "thot-os-web-production",
+          "instagram": "thot-os-instagram-production",
+          "reddit": "thot-os-reddit-production",
+          "telegram": "thot-os-telegram-production",
+          "vault": "thot-os-vault-production",
+          "localNodeApi": "thot-os-local-node-api-production"
+        }
+      },
+      "components": {}
+    }
+  }
+}

@@ -1,10 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "creator-os-staging-gateway",
+  "account_id": "3e7cfa6efb7a97825f1dc24515410c63",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-06",
   "workers_dev": true,
   "preview_urls": true,
+  "secrets": {
+    "required": ["STAGING_GATEWAY_TOKEN"]
+  },
   "r2_buckets": [
     {
       "binding": "INTAKE",

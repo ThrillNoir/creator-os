@@ -34,6 +34,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      # Static only: validates the committed deployment registry against Wrangler
+      # configuration without authenticating to or changing Cloudflare.
+      - run: npm run deployment:preflight -- --environment staging --all
       - run: npx tsc --noEmit
       - run: npm run build
       - run: git diff --check

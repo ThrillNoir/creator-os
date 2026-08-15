@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "thot-os-staging",
+  "name": "thot-os-legacy-staging",
   "account_id": "3e7cfa6efb7a97825f1dc24515410c63",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-09",
