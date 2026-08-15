@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Phase 1C read-only creator identity reconciliation. This file authorizes identity matching only; it never authorizes a data write.",
+  "mappings": [
+    {
+      "sqliteCreatorId": "adelaide",
+      "d1CreatorId": "adelaide",
+      "confidence": "high",
+      "evidence": ["exact_stable_id", "exact_slug", "phase0_protected_snapshot"],
+      "approval": "identity_match_only"
+    },
+    {
+      "sqliteCreatorId": "bryshanagy",
+      "d1CreatorId": "bryshanagy",
+      "confidence": "high",
+      "evidence": ["exact_stable_id", "exact_slug", "phase0_protected_snapshot"],
+      "approval": "identity_match_only"
+    }
+  ],
+  "unmappedSqliteCreators": ["thrill-noir"],
+  "targetOnlyCreators": ["staging-authz-fixture"],
+  "rules": [
+    "Display names, emails, handles, and foreign IDs are corroborating evidence only and never create a mapping.",
+    "An identity mapping is not approval to copy, update, or delete child records.",
+    "Target-only fixtures are never matched automatically."
+  ]
+}
