@@ -23,6 +23,7 @@ export interface LibraryFilters { safety?: string; destination?: string; type?: 
 export interface CreatorFriend { id: number; display_name: string; stage_name: string | null; consent_status: string }
 export interface AttachedFriend extends CreatorFriend { evidence_platform: string | null; confirmed_at: string | null }
 export interface AssetEvent { id: string; actor: string; event_type: string; snapshot: string; created_at: string }
+export interface PreviewProgress { total: number; ready: number; queued: number; processing: number; failed: number }
 
 export async function getLibrarySummary(creatorId: string) {
   const { DB } = cloudflareEnv();
@@ -35,6 +36,19 @@ export async function getLibrarySummary(creatorId: string) {
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
     WHERE a.creator_id=? AND a.source_available=1
   `).bind(creatorId).first<{ assets: number; sfw: number; nsfw: number; needs_review: number; previews: number }>();
+}
+
+export async function getPreviewProgress(creatorId: string): Promise<PreviewProgress> {
+  const result = await cloudflareEnv().DB.prepare(`SELECT COUNT(*) AS total,
+      SUM(CASE WHEN a.preview_r2_key IS NOT NULL THEN 1 ELSE 0 END) AS ready,
+      SUM(CASE WHEN a.preview_r2_key IS NULL AND j.status='queued' THEN 1 ELSE 0 END) AS queued,
+      SUM(CASE WHEN a.preview_r2_key IS NULL AND j.status='processing' THEN 1 ELSE 0 END) AS processing,
+      SUM(CASE WHEN a.preview_r2_key IS NULL AND j.status='failed' THEN 1 ELSE 0 END) AS failed
+    FROM assets a LEFT JOIN asset_preview_jobs j ON j.creator_id=a.creator_id AND j.asset_id=a.id
+    WHERE a.creator_id=? AND a.source_available=1
+      AND lower(a.extension) IN ('jpg','jpeg','png','webp','heic','mov','mp4')`).bind(creatorId)
+    .first<{ total: number; ready: number | null; queued: number | null; processing: number | null; failed: number | null }>();
+  return { total: result?.total ?? 0, ready: result?.ready ?? 0, queued: result?.queued ?? 0, processing: result?.processing ?? 0, failed: result?.failed ?? 0 };
 }
 
 export async function getLibraryAssets(creatorId: string, filters: LibraryFilters = {}) {
@@ -62,18 +76,18 @@ export async function getLibraryAssets(creatorId: string, filters: LibraryFilter
 }
 
 export async function getAssetByObjectId(creatorId: string, objectId: string) {
-  const key = `creators/${creatorId}/assets/${objectId}/preview.jpg`;
+  const legacyKey = `creators/${creatorId}/assets/${objectId}/preview.jpg`;
   return cloudflareEnv().DB.prepare(`
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-    WHERE a.creator_id=? AND a.preview_r2_key=? AND a.source_available=1
-  `).bind(creatorId, key).first<AssetRow>();
+    WHERE a.creator_id=? AND (a.preview_r2_key=? OR a.preview_r2_key GLOB ?) AND a.source_available=1
+  `).bind(creatorId, legacyKey, `creators/${creatorId}/assets/${objectId}/previews/*.jpg`).first<AssetRow>();
 }
 
 export function objectIdFor(asset: AssetRow) {
-  return asset.preview_r2_key?.match(/\/([a-f0-9]{64})\/preview\.jpg$/)?.[1] ?? null;
+  return asset.preview_r2_key?.match(/\/assets\/([a-f0-9]{64})\/(?:preview\.jpg|previews\/[a-f0-9]{64}\.jpg)$/)?.[1] ?? null;
 }
 
 export async function getCreatorFriends(creatorId: string) {

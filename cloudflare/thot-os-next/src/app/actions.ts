@@ -13,6 +13,180 @@ function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
 }
 
+function cleanFanslyHandle(value: FormDataEntryValue | null) {
+  const handle = String(value ?? "").trim().replace(/^@+/, "").replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9._-]{2,80}$/.test(handle)) throw new Error("Enter the expected Fansly handle without spaces.");
+  return `@${handle}`;
+}
+
+function browserInstallationId(value: FormDataEntryValue | null) {
+  const installationId = String(value ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(installationId)) {
+    throw new Error("Paste the installation ID shown by this Chrome profile’s THOT OS extension.");
+  }
+  return installationId;
+}
+
+async function requestRedditFlairRefresh(env: CloudflareEnv, creatorId: string, communityId: number) {
+  const response = await env.REDDIT_SCHEDULER.fetch("https://reddit-scheduler/communities/reddit/flairs/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, communityId }),
+  });
+  const result = await response.json() as { ok?: boolean; error?: string; flairRequired?: boolean; flairs?: unknown[] };
+  if (!response.ok || !result.ok) throw new Error(result.error || "Reddit did not return its current flair choices.");
+  return result;
+}
+
+export async function addFanslyAccountAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const label = String(formData.get("label") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const handle = cleanFanslyHandle(formData.get("handle"));
+  const profileLabel = String(formData.get("profileLabel") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const installationId = browserInstallationId(formData.get("installationId"));
+  if (label.length < 2 || profileLabel.length < 2) throw new Error("Enter recognisable account and Chrome profile labels.");
+
+  const { DB } = cloudflareEnv();
+  const [existingAccount, installedProfile] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' LIMIT 1").first<{ id: string }>(),
+    DB.prepare("SELECT id,creator_id,label,status FROM browser_profiles WHERE installation_id=?").bind(installationId).first<{ id: string; creator_id: string; label: string; status: string }>(),
+  ]);
+  if (existingAccount) throw new Error("A Fansly account is already configured for this creator. Complete its setup instead of adding another account.");
+  if (installedProfile && installedProfile.creator_id !== creatorId) throw new Error("That THOT OS extension profile is assigned to another creator workspace.");
+  if (installedProfile?.status === "revoked") throw new Error("That Chrome profile has been revoked. Use an active THOT OS extension profile.");
+  const profileId = installedProfile?.id ?? crypto.randomUUID();
+  const accountId = crypto.randomUUID();
+  const connectionId = crypto.randomUUID();
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(installedProfile ? [] : [creatorPrepare(DB, creatorId, "INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,@creator,?,?,?)").bind(profileId, profileLabel, identity.email, installationId)]),
+    creatorPrepare(DB, creatorId, `INSERT INTO operational_accounts
+      (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,warning_level,warning_message)
+      VALUES (?,@creator,'fansly',?,?,'not_connected','local_bridge','device_only','attention','Sign in and confirm the native Fansly identity before pairing this browser bridge.')`).bind(accountId, label, handle),
+    creatorPrepare(DB, creatorId, "INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by) VALUES (@creator,?,'fansly',?,?)").bind(accountId, profileId, identity.email),
+    creatorPrepare(DB, creatorId, `INSERT INTO messaging_connections
+      (id,creator_id,account_id,platform,display_name,handle,mode,read_enabled,write_enabled,outbound_validated,status,last_error)
+      VALUES (?,@creator,?,'fansly',?,?,'observe',0,0,0,'not_connected','Confirm the signed-in Fansly identity and pair the assigned browser before collecting messages.')`).bind(connectionId, accountId, label, handle),
+    identityAuditStatement(DB, actor, "fansly_account_added", accountId, { profileId, installationIdSuffix: installationId.slice(-6), administrativeAction: true }),
+  ];
+  if (!installedProfile) statements.push(identityAuditStatement(DB, actor, "browser_profile_registered", profileId, { label: profileLabel, installationIdSuffix: installationId.slice(-6), administrativeAction: true }));
+  await DB.batch(statements);
+  revalidatePath("/accounts");
+  revalidatePath("/operations");
+  revalidatePath("/messages");
+  redirect("/accounts?saved=fansly_added");
+}
+
+export async function assignFanslyBrowserProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const profileLabel = String(formData.get("profileLabel") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const installationId = browserInstallationId(formData.get("installationId"));
+  if (profileLabel.length < 2) throw new Error("Enter a recognisable Chrome profile label.");
+
+  const { DB } = cloudflareEnv();
+  const [account, assignment, installedProfile] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id,label,handle FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' LIMIT 1").first<{ id: string; label: string; handle: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT profile_id FROM account_browser_profiles WHERE creator_id=@creator AND account_id=(SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' LIMIT 1)").first<{ profile_id: string }>(),
+    DB.prepare("SELECT id,creator_id,status FROM browser_profiles WHERE installation_id=?").bind(installationId).first<{ id: string; creator_id: string; status: string }>(),
+  ]);
+  if (!account) throw new Error("Add a Fansly account before assigning its Chrome profile.");
+  if (assignment) throw new Error("This Fansly account already has a Chrome profile assignment.");
+  if (installedProfile && installedProfile.creator_id !== creatorId) throw new Error("That THOT OS extension profile is assigned to another creator workspace.");
+  if (installedProfile?.status === "revoked") throw new Error("That Chrome profile has been revoked. Use an active THOT OS extension profile.");
+
+  const profileId = installedProfile?.id ?? crypto.randomUUID();
+  const connectionId = crypto.randomUUID();
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(installedProfile ? [] : [creatorPrepare(DB, creatorId, "INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,@creator,?,?,?)").bind(profileId, profileLabel, identity.email, installationId)]),
+    creatorPrepare(DB, creatorId, "INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by) VALUES (@creator,?,'fansly',?,?)").bind(account.id, profileId, identity.email),
+    creatorPrepare(DB, creatorId, `UPDATE operational_accounts SET connection_status='not_connected',external_identity_confirmed_at=NULL,last_checked_at=NULL,warning_level='attention',warning_message='Chrome profile assigned. Sign in natively and confirm the visible identity before pairing this browser bridge.',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator`).bind(account.id),
+    creatorPrepare(DB, creatorId, `INSERT INTO messaging_connections
+      (id,creator_id,account_id,platform,display_name,handle,mode,read_enabled,write_enabled,outbound_validated,status,last_error)
+      VALUES (?,@creator,?,'fansly',?,?,'observe',0,0,0,'not_connected','Confirm the signed-in Fansly identity and pair the assigned browser before collecting messages.')
+      ON CONFLICT(creator_id,platform,display_name) DO UPDATE SET account_id=excluded.account_id,status='not_connected',last_error=excluded.last_error,updated_at=CURRENT_TIMESTAMP`).bind(connectionId, account.id, account.label, account.handle),
+    identityAuditStatement(DB, actor, "fansly_browser_profile_assigned", account.id, { profileId, installationIdSuffix: installationId.slice(-6), administrativeAction: true }),
+  ];
+  if (!installedProfile) statements.push(identityAuditStatement(DB, actor, "browser_profile_registered", profileId, { label: profileLabel, installationIdSuffix: installationId.slice(-6), administrativeAction: true }));
+  await DB.batch(statements);
+  revalidatePath("/accounts");
+  revalidatePath("/operations");
+  revalidatePath("/messages");
+  redirect("/accounts?saved=fansly_profile_assigned");
+}
+
+export async function confirmFanslyIdentityAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  if (formData.get("identityConfirmed") !== "yes") throw new Error("Confirm the signed-in native identity before continuing.");
+  const observedHandle = cleanFanslyHandle(formData.get("observedHandle"));
+  const { DB } = cloudflareEnv();
+  const account = await creatorPrepare(DB, creatorId, `SELECT oa.id,oa.handle FROM operational_accounts oa
+    JOIN account_browser_profiles abp ON abp.creator_id=oa.creator_id AND abp.account_id=oa.id
+    JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id AND bp.status<>'revoked'
+    WHERE oa.creator_id=@creator AND oa.platform='fansly' LIMIT 1`).first<{ id: string; handle: string }>();
+  if (!account) throw new Error("Assign an active THOT OS Chrome profile before confirming the native identity.");
+  if (account.handle.toLowerCase() !== observedHandle.toLowerCase()) throw new Error("The signed-in Fansly handle does not match this creator’s configured account.");
+  const actor = humanAuditActor(identity);
+  await DB.batch([
+    creatorPrepare(DB, creatorId, `UPDATE operational_accounts SET connection_status='needs_check',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='attention',warning_message='Native identity confirmed. Pair the assigned THOT OS Chrome profile before staging vault uploads.',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator`).bind(account.id),
+    creatorPrepare(DB, creatorId, "UPDATE messaging_connections SET status='device_bridge_ready',last_error='Browser identity confirmed; bridge pairing is still required.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND account_id=? AND platform='fansly'").bind(account.id),
+    identityAuditStatement(DB, actor, "fansly_identity_confirmed", account.id, { administrativeAction: true }),
+  ]);
+  revalidatePath("/accounts");
+  revalidatePath("/operations");
+  redirect("/accounts?saved=fansly_identity_confirmed");
+}
+
+export async function syncDropboxCatalogueAction() {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const env = cloudflareEnv() as CloudflareEnv & { VAULT_BRIDGE: Fetcher; CATALOGUE_SYNC_TOKEN: string };
+  let notice = "sync_failed";
+  let detail = "";
+  try {
+    const response = await env.VAULT_BRIDGE.fetch("https://vault-bridge/catalogue/refresh", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.CATALOGUE_SYNC_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ creatorId }),
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; assets?: number; previews?: { ready?: number; queued?: number; processing?: number; failed?: number }; error?: string };
+    if (!response.ok || !result.ok || typeof result.assets !== "number") throw new Error(result.error || `Dropbox catalogue refresh failed (${response.status}).`);
+    const previews = result.previews ?? {};
+    await identityAuditStatement(env.DB, humanAuditActor(identity), "dropbox_catalogue_refreshed", creatorId, { assets: result.assets, previewsQueued: previews.queued ?? 0, previewsReady: previews.ready ?? 0, previewsFailed: previews.failed ?? 0, readOnlySource: true });
+    revalidatePath("/library");
+    revalidatePath("/operations");
+    notice = `sync_complete&count=${result.assets}&previewQueued=${previews.queued ?? 0}&previewReady=${previews.ready ?? 0}&previewFailed=${previews.failed ?? 0}`;
+  } catch (error) {
+    detail = (error instanceof Error ? error.message : "Dropbox catalogue refresh failed.").slice(0, 300);
+  }
+  redirect(`/library?notice=${notice}${detail ? `&detail=${encodeURIComponent(detail)}` : ""}`);
+}
+
+export async function saveDropboxCatalogueSourceAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const root = String(formData.get("dropboxRoot") ?? "").trim().replace(/\/+$/, "");
+  const linkValue = String(formData.get("dropboxLink") ?? "").trim();
+  if (!root.startsWith("/") || root.includes("..") || root.length > 500) throw new Error("Enter the Dropbox folder path starting with /.");
+  let link = "";
+  if (linkValue) {
+    let parsed: URL;
+    try { parsed = new URL(linkValue); } catch { throw new Error("Enter a complete Dropbox folder or file link."); }
+    if (parsed.protocol !== "https:" || !["dropbox.com", "www.dropbox.com"].includes(parsed.hostname.toLowerCase())) throw new Error("Use an https://www.dropbox.com folder or file link.");
+    link = parsed.toString();
+  }
+  const { DB } = cloudflareEnv();
+  const updated = await creatorPrepare(DB, creatorId, "UPDATE creators SET dropbox_root=?,dropbox_link=? WHERE id=@creator AND status='active'").bind(root, link || null).run();
+  if (!updated.meta?.changes) throw new Error("This creator workspace is not available.");
+  await identityAuditStatement(DB, humanAuditActor(identity), "dropbox_catalogue_source_saved", creatorId, { hasReferenceLink: Boolean(link), readOnlySource: true });
+  revalidatePath("/accounts");
+  revalidatePath("/library");
+  redirect("/accounts?saved=dropbox_source_saved");
+}
+
 export async function saveAssetAttributesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
@@ -91,6 +265,7 @@ export async function createRedditPostAction(formData: FormData) {
   const existingPostId = String(formData.get("postId") ?? "").trim();
   const assetId = String(formData.get("assetId") ?? "");
   const communityId = Number(formData.get("communityId"));
+  const flairId = String(formData.get("flairId") ?? "").trim();
   const title = String(formData.get("title") ?? "").trim();
   const caption = String(formData.get("caption") ?? "").trim().slice(0, 10000);
   const contentRating = String(formData.get("contentRating") ?? "");
@@ -113,24 +288,26 @@ export async function createRedditPostAction(formData: FormData) {
 
   const env = cloudflareEnv();
   const { DB } = env;
-  const [asset, community, account, pairing, existingPost] = await Promise.all([
+  const [asset, community, selectedFlair, account, existingPost] = await Promise.all([
     creatorPrepare(DB, creatorId, `SELECT a.id,a.extension,c.safety FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id LEFT JOIN asset_classifications c ON c.asset_id=a.id WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND d.destination='reddit'`).bind(assetId).first<{ id: string; extension: string; safety: "sfw" | "nsfw" | null }>(),
-    creatorPrepare(DB, creatorId, "SELECT id,allows_nsfw,status,last_verified_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; allows_nsfw: number; status: string; last_verified_at: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT id,name,allows_nsfw,status,last_verified_at,flair_required,flairs_checked_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; name: string; allows_nsfw: number; status: string; last_verified_at: string; flair_required: number; flairs_checked_at: string | null }>(),
+    flairId ? creatorPrepare(DB, creatorId, "SELECT flair_id,flair_text,fetched_at FROM reddit_community_flairs WHERE creator_id=@creator AND community_id=? AND flair_id=? AND active=1").bind(communityId, flairId).first<{ flair_id: string; flair_text: string; fetched_at: string }>() : Promise.resolve(null),
     creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority FROM operational_accounts WHERE creator_id=@creator AND platform='reddit' ORDER BY label LIMIT 1").first<{ id: string; connection_status: string; publishing_authority: string }>(),
-    creatorPrepare(DB, creatorId, "SELECT last_seen_at FROM bridge_credentials WHERE creator_id=@creator AND platform='reddit' AND status='active' AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 1").first<{ last_seen_at: string | null }>(),
     existingPostId ? creatorPrepare(DB, creatorId, "SELECT id,status FROM social_posts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(existingPostId).first<{ id: string; status: string }>() : Promise.resolve(null),
   ]);
   if (!asset) throw new Error("That asset is no longer available for Reddit.");
   if (!asset.safety) throw new Error("Classify the asset as SFW or NSFW before creating a Reddit post.");
-  if (!["jpg", "jpeg", "png", "webp", "gif"].includes(asset.extension.toLowerCase().replace(/^\./, ""))) throw new Error("The native Reddit bridge currently supports image posts. Native video will be enabled after its separate composer is verified.");
+  if (!["jpg", "jpeg", "png", "webp", "gif"].includes(asset.extension.toLowerCase().replace(/^\./, ""))) throw new Error("Reddit API publishing currently supports image posts. Native video will be enabled after its separate media flow is verified.");
   if (asset.safety !== contentRating) throw new Error(`This asset is classified ${asset.safety.toUpperCase()}; use the matching Reddit content rating.`);
   if (!community || community.status !== "active") throw new Error("That subreddit is not active.");
+  if (flairId && !selectedFlair) throw new Error("That Reddit flair is no longer available for the selected subreddit. Refresh its flairs and choose again.");
+  if (intent !== "draft" && community.flair_required && !selectedFlair) throw new Error(`r/${community.name} requires post flair. Refresh its flairs and choose one before publishing.`);
+  if (intent !== "draft" && community.flair_required && !community.flairs_checked_at) throw new Error(`Refresh r/${community.name} to load its current Reddit flair requirements before publishing.`);
   if (contentRating === "nsfw" && !community.allows_nsfw) throw new Error("That subreddit is not recorded as allowing NSFW posts.");
   const rulesCheckedAt = new Date(`${community.last_verified_at}T00:00:00Z`).getTime();
   if (!Number.isFinite(rulesCheckedAt) || Date.now() - rulesCheckedAt > 30 * 24 * 60 * 60 * 1000) throw new Error("Recheck this subreddit’s rules before scheduling a post.");
   if (!account) throw new Error("Add the Reddit account before creating a post.");
-  if (intent !== "draft" && account.connection_status !== "connected") throw new Error("Reconnect and verify Reddit before approving native delivery.");
-  if (intent !== "draft" && !pairing?.last_seen_at) throw new Error("Open and pair this creator’s Reddit browser before approving native delivery.");
+  if (intent !== "draft" && (account.connection_status !== "connected" || account.publishing_authority !== "confirmed")) throw new Error("Reconnect and verify Reddit before approving API delivery.");
   if (existingPostId && (!existingPost || !["draft", "scheduled"].includes(existingPost.status))) throw new Error("Only draft or scheduled Reddit posts can be edited.");
 
   const actor = identity.email;
@@ -138,19 +315,19 @@ export async function createRedditPostAction(formData: FormData) {
   let postId = existingPostId || crypto.randomUUID();
   if (!existingPostId && status === "scheduled") {
     const intentWindow = intent === "publish_now" ? scheduledAt!.slice(0, 16) : scheduledAt;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([creatorId, account.id, asset.id, caption, intent, intentWindow].join("|")));
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([creatorId, account.id, asset.id, community.id, title, caption, contentRating, selectedFlair?.flair_id ?? "", intent, intentWindow].join("|")));
     postId = `reddit-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
   }
   const eventType = intent === "publish_now" ? "post_now_approved" : intent === "schedule" ? "post_scheduled" : existingPostId ? "draft_updated" : "draft_created";
   if (existingPostId) {
-    const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,community_id=?,title=?,caption=?,content_rating=?,status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')`)
-      .bind(account.id, asset.id, community.id, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
+    const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,community_id=?,reddit_flair_id=?,reddit_flair_text=?,title=?,caption=?,content_rating=?,status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')`)
+      .bind(account.id, asset.id, community.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
     if (!update.meta?.changes) throw new Error("This Reddit post changed before it could be saved. Refresh and try again.");
-    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })).run();
   } else {
     await DB.batch([
-      creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,asset_id,community_id,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, community.id, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
-      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })),
+      creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,asset_id,community_id,reddit_flair_id,reddit_flair_text,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, community.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
+      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })),
     ]);
   }
   revalidatePath("/operations");
@@ -233,8 +410,28 @@ export async function saveRedditCommunityAction(formData: FormData) {
       SELECT ?,id,@creator,?,?,'community_saved',? FROM reddit_communities WHERE creator_id=@creator AND name=?`)
       .bind(crypto.randomUUID(), actor, identity.creator.role, detail, communityName),
   ]);
+  const savedCommunity = await creatorPrepare(DB, creatorId, "SELECT id FROM reddit_communities WHERE creator_id=@creator AND name=?").bind(communityName).first<{ id: number }>();
+  let flairState = "unavailable";
+  if (savedCommunity) {
+    try {
+      await requestRedditFlairRefresh(cloudflareEnv(), creatorId, savedCommunity.id);
+      flairState = "synced";
+    } catch {}
+  }
   revalidatePath("/operations");
-  redirect("/operations?platform=reddit&section=communities&community=saved");
+  redirect(`/operations?platform=reddit&section=communities&community=saved&flairs=${flairState}`);
+}
+
+export async function refreshRedditFlairsAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const communityId = Number(formData.get("communityId"));
+  if (!Number.isInteger(communityId) || communityId < 1) throw new Error("Choose a saved Reddit community.");
+  const community = await creatorPrepare(cloudflareEnv().DB, creatorId, "SELECT id FROM reddit_communities WHERE id=? AND creator_id=@creator AND status='active'").bind(communityId).first<{ id: number }>();
+  if (!community) throw new Error("That Reddit community is not active in this creator workspace.");
+  await requestRedditFlairRefresh(cloudflareEnv(), creatorId, community.id);
+  revalidatePath("/operations");
+  redirect("/operations?platform=reddit&section=communities&flairs=synced");
 }
 
 export async function cancelRedditPostAction(formData: FormData) {
@@ -274,30 +471,6 @@ export async function startRedditReconnectAction() {
   const result = await response.json() as { ok?: boolean; redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Reddit reconnection could not be started.");
   redirect(result.redirectUrl);
-}
-
-export async function openRedditBridgeAction() {
-  const identity = await requireCreatorContext("manage_identity");
-  const creatorId = identity.creator.creator_id;
-  const env = cloudflareEnv();
-  const { DB } = env;
-  const account = await creatorPrepare(DB, creatorId, `SELECT oa.id,oa.handle,abp.profile_id FROM operational_accounts oa
-    JOIN account_browser_profiles abp ON abp.account_id=oa.id AND abp.creator_id=oa.creator_id
-    JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id AND bp.status<>'revoked'
-    WHERE oa.creator_id=@creator AND oa.platform='reddit' ORDER BY oa.label LIMIT 1`).first<{ id: string; handle: string; profile_id: string }>();
-  if (!account) throw new Error("Assign this creator’s Reddit account to an active M1 Chrome profile first.");
-  const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  const tokenHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  const auditActor = humanAuditActor(identity);
-  await DB.batch([
-    creatorPrepare(DB, creatorId, "UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND account_id=? AND profile_id=? AND platform='reddit' AND status='active'").bind(account.id, account.profile_id),
-    creatorPrepare(DB, creatorId, "INSERT INTO bridge_credentials (id,creator_id,account_id,profile_id,platform,token_hash,status,issued_by,expires_at) VALUES (?,@creator,?,?, 'reddit',?,'active',?,datetime('now','+90 days'))").bind(crypto.randomUUID(), account.id, account.profile_id, tokenHash, identity.email),
-    creatorPrepare(DB, creatorId, "UPDATE operational_accounts SET publishing_mode='local_bridge',publishing_authority='device_only',warning_level='attention',warning_message='Finish pairing the assigned signed Reddit browser for native scheduled posts.',last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator").bind(account.id),
-    identityAuditStatement(DB, auditActor, "bridge_credential_issued", account.id, { platform: "reddit", profileId: account.profile_id }),
-  ]);
-  const bridgeBaseUrl = (env as CloudflareEnv & { VAULT_BRIDGE_BASE_URL?: string }).VAULT_BRIDGE_BASE_URL ?? "https://thot-os-vault-bridge-staging.thot-os.workers.dev";
-  redirect(`${bridgeBaseUrl}/pair#creator_os_bridge_pair=${encodeURIComponent(token)}&platform=reddit&next=${encodeURIComponent("https://www.reddit.com/submit")}`);
 }
 
 export async function createInstagramPostAction(formData: FormData) {

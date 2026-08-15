@@ -110,6 +110,8 @@ Manual CSV imports provide reporting before analytics APIs are connected. Creato
 - NSFW permission, creator verification, required flair, account-age/karma notes and cooldown are explicit.
 - One approved Reddit package may create multiple subreddit targets, but every target has its own title, flair, schedule and human approval.
 - A stable idempotency key prevents the same approved package version being queued twice for one community.
-- The browser-assisted handoff opens the correct subreddit composer and prepares downloads/copy actions, but stops before Submit.
-- OAuth credentials are accepted only after Reddit approves the app/use case.
-- External submission stays disabled until the approved API documentation and media-upload flow can be verified live.
+- Reddit OAuth remains inside the creator-scoped Composio connected account; THOT OS never receives or stores Adelaide’s Reddit access or refresh token.
+- Native images are downloaded from the creator-scoped Dropbox connection, leased to Reddit media storage through Composio’s authenticated proxy, uploaded to the leased destination, submitted as `kind=image`, and accepted as published only after THOT OS verifies the matching native post receipt.
+- The M1 browser bridge is not required for Reddit API posts. It remains specific to platforms without a supported publishing API.
+- The Reddit scheduler uses the existing `COMPOSIO_API_KEY` and `COMPOSIO_REDDIT_AUTH_CONFIG_ID`; no separate Reddit client secret is stored in Cloudflare.
+- Live submission remains permitted only for the approved Composio Reddit connection and reviewed subreddit targets.

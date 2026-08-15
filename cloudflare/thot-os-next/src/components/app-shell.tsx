@@ -7,16 +7,20 @@ import { creatorRoleLabel, isCreatorPortalRole } from "@/lib/authorization";
 const agencyNavigation = [
   ["⌂", "Overview", "/"],
   ["▦", "Content library", "/library"],
+  ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
   ["✦", "Messages", "/messages"],
+  ["$", "Money & health", "/money"],
   ["◇", "Creators", "/creators"],
 ] as const;
 
 const creatorNavigation = [
   ["⌂", "Overview", "/"],
   ["▦", "Content library", "/library"],
+  ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
   ["✦", "Messages", "/messages"],
+  ["$", "Money & health", "/money"],
 ] as const;
 
 const viewerNavigation = creatorNavigation.slice(0, 2);

@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { saveAssetAttributesAction } from "@/app/actions";
-import { AppShell, PageHeader } from "@/components/app-shell";
+import { saveAssetAttributesAction, syncDropboxCatalogueAction } from "@/app/actions";
+import { AppShell } from "@/components/app-shell";
 import { AssetCard } from "@/components/asset-card";
 import { AttributeFields } from "@/components/attribute-fields";
-import { destinations, getAssetByObjectId, getLibraryAssets, getLibrarySummary } from "@/lib/library";
+import { PreviewProgress } from "@/components/preview-progress";
+import { destinations, getAssetByObjectId, getLibraryAssets, getLibrarySummary, getPreviewProgress } from "@/lib/library";
 import { requireCreatorContext } from "@/lib/identity";
 import { roleCan } from "@/lib/authorization";
 
@@ -18,10 +19,13 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
   const context = await requireCreatorContext();
   const creatorId = context.creator.creator_id;
   const canMutate = roleCan(context.creator.role, "mutate");
-  const [summary, assets, template] = await Promise.all([getLibrarySummary(creatorId), getLibraryAssets(creatorId, filters), /^[a-f0-9]{64}$/.test(filters.template ?? "") ? getAssetByObjectId(creatorId, filters.template!) : null]);
+  const [summary, previewProgress, assets, template] = await Promise.all([getLibrarySummary(creatorId), getPreviewProgress(creatorId), getLibraryAssets(creatorId, filters), /^[a-f0-9]{64}$/.test(filters.template ?? "") ? getAssetByObjectId(creatorId, filters.template!) : null]);
   const currentUrl = filterHref({ ...filters, template: undefined }, "saved", "all");
-  return <AppShell active="Content library"><PageHeader title="Content Library" subtitle={`Find, classify and prepare ${context.creator.creator_name}'s content.`} />
+  return <AppShell active="Content library"><header className="top library-page-header"><div><span className="eyebrow">CREATOR WORKSPACE</span><h1>Content Library</h1><p>Find, classify and prepare {context.creator.creator_name}&apos;s content.</p></div><div className="library-sync-action"><small>Refreshes this creator&apos;s read-only Dropbox catalogue.</small>{canMutate ? <form action={syncDropboxCatalogueAction}><button className="secondary-action" type="submit">Sync Dropbox</button></form> : <span className="secondary-action disabled-action">Sync requires editor access</span>}</div></header>
+    {filters.notice === "sync_complete" && <div className="success">Dropbox catalogue refreshed. {filters.count || summary?.assets || 0} assets are available. Preview generation is continuing automatically in the background.</div>}
+    {filters.notice === "sync_failed" && <div className="connection-banner blocked"><div><strong>Dropbox catalogue refresh failed</strong><span>{filters.detail || "No catalogue changes were applied. Check the Dropbox connection and try again."}</span></div>{filters.detail === "Dropbox root is not configured for this creator." && <Link className="secondary-action" href="/accounts">Add Dropbox source</Link>}</div>}
     {filters.saved && <div className="success">Saved attributes for {filters.saved} asset{filters.saved === "1" ? "" : "s"}.</div>}
+    <PreviewProgress initial={previewProgress} />
     <section className="panel library-panel"><div className="library-heading"><div><h2>{context.creator.creator_name} assets</h2><p>{assets.length} shown · {summary?.assets ?? 0} total · {summary?.needs_review ?? 0} need review</p></div><div className="view-links" aria-label="Library view"><Link className={!filters.view || filters.view === "thumbnails" ? "active" : ""} href={filterHref(filters,"view","thumbnails")}>Grid</Link><Link className={filters.view === "list" ? "active" : ""} href={filterHref(filters,"view","list")}>List</Link></div></div>
       <form className="library-toolbar" method="get"><input type="hidden" name="view" value={filters.view ?? "thumbnails"} /><label className="search-field"><span className="sr-only">Search assets</span><input type="search" name="query" defaultValue={filters.query ?? ""} placeholder="Search files and folders…" /></label><label><span>Type</span><select name="type" defaultValue={filters.type ?? "all"}><option value="all">All content</option><option value="photos">Photos</option><option value="videos">Videos</option></select></label><label><span>Safety</span><select name="safety" defaultValue={filters.safety ?? "all"}><option value="all">All safety</option><option value="review">Needs review</option><option value="sfw">SFW</option><option value="nsfw">NSFW</option></select></label><label><span>Destination</span><select name="destination" defaultValue={filters.destination ?? "all"}><option value="all">All destinations</option>{destinations.map((value) => <option value={value} key={value}>{value}</option>)}</select></label><button type="submit">Apply</button><Link className="clear-filters" href={`/library${filters.view === "list" ? "?view=list" : ""}`}>Reset</Link></form>
       <div className="library-status"><span><b>{summary?.previews ?? 0}</b> previews ready</span><span><b>{summary?.sfw ?? 0}</b> SFW</span><span><b>{summary?.nsfw ?? 0}</b> NSFW</span></div>

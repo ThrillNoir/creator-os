@@ -8,7 +8,7 @@
   "workers_dev": true,
   "preview_urls": false,
   "secrets": {
-    "required": ["COMPOSIO_API_KEY", "COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID"]
+    "required": ["COMPOSIO_API_KEY", "CATALOGUE_SYNC_TOKEN"]
   },
   "observability": {
     "enabled": true,
@@ -22,5 +22,31 @@
       "database_id": "174532e8-5ada-4e30-abba-1276b3540b3f",
       "migrations_dir": "../thot-os-app/migrations"
     }
-  ]
+  ],
+  "r2_buckets": [
+    { "binding": "PREVIEWS", "bucket_name": "thot-os-previews-staging" }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "PREVIEW_QUEUE", "queue": "thot-os-preview-staging" }
+    ],
+    "consumers": [
+      {
+        "queue": "thot-os-preview-staging",
+        "max_batch_size": 3,
+        "max_batch_timeout": 2,
+        "max_retries": 4,
+        "retry_delay": 30,
+        "max_concurrency": 2,
+        "dead_letter_queue": "thot-os-preview-dlq-staging"
+      },
+      {
+        "queue": "thot-os-preview-dlq-staging",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 1,
+        "max_concurrency": 1
+      }
+    ]
+  }
 }

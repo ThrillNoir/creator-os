@@ -163,23 +163,26 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
 });
 
 test("cloud pairing is pre-bound and never exposes credentials to provider origins", async () => {
-  const [bridge, actions, fansly, extension, nativePair] = await Promise.all([
+  const [bridge, actions, fansly, extension, redditPublisher, nativePair] = await Promise.all([
     source("../../vault-bridge/src/index.ts"),
     source("../src/app/actions.ts"),
     source("../src/lib/fansly-pairing.ts"),
     source("../../../public/local-bridge-extension/background.js"),
+    source("../../../public/local-bridge-extension/reddit-publisher.js"),
     source("../../../public/local-bridge-extension/native-pair.js"),
   ]);
   assert.match(bridge, /installation_id=\? AND status<>'revoked'/);
   assert.doesNotMatch(bridge, /installation_id IS NULL/);
   assert.match(bridge, /content-security-policy/);
-  assert.match(actions, /VAULT_BRIDGE_BASE_URL[\s\S]*creator_os_bridge_pair/);
   assert.match(fansly, /VAULT_BRIDGE_BASE_URL[\s\S]*creator_os_bridge_pair/);
+  assert.doesNotMatch(actions, /openRedditBridgeAction|platform=reddit&next=/);
   assert.doesNotMatch(actions, /reddit\.com\/submit#creator_os/);
   assert.doesNotMatch(fansly, /fansly\.com\/[^{`]*#creator_os/);
   assert.match(extension, /x-thot-os-installation-id/);
   assert.match(extension, /stageVaultFile,args:\[job\.mediaUrl,config\.token,config\.installationId/);
-  assert.match(extension, /prepareAndSubmitRedditPost,args:\[job,config\.token,config\.installationId/);
+  assert.match(redditPublisher, /chrome\.storage\.local\.get/);
+  assert.match(redditPublisher, /authorization:`Bearer \$\{config\.token\}`/);
+  assert.doesNotMatch(redditPublisher, /document\.(?:cookie|write)|localStorage|sessionStorage/);
   assert.doesNotMatch(nativePair, /creator_os_cloud_pair/);
 });
 

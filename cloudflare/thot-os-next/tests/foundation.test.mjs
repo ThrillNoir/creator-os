@@ -28,7 +28,7 @@ test("cloud library writes are creator scoped and audited", async () => {
 test("private previews require a matching authorised creator D1 asset", async () => {
   const route = await source("src/app/api/preview/[objectId]/route.ts");
   assert.match(route, /requireCreatorContext/);
-  assert.match(route, /creator_id=\? AND preview_r2_key=\?/);
+  assert.match(route, /creator_id=\? AND \(preview_r2_key=\? OR preview_r2_key GLOB \?\)/);
   assert.match(route, /private, max-age=86400/);
 });
 
@@ -45,6 +45,89 @@ test("workspace navigation shows working modules without a disabled-module wall"
   assert.match(shell, /Migration progress/);
   assert.doesNotMatch(shell, /MIGRATING NEXT/);
   assert.doesNotMatch(shell, /const upcoming/);
+  assert.match(shell, /Money & health/);
+});
+
+test("money and health keeps finance creator scoped, auditable, and currencies separate", async () => {
+  const [page, actions, finance, migration] = await Promise.all([
+    source("src/app/money/page.tsx"),
+    source("src/app/money-actions.ts"),
+    source("src/lib/finance.ts"),
+    source("../thot-os-app/migrations/0024_finance_foundation.sql"),
+  ]);
+  assert.match(page, /Currencies stay separate/);
+  assert.match(page, /THOT OS will not estimate missing revenue/);
+  assert.match(actions, /requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /requireCreatorContext\("manage_identity"\)/);
+  assert.match(actions, /finance_csv_imported/);
+  assert.match(actions, /ON CONFLICT\(creator_id,platform,period_date,currency\)/);
+  assert.match(finance, /creator_id=@creator/);
+  assert.match(finance, /external_post_id IS NOT NULL AND external_url IS NOT NULL/);
+  assert.match(migration, /net_revenue_minor INTEGER NOT NULL/);
+  assert.match(migration, /UNIQUE\(creator_id, platform, content_hash\)/);
+});
+
+test("connection setup is discoverable, creator scoped, and keeps native sign-in separate", async () => {
+  const [shell, page, actions, pairing, library, migration, invariant] = await Promise.all([
+    source("src/components/app-shell.tsx"),
+    source("src/app/accounts/page.tsx"),
+    source("src/app/actions.ts"),
+    source("src/lib/fansly-pairing.ts"),
+    source("src/app/library/page.tsx"),
+    source("../thot-os-app/migrations/0021_creator_dropbox_source.sql"),
+    source("../thot-os-app/migrations/0023_fansly_account_invariant.sql"),
+  ]);
+  assert.match(shell, /Accounts & connections/);
+  assert.match(page, /Open secure sign-in/);
+  assert.match(page, /Pair bridge and open vault/);
+  assert.match(page, /THOT OS extension installation ID/);
+  assert.doesNotMatch(page, /name="password"/);
+  assert.match(actions, /addFanslyAccountAction/);
+  assert.match(actions, /assignFanslyBrowserProfileAction/);
+  assert.match(actions, /confirmFanslyIdentityAction/);
+  assert.match(actions, /dropbox_catalogue_refreshed/);
+  assert.match(actions, /saveDropboxCatalogueSourceAction/);
+  assert.match(actions, /requireCreatorContext\("manage_identity"\)/);
+  assert.match(pairing, /Confirm the signed-in Fansly identity before pairing the bridge/);
+  assert.match(library, /syncDropboxCatalogueAction/);
+  assert.match(library, /Sync Dropbox/);
+  assert.match(library, /read-only Dropbox catalogue/);
+  assert.match(library, /Preview generation is continuing automatically in the background/);
+  assert.match(page, /Dropbox file or folder link/);
+  assert.match(page, /Dropbox folder path/);
+  assert.match(migration, /ADD COLUMN dropbox_link TEXT/);
+  assert.match(invariant, /operational_accounts_one_fansly_per_creator/);
+  assert.doesNotMatch(library, /127\.0\.0\.1/);
+});
+
+test("Dropbox previews are queued, idempotent, private, and report live progress", async () => {
+  const [bridge, config, migration, progress, statusRoute, library] = await Promise.all([
+    source("../vault-bridge/src/index.ts"),
+    source("../vault-bridge/wrangler.jsonc"),
+    source("../thot-os-app/migrations/0022_asset_preview_queue.sql"),
+    source("src/components/preview-progress.tsx"),
+    source("src/app/api/library/preview-status/route.ts"),
+    source("src/lib/library.ts"),
+  ]);
+  assert.match(config, /thot-os-preview-staging/);
+  assert.match(config, /thot-os-preview-dlq-staging/);
+  assert.match(config, /max_concurrency/);
+  assert.match(bridge, /PREVIEW_QUEUE\.sendBatch/);
+  assert.match(bridge, /async queue\(batch: MessageBatch<PreviewQueueMessage>/);
+  assert.match(bridge, /message\.ack\(\)/);
+  assert.match(bridge, /message\.retry/);
+  assert.match(bridge, /source_revision IS \?/);
+  assert.match(bridge, /status='queued'/);
+  assert.doesNotMatch(bridge, /status IN \('queued','processing'\)/);
+  assert.match(bridge, /env\.PREVIEWS\.put/);
+  assert.match(bridge, /\/previews\/\$\{revisionId\}\.jpg/);
+  assert.match(bridge, /UPDATE assets SET source_available=0/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS asset_preview_jobs/);
+  assert.match(migration, /UNIQUE\(creator_id, asset_id\)/);
+  assert.match(progress, /setInterval\(poll, 3000\)/);
+  assert.match(progress, /you can leave this page/);
+  assert.match(statusRoute, /requireCreatorContext/);
+  assert.match(library, /a\.creator_id=\?/);
 });
 
 test("asset classification progressively reveals valid destinations and enforces paid consent", async () => {
@@ -90,8 +173,8 @@ test("Operations data and Reddit scheduling stay creator scoped and audited", as
   assert.match(communityEvents, /CREATE TABLE IF NOT EXISTS reddit_community_events/);
 });
 
-test("Reddit delivery uses a private cron worker with claims and receipts", async () => {
-  const [config, actions, operations, scheduler, bridge, migration, controlsMigration, nativeMigration, manifest, background] = await Promise.all([
+test("Reddit delivery uses the approved API with native media and verified receipts", async () => {
+  const [config, actions, operations, scheduler, bridge, migration, controlsMigration, nativeMigration, apiMigration, manifest, background, publisher] = await Promise.all([
     source("wrangler.jsonc"),
     source("src/app/actions.ts"),
     source("src/app/operations/page.tsx"),
@@ -100,8 +183,10 @@ test("Reddit delivery uses a private cron worker with claims and receipts", asyn
     source("../thot-os-app/migrations/0004_reddit_scheduler.sql"),
     source("../thot-os-app/migrations/0005_reddit_queue_controls.sql"),
     source("../thot-os-app/migrations/0008_reddit_native_bridge.sql"),
+    source("../thot-os-app/migrations/0025_reddit_composio_native_api.sql"),
     source("../../public/local-bridge-extension/manifest.json"),
     source("../../public/local-bridge-extension/background.js"),
+    source("../../public/local-bridge-extension/reddit-publisher.js"),
   ]);
   assert.match(config, /REDDIT_SCHEDULER/);
   assert.match(actions, /startRedditReconnectAction/);
@@ -112,19 +197,45 @@ test("Reddit delivery uses a private cron worker with claims and receipts", asyn
   assert.match(scheduler, /status='publishing'/);
   assert.match(scheduler, /unixepoch\(p\.scheduled_at\)<=unixepoch\(CURRENT_TIMESTAMP\)/);
   assert.match(scheduler, /posts\/reddit\/publish/);
-  assert.match(scheduler, /native_delivery_queued/);
+  assert.match(scheduler, /api_publish_completed/);
   assert.doesNotMatch(scheduler, /REDDIT_CREATE_REDDIT_POST/);
-  assert.doesNotMatch(scheduler, /DROPBOX_GET_TEMPORARY_LINK/);
+  assert.match(scheduler, /DROPBOX_GET_TEMPORARY_LINK/);
+  assert.match(scheduler, /api\/media\/asset\.json/);
+  assert.match(scheduler, /api\/submit/);
+  assert.match(scheduler, /api\/flairselector/);
+  assert.match(scheduler, /flair_id/);
+  assert.match(actions, /refreshRedditFlairsAction/);
+  assert.match(operations, /RedditCommunityAndFlairFields/);
+  assert.match(scheduler, /findPublishedImage/);
+  assert.match(scheduler, /composioProxy/);
+  assert.doesNotMatch(scheduler, /REDDIT_CLIENT_SECRET|REDDIT_TOKEN_ENCRYPTION_KEY/);
+  assert.match(apiMigration, /Composio native API delivery/);
+  assert.match(apiMigration, /publishing_mode='scheduled_api'/);
   assert.match(scheduler, /Outcome uncertain; verify Reddit before retrying/);
   assert.match(bridge, /DROPBOX_GET_TEMPORARY_LINK/);
+  assert.match(bridge, /DROPBOX_LIST_FILES_IN_FOLDER/);
+  assert.match(bridge, /DROPBOX_LIST_FOLDER_CONTINUE/);
+  assert.match(bridge, /DROPBOX_GET_THUMBNAIL/);
+  assert.match(bridge, /env\.PREVIEWS\.put/);
+  assert.match(bridge, /preview_r2_key IS NULL/);
+  assert.match(bridge, /isJpeg/);
+  assert.match(bridge, /connected_accounts\?\$\{query\}/);
+  assert.match(bridge, /item\.user_id === userId/);
+  assert.match(bridge, /Dropbox could not find this creator’s configured folder/);
+  assert.doesNotMatch(bridge, /"DROPBOX_LIST_FOLDER"/);
   assert.match(bridge, /native_publish_completed/);
   assert.match(bridge, /REDDIT_POST_REDDIT_COMMENT/);
   assert.match(bridge, /bridge_credentials/);
   assert.match(bridge, /x-thot-os-installation-id/);
   assert.match(nativeMigration, /CREATE TABLE reddit_bridge_tokens/);
-  assert.match(manifest, /0\.8\.1/);
+  assert.match(manifest, /0\.9\.9/);
   assert.match(background, /creator_os_bridge_pair/);
-  assert.match(background, /prepareAndSubmitRedditPost/);
+  assert.match(background, /creatorOsRedditPending/);
+  assert.match(background, /DOM\.setFileInputFiles/);
+  assert.match(publisher, /state:"submitted"/);
+  assert.match(publisher, /nativeMediaProof:"reddit-rendered-preview"/);
+  assert.match(publisher, /externalPostId:`t3_\$\{match\[1\]\}`/);
+  assert.match(bridge, /native_publish_rejected/);
   assert.match(migration, /CREATE TABLE scheduler_runs/);
   assert.match(migration, /CREATE TABLE provider_connections/);
   assert.match(controlsMigration, /failure_reviewed_at/);
@@ -175,7 +286,9 @@ test("Vault Operations exposes the signed Fansly queue and protects device claim
     source("../../public/local-bridge-extension/background.js"),
   ]);
   assert.match(page, /Send approved content to the vault/);
-  assert.match(page, /Open & pair Fansly vault/);
+  assert.match(page, /Connect Fansly/);
+  assert.match(page, /Pair bridge and open vault/);
+  assert.match(page, /signed-in and verified Fansly account is required before vault uploads can be staged/);
   assert.match(page, /action="\/api\/fansly\/pair" method="post" target="_blank"/);
   assert.match(page, /name="destination" value="vault"/);
   assert.match(actions, /createFanslyVaultJobsAction/);
@@ -186,7 +299,7 @@ test("Vault Operations exposes the signed Fansly queue and protects device claim
   assert.match(bridge, /status='claimed'/);
   assert.match(migration, /CREATE TABLE vault_bridge_tokens/);
   assert.match(bridge, /bridge_credentials/);
-  assert.match(manifest, /0\.8\.1/);
+  assert.match(manifest, /0\.9\.9/);
   assert.match(background, /trusted cloud pairing/);
 });
 
@@ -267,7 +380,7 @@ test("Telegram and Fansly operate inside the unified thread with explicit device
   assert.match(extension, /messageBridgeRequest\(config,"\/ingest"/);
   assert.match(extension, /Fansly surface readiness/);
   assert.match(extension, /textarea\.message-input/);
-  assert.match(manifest, /"version": "0\.8\.1"/);
+  assert.match(manifest, /"version": "0\.9\.9"/);
   assert.match(extension, /app-button\.send-button\.can-send/);
   assert.match(extension, /fanslyMessageGroup/);
   assert.match(extension, /pageHidden/);

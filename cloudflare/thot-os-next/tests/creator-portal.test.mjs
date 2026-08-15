@@ -70,7 +70,7 @@ test("creator APIs return only the effective server-derived workspace", async ()
   ]);
   assert.match(libraryApi, /creatorId: context\.creator\.creator_id/);
   assert.match(libraryApi, /status: 404/);
-  assert.match(previewApi, /creator_id=\? AND preview_r2_key=\?/);
+  assert.match(previewApi, /creator_id=\? AND \(preview_r2_key=\? OR preview_r2_key GLOB \?\)/);
   assert.match(health, /WHERE creator_id=\?/);
   assert.match(access, /cf-access-jwt-assertion/);
   assert.doesNotMatch(access, /cf-access-authenticated-user-email/);

@@ -54,11 +54,7 @@
     try {
       chrome.storage.local.get("creatorOsBridge", async ({creatorOsBridge}) => {
         if (!extensionAvailable()) return;
-        if (!creatorOsBridge?.token || (creatorOsBridge.platform && creatorOsBridge.platform !== platform)) {
-          const claimed = await chrome.runtime.sendMessage({type:"creator-os-claim",platform}).catch(() => null);
-          if (claimed?.ok) schedule();
-          return;
-        }
+        if (!creatorOsBridge?.token || (creatorOsBridge.platform && creatorOsBridge.platform !== platform)) return;
         try {
           const response = await fetch("http://127.0.0.1:3000/api/local-bridge/ingest",{method:"POST",headers:{authorization:`Bearer ${creatorOsBridge.token}`,"content-type":"application/json"},body:JSON.stringify({platform,threads:collect()})});
           if (response.status === 401 && extensionAvailable()) {
