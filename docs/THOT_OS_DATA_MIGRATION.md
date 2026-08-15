@@ -156,6 +156,19 @@ Do not apply these in Phase 1C:
 
 A future approved apply must capture a new D1 export, use a reviewed immutable source, record per-record provenance, verify counts/foreign keys/creator isolation/duplicate identities/R2 references/application reads, and retain before-images or compensating operations. Restoring the whole D1 database is not rollback for a controlled creator/domain migration.
 
+### Phase 1C verification performed
+
+| Check | Result |
+|---|---|
+| Reconciliation fixtures | Pass: source-only, target-only, match, conflict, provider-ID message matching, cross-creator isolation, source-missing media, credential exclusion, D1 mismatch, production rejection, idempotent manifest, disabled apply |
+| Root verification | Pass: lint, 45 tests, SQLite integrity/isolation, root build |
+| Cloud verification | Pass: all Worker checks, Telegram tests, 75 OpenNext tests, D1 migration replay through `0027`, Cloud Next and OpenNext builds |
+| Deployment preflight | Pass: all staging components, local registry/config only |
+| Current D1 export | Pass: explicit read-only staging export, locally parsed and verified through `0027` |
+| Remote mutation | **NO** — the export metadata reported zero remote rows written; no D1/R2 change, migration, deployment, or provider change was run |
+
+The Cloud build retains the expected local warning for missing internal-service secrets. No values were created or read; this remains a staging-release provisioning gate rather than a Phase 1C build failure.
+
 ## Phase 1D readiness
 
 THOT OS is **not ready for Phase 1D controlled data migration**. Another reconciliation/design step is required first:

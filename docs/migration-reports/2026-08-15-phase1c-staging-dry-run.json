@@ -1,0 +1,730 @@
+{
+  "mode": "DRY RUN",
+  "source": "sqlite-consistent-backup.sqlite",
+  "target": "thot-os-staging",
+  "environment": "staging",
+  "manifests": [
+    {
+      "schemaVersion": 1,
+      "migrationId": "phase1c-4ab9953b2a5cca6299e7",
+      "mode": "DRY RUN",
+      "source": {
+        "database": "sqlite",
+        "snapshot": "sqlite-consistent-backup.sqlite",
+        "checksum": "2f4049754867ae6b9f3f24c67282bd16097bcd5da7e349298a4921dfb2f17c4c",
+        "integrity": "ok"
+      },
+      "target": {
+        "database": "d1",
+        "environment": "staging",
+        "databaseName": "thot-os-staging",
+        "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+        "snapshotChecksum": "7b153297140f99d0e573e23fa0b0b899e08eb9e2da53c3ec2eb105359aac1732",
+        "migrationState": [
+          "0001_adelaide_library.sql",
+          "0002_library_classification_events.sql",
+          "0003_operations_foundation.sql",
+          "0004_reddit_scheduler.sql",
+          "0005_reddit_queue_controls.sql",
+          "0006_instagram_operations.sql",
+          "0007_vault_bridge.sql",
+          "0008_reddit_native_bridge.sql",
+          "0009_unified_messages.sql",
+          "0010_telegram_connector.sql",
+          "0011_instagram_completion.sql",
+          "0012_instagram_replies.sql",
+          "0013_instagram_reply_window.sql",
+          "0014_instagram_message_subscription.sql",
+          "0015_message_attachments.sql",
+          "0016_telegram_fansly_messages.sql",
+          "0017_reddit_community_events.sql",
+          "0018_creator_identity_profiles.sql",
+          "0019_actor_role_audit.sql",
+          "0020_actor_role_contract.sql",
+          "0021_creator_dropbox_source.sql",
+          "0022_asset_preview_queue.sql",
+          "0023_fansly_account_invariant.sql",
+          "0024_finance_foundation.sql",
+          "0025_reddit_composio_native_api.sql",
+          "0026_retire_reddit_browser_bridge.sql",
+          "0027_reddit_post_flairs.sql"
+        ]
+      },
+      "creator": {
+        "sqliteCreatorId": "adelaide",
+        "d1CreatorId": "adelaide",
+        "confidence": "high",
+        "evidence": [
+          "exact_stable_id",
+          "exact_slug",
+          "phase0_protected_snapshot"
+        ]
+      },
+      "domains": {
+        "assets": {
+          "classificationCounts": {
+            "TARGET_ONLY": 117,
+            "TARGET_NEWER": 202,
+            "MATCH": 24
+          },
+          "proposedOperations": {
+            "SKIP": 141,
+            "MANUAL_REVIEW": 202
+          },
+          "recordsConsidered": 343
+        },
+        "classifications": {
+          "classificationCounts": {
+            "TARGET_ONLY": 51,
+            "MATCH": 194,
+            "CONFLICT": 1
+          },
+          "proposedOperations": {
+            "SKIP": 245,
+            "MANUAL_REVIEW": 1
+          },
+          "recordsConsidered": 246
+        },
+        "destinations": {
+          "classificationCounts": {
+            "MATCH": 212,
+            "TARGET_ONLY": 155
+          },
+          "proposedOperations": {
+            "SKIP": 367
+          },
+          "recordsConsidered": 367
+        },
+        "messages": {
+          "classificationCounts": {
+            "TARGET_ONLY": 304,
+            "MATCH": 24,
+            "AMBIGUOUS": 18
+          },
+          "proposedOperations": {
+            "SKIP": 328,
+            "MANUAL_REVIEW": 18
+          },
+          "recordsConsidered": 346
+        },
+        "threads": {
+          "classificationCounts": {
+            "TARGET_ONLY": 27,
+            "MATCH": 19,
+            "AMBIGUOUS": 1
+          },
+          "proposedOperations": {
+            "SKIP": 46,
+            "MANUAL_REVIEW": 1
+          },
+          "recordsConsidered": 47
+        },
+        "media": {
+          "classificationCounts": {
+            "MATCH": 202,
+            "MANUAL_REVIEW": 24,
+            "TARGET_ONLY": 117
+          },
+          "proposedOperations": {
+            "SKIP": 319,
+            "MANUAL_REVIEW": 24
+          },
+          "recordsConsidered": 343
+        },
+        "people": {
+          "classificationCounts": {
+            "MANUAL_REVIEW": 1,
+            "TARGET_ONLY": 1
+          },
+          "proposedOperations": {
+            "MANUAL_REVIEW": 1,
+            "SKIP": 1
+          },
+          "recordsConsidered": 2
+        },
+        "accounts": {
+          "classificationCounts": {
+            "MANUAL_REVIEW": 4,
+            "TARGET_ONLY": 5
+          },
+          "proposedOperations": {
+            "MANUAL_REVIEW": 4,
+            "SKIP": 5
+          },
+          "recordsConsidered": 9
+        },
+        "credentials": {
+          "classificationCounts": {
+            "ARCHIVE_ONLY": 1,
+            "TARGET_ONLY": 2
+          },
+          "proposedOperations": {
+            "ARCHIVE": 1,
+            "SKIP": 2
+          },
+          "recordsConsidered": 3
+        },
+        "publishing": {
+          "classificationCounts": {
+            "MANUAL_REVIEW": 2,
+            "TARGET_ONLY": 22
+          },
+          "proposedOperations": {
+            "MANUAL_REVIEW": 2,
+            "SKIP": 22
+          },
+          "recordsConsidered": 24
+        },
+        "finance": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "memory": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "audit": {
+          "classificationCounts": {
+            "ARCHIVE_ONLY": 61,
+            "TARGET_ONLY": 3029
+          },
+          "proposedOperations": {
+            "ARCHIVE": 61,
+            "SKIP": 3029
+          },
+          "recordsConsidered": 3090
+        }
+      },
+      "conflicts": [
+        {
+          "domain": "classifications",
+          "recordRef": "89b560a217eb92891e67fc06",
+          "classification": "CONFLICT",
+          "reason": "material_field_difference"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "0a2627e16ac8ce91e8452ef5",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "25e6744b9f1220dde528f3f2",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "2c9ce193f3d3f2c4815ff2a0",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "38372dbb2264cf3962a4aed7",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "3dfac9614855247882cefdd7",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "42a3c339caf9ed0143ce71cd",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "485dc0a1b338ff322154112e",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "4a1a97ddfd00ebbeba5f7c61",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "56a91f1863d0e01fdcd30e7e",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "77ebdd22fe0a6c79d7779f5a",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "81f1c965566fc9a989a44aa8",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "993bfd68c7d7bcf3dbbad99e",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "a5bdec20f5373eb3dc9eb342",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "b6ceef1919ff4df474f9349b",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "c0d8fad90e8f8b52aad4cd40",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "cb52a6b7e1b969c8b22fd362",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "f667a0fd46b944c2cd9e0957",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "messages",
+          "recordRef": "f8e7544f71631c86e975d11f",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_message_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "threads",
+          "recordRef": "611dfae05d244fd178cdf39f",
+          "classification": "AMBIGUOUS",
+          "reason": "provider_thread_matches_but_connection_mapping_is_not_approved"
+        },
+        {
+          "domain": "media",
+          "recordRef": "f8fff64cc45d0c03ad8ca150",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "d96b7f202292ee318e0c49c7",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "18e6ebecfa2c44241022d45f",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "0f372364aec4e4a244885545",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "7e86ba3144acfc13324f5c20",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "0ee81cea81008e29c4cc004c",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "c4d7d8dbde96698b7aac3fa2",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "4a263831148a6feb0a0e8cee",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "7078df5d718e1569f12dd48b",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "727ba90457b3d4118a724e09",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "52da900cb1b19a6bdedd29b8",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "5c78442fcdb521ba61b06322",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "b3e50fe2fa75a0d282574d4c",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "3aa8a6c3c0d0027291f8213e",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "730e694612c2f9f645ddb988",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "ee703dc9ab3e2686e1120d20",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "411619974aad0d23a8d2ddbf",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "8aa910a94953dc31cf312737",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "456eafa5ad803ec73ca5a630",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "597b24bc364c39bfc85a4246",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "42def43708295bdacac2d46e",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "c1609574ff6038a162ebcba7",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "ebe11710b7d7b43b7ce2ef7e",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "media",
+          "recordRef": "ba637fdc40250e8078ed6387",
+          "classification": "MANUAL_REVIEW",
+          "reason": "SOURCE_MISSING"
+        },
+        {
+          "domain": "people",
+          "recordRef": "f9cd91e8f9e249f330871166",
+          "classification": "MANUAL_REVIEW",
+          "reason": "person_mapping_and_private_notes_require_review"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "522ca2d100d126d4a90b5815",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "bb174b6476c9080f535b41b6",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "b5b99ad16f81c6d14eb60123",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "5ef600fd79cac2aee901039c",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "publishing",
+          "recordRef": "011ec2b81867de667fa4ef0e",
+          "classification": "MANUAL_REVIEW",
+          "reason": "publication_history_requires_transform_and_provenance"
+        },
+        {
+          "domain": "publishing",
+          "recordRef": "703fe6d4d1cdd33ffa1eedaa",
+          "classification": "MANUAL_REVIEW",
+          "reason": "publication_history_requires_transform_and_provenance"
+        }
+      ],
+      "exclusions": [
+        "OAuth tokens",
+        "API keys",
+        "refresh tokens",
+        "session cookies",
+        "bridge tokens",
+        "R2 binary upload",
+        "D1 writes",
+        "credentials"
+      ],
+      "tool": {
+        "gitSha": "006e7aee1a94c9d84f76457b1388e120140aa594"
+      },
+      "generatedAt": "2026-08-15T10:49:01.126Z"
+    },
+    {
+      "schemaVersion": 1,
+      "migrationId": "phase1c-6c73274ab7da5ae9ff52",
+      "mode": "DRY RUN",
+      "source": {
+        "database": "sqlite",
+        "snapshot": "sqlite-consistent-backup.sqlite",
+        "checksum": "2f4049754867ae6b9f3f24c67282bd16097bcd5da7e349298a4921dfb2f17c4c",
+        "integrity": "ok"
+      },
+      "target": {
+        "database": "d1",
+        "environment": "staging",
+        "databaseName": "thot-os-staging",
+        "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+        "snapshotChecksum": "7b153297140f99d0e573e23fa0b0b899e08eb9e2da53c3ec2eb105359aac1732",
+        "migrationState": [
+          "0001_adelaide_library.sql",
+          "0002_library_classification_events.sql",
+          "0003_operations_foundation.sql",
+          "0004_reddit_scheduler.sql",
+          "0005_reddit_queue_controls.sql",
+          "0006_instagram_operations.sql",
+          "0007_vault_bridge.sql",
+          "0008_reddit_native_bridge.sql",
+          "0009_unified_messages.sql",
+          "0010_telegram_connector.sql",
+          "0011_instagram_completion.sql",
+          "0012_instagram_replies.sql",
+          "0013_instagram_reply_window.sql",
+          "0014_instagram_message_subscription.sql",
+          "0015_message_attachments.sql",
+          "0016_telegram_fansly_messages.sql",
+          "0017_reddit_community_events.sql",
+          "0018_creator_identity_profiles.sql",
+          "0019_actor_role_audit.sql",
+          "0020_actor_role_contract.sql",
+          "0021_creator_dropbox_source.sql",
+          "0022_asset_preview_queue.sql",
+          "0023_fansly_account_invariant.sql",
+          "0024_finance_foundation.sql",
+          "0025_reddit_composio_native_api.sql",
+          "0026_retire_reddit_browser_bridge.sql",
+          "0027_reddit_post_flairs.sql"
+        ]
+      },
+      "creator": {
+        "sqliteCreatorId": "bryshanagy",
+        "d1CreatorId": "bryshanagy",
+        "confidence": "high",
+        "evidence": [
+          "exact_stable_id",
+          "exact_slug",
+          "phase0_protected_snapshot"
+        ]
+      },
+      "domains": {
+        "assets": {
+          "classificationCounts": {
+            "TARGET_ONLY": 60,
+            "SOURCE_ONLY": 1
+          },
+          "proposedOperations": {
+            "SKIP": 60,
+            "INSERT": 1
+          },
+          "recordsConsidered": 61
+        },
+        "classifications": {
+          "classificationCounts": {
+            "SOURCE_ONLY": 1
+          },
+          "proposedOperations": {
+            "INSERT": 1
+          },
+          "recordsConsidered": 1
+        },
+        "destinations": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "messages": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "threads": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "media": {
+          "classificationCounts": {
+            "MANUAL_REVIEW": 1,
+            "TARGET_ONLY": 60
+          },
+          "proposedOperations": {
+            "MANUAL_REVIEW": 1,
+            "SKIP": 60
+          },
+          "recordsConsidered": 61
+        },
+        "people": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "accounts": {
+          "classificationCounts": {
+            "MANUAL_REVIEW": 4,
+            "TARGET_ONLY": 1
+          },
+          "proposedOperations": {
+            "MANUAL_REVIEW": 4,
+            "SKIP": 1
+          },
+          "recordsConsidered": 5
+        },
+        "credentials": {
+          "classificationCounts": {
+            "ARCHIVE_ONLY": 1
+          },
+          "proposedOperations": {
+            "ARCHIVE": 1
+          },
+          "recordsConsidered": 1
+        },
+        "publishing": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "finance": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "memory": {
+          "classificationCounts": {},
+          "proposedOperations": {},
+          "recordsConsidered": 0
+        },
+        "audit": {
+          "classificationCounts": {
+            "ARCHIVE_ONLY": 6,
+            "TARGET_ONLY": 2
+          },
+          "proposedOperations": {
+            "ARCHIVE": 6,
+            "SKIP": 2
+          },
+          "recordsConsidered": 8
+        }
+      },
+      "conflicts": [
+        {
+          "domain": "media",
+          "recordRef": "707a69e56e0b9d9ad2e5a8ac",
+          "classification": "MANUAL_REVIEW",
+          "reason": "binary_upload_not_permitted_in_phase1c"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "2ca6246bc3cb05ddaee92079",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "579cb265efe20694c3695b5d",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "8ede42b2afba887f33eaa37f",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        },
+        {
+          "domain": "accounts",
+          "recordRef": "393f9a3190b2dfac38e8f46b",
+          "classification": "MANUAL_REVIEW",
+          "reason": "provider_identity_and_credentials_require_reconnect"
+        }
+      ],
+      "exclusions": [
+        "OAuth tokens",
+        "API keys",
+        "refresh tokens",
+        "session cookies",
+        "bridge tokens",
+        "R2 binary upload",
+        "D1 writes",
+        "credentials"
+      ],
+      "tool": {
+        "gitSha": "006e7aee1a94c9d84f76457b1388e120140aa594"
+      },
+      "generatedAt": "2026-08-15T10:49:01.138Z"
+    }
+  ],
+  "ledger": {
+    "kind": "file-based",
+    "applyEnabled": false
+  }
+}
