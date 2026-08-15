@@ -14,7 +14,9 @@ import {
   reconcileMedia,
   reconcileMessages,
   requireApprovedMapping,
+  loadSafetyContract,
   validateTargetAuthority,
+  verifyExpectedMigrations,
 } from "../scripts/migration/reconciliation-lib.mjs";
 import { readDeploymentRegistry } from "../scripts/deployment-preflight.mjs";
 import { reconcile } from "../scripts/migration/reconcile.mjs";
@@ -45,7 +47,7 @@ async function fixtureDatabases() {
 
 test("fixtures declare required reconciliation cases", async () => {
   const fixture = JSON.parse(await readFile(path.join(process.cwd(), "tests/fixtures/migration-reconciliation/cases.json"), "utf8"));
-  assert.deepEqual(fixture.assetCases, ["source-only", "target-only", "exact-match", "material-conflict", "target-newer"]);
+  assert.deepEqual(fixture.assetCases, ["source-only", "target-only", "exact-match", "material-conflict", "target-authoritative"]);
   assert.ok(fixture.safetyCases.includes("production-rejected"));
 });
 
@@ -58,7 +60,7 @@ test("asset reconciliation is creator-scoped and conflict-aware", async () => {
     assert.equal(records.filter((record) => record.classification === "MATCH").length, 1);
     assert.equal(records.filter((record) => record.classification === "SOURCE_ONLY").length, 2);
     assert.equal(records.filter((record) => record.classification === "TARGET_ONLY").length, 1);
-    assert.equal(records.filter((record) => record.classification === "CONFLICT").length, 1);
+    assert.equal(records.filter((record) => record.classification === "TARGET_AUTHORITATIVE").length, 1);
   } finally { closeStableSnapshot(source, "source"); closeStableSnapshot(target, "target"); await rm(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -94,8 +96,19 @@ test("only explicit approved mappings and staging authority are accepted", () =>
   const registry = readDeploymentRegistry();
   registry.environments.staging.resources.d1["thot-os-staging"].id = "wrong-d1-id";
   assert.throws(() => validateTargetAuthority({ environment: "staging", registry }), /identity mismatch/);
-  assert.throws(() => reconcile({ apply: true }), /Migration apply is disabled during Phase 1C\./);
-  assert.equal(MIGRATION_DISABLED_MESSAGE, "Migration apply is disabled during Phase 1C.");
+  assert.throws(() => reconcile({ apply: true }), /Migration apply is disabled by the Phase 1C\.5 safety contract\./);
+  assert.equal(MIGRATION_DISABLED_MESSAGE, "Migration apply is disabled by the Phase 1C.5 safety contract.");
+});
+
+test("Phase 1C.5 contract permits only the declared remote baseline while 0028 remains local", async () => {
+  const contract = loadSafetyContract();
+  const { readdir } = await import("node:fs/promises");
+  const migrations = (await readdir(path.join(process.cwd(), "cloudflare/thot-os-app/migrations"))).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+  const baseline = migrations.slice(0, migrations.indexOf(contract.targetMigrationBaseline.lastApplied) + 1);
+  const verified = verifyExpectedMigrations(baseline, contract);
+  assert.deepEqual(verified.target, baseline);
+  assert.equal(verified.pendingLocalMigration, "0028_migration_ledger.sql");
+  assert.throws(() => verifyExpectedMigrations(baseline.slice(0, -1), contract), /declared staging baseline/);
 });
 
 test("dry-run manifests are idempotent and exclude credential material", () => {
@@ -112,4 +125,6 @@ test("dry-run manifests are idempotent and exclude credential material", () => {
   assert.equal(first.migrationId, second.migrationId);
   assert.ok(first.exclusions.includes("OAuth tokens"));
   assert.equal(first.domains.assets.proposedOperations.INSERT, 1);
+  assert.equal(first.safetyContract.existingD1UpdateDefault, "DENY");
+  assert.equal(first.domains.assets.proposedOperations.UPDATE, undefined);
 });

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "phase": "1C.5",
+  "purpose": "Local-only safety contract for a future controlled migration. This contract does not authorize an apply.",
+  "applyEnabled": false,
+  "allowedEnvironment": "staging",
+  "targetMigrationBaseline": {
+    "lastApplied": "0027_reddit_post_flairs.sql",
+    "requiredState": "exact",
+    "reason": "0028_migration_ledger.sql is intentionally local and unapplied during Phase 1C.5. Reconciliation may only use an export at the known 0001–0027 staging baseline."
+  },
+  "pendingLocalMigration": "0028_migration_ledger.sql",
+  "precedence": [
+    "TARGET_AUTHORITATIVE",
+    "CANONICAL_D1_NEWER",
+    "MATCH",
+    "SOURCE_ONLY",
+    "CONFLICT_MANUAL_REVIEW"
+  ],
+  "rules": [
+    "Existing D1 records are never updated by default.",
+    "Target-protected R2, Dropbox, provider, audit, approval, and operational metadata is target-authoritative.",
+    "Timestamps are comparison evidence only and never independently authorize an overwrite.",
+    "A source-only record is only a proposed INSERT; it requires a reviewed approved manifest and a future enabled apply command.",
+    "No credential, session, token, secret, R2 binary, or provider connection value is a migration payload.",
+    "Every future write must be creator-scoped, manifest-scoped, ledgered, and verified before the next record is attempted."
+  ],
+  "futureApplyRequirements": [
+    "explicit --environment staging",
+    "fresh protected source snapshot checksum",
+    "fresh read-only target export and exact baseline verification",
+    "explicit approved manifest checksum and approval reference",
+    "single approved creator and domain scope",
+    "record-level before/after evidence and append-only D1 ledger",
+    "post-write foreign-key, creator-isolation, duplicate, and application-read verification"
+  ]
+}

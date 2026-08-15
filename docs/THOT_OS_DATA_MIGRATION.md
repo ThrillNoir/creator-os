@@ -1,12 +1,12 @@
-# THOT OS — Phase 1C Data Reconciliation & Migration Tooling
+# THOT OS — Phase 1C.5 Reconciliation Decisions & Migration Safety Contract
 
-**Status:** Read-only reconciliation and dry-run planning complete. No data migration, D1 write, R2 upload, deployment, credential provisioning, or SQLite mutation was performed.
+**Status:** Read-only reconciliation, decision mapping, and local-only migration-safety preparation complete. No creator data migration, remote D1 write, R2 upload, deployment, credential provisioning, or SQLite mutation was performed.
 
 ## Executive decision
 
 SQLite and D1 are divergent systems with overlapping creator data, not replicas. Cloudflare D1 remains the canonical operational authority. The protected Phase 0 SQLite backup is a migration source/archive only.
 
-Phase 1C therefore supplies a deterministic, creator-scoped comparator and dry-run planner. It has no apply implementation. Every automatic-looking action is still a proposal: `INSERT` is produced only for an explicit source-only record, while changed, sensitive, provider-bound, binary, financial, historical, and identity-dependent records are classified for human review or archive.
+Phase 1C.5 supplies a deterministic, creator-scoped comparator and dry-run planner. It has no apply implementation. Every automatic-looking action is still a proposal: `INSERT` is produced only for an explicit source-only record, while changed, sensitive, provider-bound, binary, financial, historical, and identity-dependent records are classified for human review or archive.
 
 ```mermaid
 flowchart LR
@@ -22,9 +22,9 @@ flowchart LR
 
 1. **No generic copying.** The tool reads only the versioned domain contracts in `config/migration/domain-contracts.json`.
 2. **No implicit source.** It requires absolute snapshot paths, rejects symlinks and live `.creator-os` paths, verifies SQLite integrity, and hashes the source before and after the run.
-3. **No implicit target.** It accepts only `staging`, verifies the deployment registry and canonical Wrangler D1 name/ID/account, and requires a local parse snapshot whose migration state exactly matches `0001`–`0027`.
+3. **No implicit target.** It accepts only `staging`, verifies the deployment registry and canonical Wrangler D1 name/ID/account, and requires a local parse snapshot whose migration state exactly matches the declared remote `0001`–`0027` baseline. Local `0028_migration_ledger.sql` is deliberately pending and is not silently treated as deployed.
 4. **No production path.** Any other environment, including production, fails before opening a database.
-5. **No apply path.** `--apply` fails with `Migration apply is disabled during Phase 1C.`
+5. **No apply path.** `--apply` fails with `Migration apply is disabled by the Phase 1C.5 safety contract.`
 6. **No secret migration.** OAuth material, API keys, refresh tokens, session cookies, and device/bridge bearers are excluded by contract.
 7. **No binary migration.** Media reconciliation is metadata-only. An R2 key is evidence, not proof that an object may be overwritten or uploaded.
 
@@ -82,12 +82,79 @@ Use a **creator-by-creator, domain-by-domain** sequence:
 | `SOURCE_ONLY` | Explicit source identity has no target equivalent | Proposed `INSERT`, still approval-gated |
 | `TARGET_ONLY` | Cloud record has no source equivalent | `SKIP`; preserve D1 |
 | `MATCH` | Domain-specific important fields agree | `SKIP` |
-| `SOURCE_NEWER` / `TARGET_NEWER` | Asset source modification timestamp differs after identity match | `MANUAL_REVIEW`; timestamp is evidence, never write authority |
+| `TARGET_AUTHORITATIVE` | Existing D1 record has protected metadata or a newer canonical D1 modification timestamp | `SKIP`; it may be inspected or have separately approved non-conflicting provenance attached, but is never overwritten |
 | `CONFLICT` | Same identity with material field differences | `MANUAL_REVIEW` |
 | `AMBIGUOUS` | No safe provider/connection/person identity | `MANUAL_REVIEW` |
 | `ARCHIVE_ONLY` | Historical or noncanonical state | `ARCHIVE` |
 
 Assets use creator-scoped relative paths and compare content metadata. D1 preview/R2/Dropbox metadata is protected. Messages and threads only match exact provider external IDs; a source-only provider ID remains ambiguous until its connection map is approved. Finance and analytics do not use timestamp-wins semantics. Credentials are always reconnect/secure-secret work, never a data copy.
+
+## Phase 1C.5 reconciliation decisions
+
+The machine-readable [connection mapping](../config/migration/connection-mappings.json) contains only one-way row references, classification, evidence labels, and credential treatment. It contains neither identifiers that would expose private account data nor credential material. It is evidence only: no entry grants write authority.
+
+### Account and connection mapping
+
+| Classification | Decision |
+|---|---|
+| **CONFIRMED** | Adelaide Fansly operational account, Adelaide Instagram provider connection, and Adelaide Telegram messaging connection have creator-scoped exact identity evidence. Existing target state remains authoritative. |
+| **PROBABLE** | Adelaide Instagram operational account, Bryshanagy Fansly operational account, and Adelaide Fansly/Instagram messaging connections each have one plausible target but retain a material ambiguity. Human confirmation is required before a future scoped manifest can use them. |
+| **UNMAPPED** | Target-only Adelaide MyRoomz/YouTube, source-only Bryshanagy Instagram/MyRoomz, unmapped YouTube/Dropbox/Reddit provider rows, and unmapped messaging connections remain outside any migration. |
+| **CONFLICT** | Two Adelaide source Reddit accounts converge on one target candidate, and the Adelaide Reddit provider identity differs from the active target provider identity. The target connection is protected; no mapping or import is allowed. |
+| **RETIRED** | Historical local bridge pairing artifacts and expired link requests are not credentials and are excluded permanently. Bryshanagy's unpaired/unseen OnlyFans local bridge is retired as migration input. |
+
+Credential treatment is deliberately separate from identity correspondence:
+
+- **Existing cloud credential:** retain the verified active target credential only; never copy source ciphertext, token hashes, sessions, or bridge material.
+- **Reconnect required:** Bryshanagy Instagram/Dropbox/Reddit/Telegram if reintroduced, Adelaide Reddit after a human account choice, and source-only Adelaide YouTube/Dropbox require fresh authorization.
+- **Retired:** all local bridge pairings and expired Composio/service link requests are historical artifacts.
+- **Secure migration required:** none. No observed credential value qualifies for transfer.
+
+### Thrill Noir decision
+
+**Decision: D — manual owner decision required; no D1 creator or child record will be created.** The protected snapshot contains meaningful legacy scope (785 assets/classifications, 7 accounts, 33 threads, 239 messages, 10 post packages and 56 messaging-audit records), but no D1 creator has the exact stable ID and the available operational history cannot establish active canonical-creator intent, retention intent, or current consent policy. The source also contains provider/service/connection state that cannot be migrated as credentials.
+
+Options A (create now), B (archive only), and C (ignore) remain available only after an owner decides the intended canonical creator and retention policy. Until then the Phase 0 snapshot is the protected archive, no automatic mapping is permitted, and all Thrill Noir domains remain excluded.
+
+### Target-authoritative and precedence rule
+
+The reviewed precedence order is encoded in [safety-contract.json](../config/migration/safety-contract.json):
+
+1. `TARGET_AUTHORITATIVE` — protected existing D1 state wins; no overwrite.
+2. Canonical D1 newer metadata — classify target-authoritative when D1's modification evidence is newer.
+3. `MATCH` — preserve without a write.
+4. `SOURCE_ONLY` — a proposed `INSERT` only, still gated by an approved manifest.
+5. `CONFLICT` / `AMBIGUOUS` — manual review; timestamps alone never establish write authority.
+
+The repeated reconciliation now classifies Adelaide's **202** previously target-newer assets as `TARGET_AUTHORITATIVE`. It proposes **zero D1 `UPDATE` operations**. D1 R2, Dropbox, provider, audit, approval, and operational metadata are target-authoritative even where local metadata differs.
+
+## Migration ledger and Phase 1D contract
+
+`0028_migration_ledger.sql` is an additive **local-only** D1 migration. It has not been applied remotely. It intentionally does not reuse legacy `migration_runs`, which is written by an old `INSERT OR REPLACE` export script and is not append-only.
+
+The new tables are:
+
+| Table | Purpose | Safety property |
+|---|---|---|
+| `migration_ledger_runs` | Immutable approved-manifest/run provenance: creator, source/target checksums, target migration state, manifest, tool revision, approval reference, operator | Unique creator/source/manifest identity; staging-only check; updates/deletes abort |
+| `migration_ledger_records` | Immutable per-source record result, source/target checksums, proposed operation, and result | Creator must equal its run; duplicate source record within a run is rejected; operation enum deliberately excludes `UPDATE`; updates/deletes abort |
+| `migration_ledger_events` | Append-only lifecycle and verification events | Creator/run/record scope checks; updates/deletes abort |
+
+The D1 database cannot authenticate a SQL caller by itself. The only allowed future writer is a dedicated migration executor using a scoped service identity after it verifies the reviewed manifest, creator, domain, snapshot checksums, target database ID/state, and operator/approval reference. Normal application routes, UI actions, Workers, and generic scripts must not write these tables.
+
+### Phase 1D apply contract — deliberately disabled
+
+There is no apply command. The kill switch is `applyEnabled: false` in the checked-in safety contract, and every current `--apply` invocation rejects before a database is opened. A future, separately approved executor must require all of the following before enabling one write:
+
+1. Explicit `--environment staging`; production and any undeclared environment reject.
+2. A fresh immutable protected source checksum and fresh read-only D1 export matching exactly the declared migration baseline.
+3. A single creator and one explicit domain; no bulk `all` apply.
+4. A reviewed manifest checksum and approval reference that exactly match the intended records.
+5. Record-level ledger run, record, and event entries; source and target references must be creator-scoped.
+6. An explicit `INSERT` or approved narrow operation. Broad or default `UPDATE` is denied; existing D1 records are not overwrite candidates.
+7. Post-write duplicate, foreign-key, creator-isolation, R2-reference, and application-read verification, with a compensating/rollback plan for the specific record.
+
+Failure of any gate must stop the run before the next record and write only a local failure receipt unless the future approved executor is authorized to append an in-D1 rejection event.
 
 ## Media and credential handling
 
@@ -156,27 +223,29 @@ Do not apply these in Phase 1C:
 
 A future approved apply must capture a new D1 export, use a reviewed immutable source, record per-record provenance, verify counts/foreign keys/creator isolation/duplicate identities/R2 references/application reads, and retain before-images or compensating operations. Restoring the whole D1 database is not rollback for a controlled creator/domain migration.
 
-### Phase 1C verification performed
+### Phase 1C.5 verification performed
 
 | Check | Result |
 |---|---|
-| Reconciliation fixtures | Pass: source-only, target-only, match, conflict, provider-ID message matching, cross-creator isolation, source-missing media, credential exclusion, D1 mismatch, production rejection, idempotent manifest, disabled apply |
+| Reconciliation fixtures | Pass: source-only, target-only, match, target-authoritative, conflict, provider-ID message matching, cross-creator isolation, source-missing media, credential exclusion, declared baseline, production rejection, idempotent manifest, disabled apply |
 | Root verification | Pass: lint, 45 tests, SQLite integrity/isolation, root build |
-| Cloud verification | Pass: all Worker checks, Telegram tests, 75 OpenNext tests, D1 migration replay through `0027`, Cloud Next and OpenNext builds |
+| Cloud verification | Pass: all Worker checks, Telegram tests, 76 OpenNext tests, D1 migration replay through local `0028`, Cloud Next and OpenNext builds |
 | Deployment preflight | Pass: all staging components, local registry/config only |
-| Current D1 export | Pass: explicit read-only staging export, locally parsed and verified through `0027` |
+| Repeated reconciliation | Pass: protected Phase 0 SQLite compared with the existing local parse of the read-only staging export. Adelaide now has 202 `TARGET_AUTHORITATIVE` assets and zero proposed D1 `UPDATE`s. |
+| Current D1 export | Pass: explicit read-only staging export, locally parsed and verified through remote baseline `0027` |
 | Remote mutation | **NO** — the export metadata reported zero remote rows written; no D1/R2 change, migration, deployment, or provider change was run |
 
 The Cloud build retains the expected local warning for missing internal-service secrets. No values were created or read; this remains a staging-release provisioning gate rather than a Phase 1C build failure.
 
 ## Phase 1D readiness
 
-THOT OS is **not ready for Phase 1D controlled data migration**. Another reconciliation/design step is required first:
+THOT OS is **not ready for Phase 1D controlled data migration**. The migration safety contract and local ledger are ready, but no data slice is approved. Exact blockers:
 
-1. Approve a creator/account/connection mapping for messaging and provider identities.
-2. Decide the target creator and retention policy for `thrill-noir`.
-3. Add and test record-level migration ledger schema locally.
-4. Resolve Adelaide’s 202 target-newer asset records and the classification conflict.
-5. Design source-object checksum/R2 verification for the first media-backed slice.
+1. Human confirmation for every `PROBABLE` account/connection mapping and a decision for each Reddit conflict.
+2. A manual canonical-creator and retention decision for `thrill-noir`.
+3. Source-object identity proof for Bryshanagy's apparent source-only asset, which is likely a duplicate of one existing D1 asset and whose source file is not currently found.
+4. Resolve the dependent Bryshanagy classification only after that asset decision; it has no notes/review state, but cannot be applied without the asset identity.
+5. Resolve Adelaide's 202 target-authoritative assets and one classification conflict only if a future domain need requires it; they are protected and are not a first-migration target.
+6. A separately approved implementation of the Phase 1D executor, with the safety contract still disabled until a reviewed manifest exists.
 
-No slice is ready to apply today. The smallest prospective first slice is **Bryshanagy's one source-only asset metadata record plus its classification**, after a fresh export confirms the same result and a human verifies its source-object identity. It must exclude binary-media upload, credentials, accounts, and any D1 update. Adelaide has no source-only asset in this run and has materially newer Cloud asset state, so it is not the first apply candidate.
+There is **no safe first migration candidate today**. The formerly smallest candidate—Bryshanagy's one asset metadata record plus classification—is blocked because the source media/object identity is unverified and a same-basename/bytes/extension D1 candidate with different modification metadata, Dropbox revision, and preview R2 key exists. It must exclude binary-media upload, credentials, accounts, and any D1 update even after the identity issue is resolved. Adelaide has no source-only asset and has materially newer Cloud state, so it is not a first apply candidate.

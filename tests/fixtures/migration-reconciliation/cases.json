@@ -1,6 +1,6 @@
 {
   "creator": "adelaide",
-  "assetCases": ["source-only", "target-only", "exact-match", "material-conflict", "target-newer"],
+  "assetCases": ["source-only", "target-only", "exact-match", "material-conflict", "target-authoritative"],
   "messageCases": ["provider-id-match", "provider-id-source-only-requires-connection-map", "target-only"],
   "mediaCases": ["r2-metadata-only", "source-missing", "upload-required"],
   "safetyCases": ["production-rejected", "unmapped-creator-rejected", "apply-disabled"]

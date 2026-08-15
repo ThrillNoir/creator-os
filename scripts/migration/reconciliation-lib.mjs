@@ -5,10 +5,11 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { projectRoot, readDeploymentRegistry, readJsoncFile } from "../deployment-preflight.mjs";
 
-export const MIGRATION_DISABLED_MESSAGE = "Migration apply is disabled during Phase 1C.";
+export const MIGRATION_DISABLED_MESSAGE = "Migration apply is disabled by the Phase 1C.5 safety contract.";
 const creatorIdPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const remoteD1Name = "thot-os-staging";
 const migrationDirectory = path.join(projectRoot, "cloudflare/thot-os-app/migrations");
+const safetyContractPath = path.join(projectRoot, "config/migration/safety-contract.json");
 
 export function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -67,7 +68,7 @@ function recordReference(domain, creatorId, key) {
   return sha256(`${domain}:${creatorId}:${key}`).slice(0, 24);
 }
 
-function classifyByKey({ domain, creatorId, sourceRows, targetRows, key, equivalent, targetNewerFields = [] }) {
+function classifyByKey({ domain, creatorId, sourceRows, targetRows, key, equivalent, targetAuthoritativeFields = [] }) {
   const targetByKey = new Map(targetRows.map((row) => [key(row), row]));
   const sourceKeys = new Set();
   const records = [];
@@ -78,8 +79,8 @@ function classifyByKey({ domain, creatorId, sourceRows, targetRows, key, equival
     const ref = recordReference(domain, creatorId, identity);
     if (!target) records.push({ ref, classification: "SOURCE_ONLY", key: sha256(identity).slice(0, 16) });
     else if (equivalent(source, target)) records.push({ ref, classification: "MATCH", key: sha256(identity).slice(0, 16) });
-    else if (targetNewerFields.some((field) => target[field] != null && target[field] !== "")) {
-      records.push({ ref, classification: "CONFLICT", key: sha256(identity).slice(0, 16), reason: "target_protected_metadata_or_material_difference" });
+    else if (targetAuthoritativeFields.some((field) => target[field] != null && target[field] !== "")) {
+      records.push({ ref, classification: "TARGET_AUTHORITATIVE", key: sha256(identity).slice(0, 16), reason: "target_protected_metadata_or_material_difference" });
     } else records.push({ ref, classification: "CONFLICT", key: sha256(identity).slice(0, 16), reason: "material_field_difference" });
   }
   for (const target of targetRows) {
@@ -94,15 +95,20 @@ const equalFields = (fields) => (source, target) => fields.every((field) => (sou
 export function reconcileAssets(sourceDb, targetDb, creatorId) {
   const sourceRows = rows(sourceDb, "SELECT id,relative_path,basename,extension,bytes,modified_at,source_available,safety_level,workflow_status FROM assets WHERE creator_id=? ORDER BY relative_path", creatorId);
   const targetRows = rows(targetDb, "SELECT id,relative_path,basename,extension,bytes,modified_at,source_available,safety_level,workflow_status,preview_r2_key,media_r2_key,dropbox_revision FROM assets WHERE creator_id=? ORDER BY relative_path", creatorId);
-  const records = classifyByKey({ domain: "assets", creatorId, sourceRows, targetRows, key: (row) => row.relative_path, equivalent: equalFields(["basename", "extension", "bytes", "source_available", "safety_level", "workflow_status"]), targetNewerFields: ["preview_r2_key", "media_r2_key", "dropbox_revision"] });
+  const records = classifyByKey({ domain: "assets", creatorId, sourceRows, targetRows, key: (row) => row.relative_path, equivalent: equalFields(["basename", "extension", "bytes", "source_available", "safety_level", "workflow_status"]), targetAuthoritativeFields: ["preview_r2_key", "media_r2_key", "dropbox_revision"] });
   const sourceByPath = new Map(sourceRows.map((row) => [row.relative_path, row]));
   const targetByPath = new Map(targetRows.map((row) => [row.relative_path, row]));
   for (const record of records.filter((record) => record.classification === "MATCH")) {
     const source = sourceByPath.get([...sourceByPath.keys()].find((key) => record.ref === recordReference("assets", creatorId, key)));
     const target = source && targetByPath.get(source.relative_path);
     if (source?.modified_at && target?.modified_at && source.modified_at !== target.modified_at) {
-      record.classification = source.modified_at > target.modified_at ? "SOURCE_NEWER" : "TARGET_NEWER";
-      record.reason = "asset_source_modification_time_differs";
+      if (target.modified_at > source.modified_at) {
+        record.classification = "TARGET_AUTHORITATIVE";
+        record.reason = "canonical_d1_modification_time_is_newer";
+      } else {
+        record.classification = "CONFLICT";
+        record.reason = "source_modification_time_is_newer_but_timestamp_is_not_write_authority";
+      }
     }
   }
   return records;
@@ -200,6 +206,20 @@ export function loadMapping(mappingPath = path.join(projectRoot, "config/migrati
   return mapping;
 }
 
+export function loadSafetyContract(contractPath = safetyContractPath) {
+  const contract = JSON.parse(readFileSync(contractPath, "utf8"));
+  if (
+    contract.schemaVersion !== 1 ||
+    contract.phase !== "1C.5" ||
+    contract.applyEnabled !== false ||
+    contract.allowedEnvironment !== "staging" ||
+    contract.targetMigrationBaseline?.requiredState !== "exact" ||
+    typeof contract.targetMigrationBaseline?.lastApplied !== "string" ||
+    typeof contract.pendingLocalMigration !== "string"
+  ) fail("Unsupported or unsafe migration safety contract.");
+  return contract;
+}
+
 export function requireApprovedMapping(mapping, creatorId) {
   const found = mapping.mappings.find((candidate) => candidate.sqliteCreatorId === creatorId && candidate.d1CreatorId === creatorId && candidate.confidence === "high" && candidate.approval === "identity_match_only");
   if (!found) fail(`Creator ${creatorId} has no approved exact identity mapping.`);
@@ -223,17 +243,27 @@ export function migrationState(db) {
   return db.prepare("SELECT name FROM d1_migrations ORDER BY name").all().map(({ name }) => name);
 }
 
-export function verifyExpectedMigrations(targetState) {
+export function verifyExpectedMigrations(targetState, contract = loadSafetyContract()) {
   const expected = readdirSync(migrationDirectory).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
-  if (stableJson(expected) !== stableJson(targetState)) fail("Target D1 migration state does not exactly match the local canonical migration directory.");
-  return expected;
+  const lastApplied = contract.targetMigrationBaseline.lastApplied;
+  const lastAppliedIndex = expected.indexOf(lastApplied);
+  if (lastAppliedIndex === -1 || expected[lastAppliedIndex + 1] !== contract.pendingLocalMigration) fail("Local migrations do not match the declared Phase 1C.5 target baseline.");
+  const targetExpected = expected.slice(0, lastAppliedIndex + 1);
+  if (stableJson(targetExpected) !== stableJson(targetState)) fail("Target D1 migration state does not exactly match the declared staging baseline.");
+  return { local: expected, target: targetExpected, pendingLocalMigration: contract.pendingLocalMigration };
 }
 
 export function operationFor(record) {
   if (record.classification === "SOURCE_ONLY") return "INSERT";
-  if (record.classification === "MATCH" || record.classification === "TARGET_ONLY") return "SKIP";
+  if (record.classification === "MATCH" || record.classification === "TARGET_ONLY" || record.classification === "TARGET_AUTHORITATIVE") return "SKIP";
   if (record.classification === "ARCHIVE_ONLY") return "ARCHIVE";
   return "MANUAL_REVIEW";
+}
+
+export function assertNoUpdateOperations(operations) {
+  for (const [domain, domainOperations] of Object.entries(operations)) {
+    if ((domainOperations.UPDATE ?? 0) > 0) fail(`Unsafe UPDATE operation proposed for ${domain}.`);
+  }
 }
 
 export function buildManifest({ source, target, mapping, creatorId, domains, gitSha }) {
@@ -243,11 +273,18 @@ export function buildManifest({ source, target, mapping, creatorId, domains, git
     operations[domain] = result.records.reduce((counts, record) => ({ ...counts, [operationFor(record)]: (counts[operationFor(record)] ?? 0) + 1 }), {});
     for (const record of result.records.filter((record) => ["CONFLICT", "AMBIGUOUS", "MANUAL_REVIEW"].includes(record.classification))) conflicts.push({ domain, recordRef: record.ref, classification: record.classification, reason: record.reason ?? "manual_review_required" });
   }
+  assertNoUpdateOperations(operations);
   const identity = sha256(stableJson({ source: source.sha256, target: target.sha256, creatorId, mapping: mapping.d1CreatorId, domains: Object.fromEntries(Object.entries(domains).map(([name, result]) => [name, result.counts])) }));
   return {
     schemaVersion: 1,
     migrationId: `phase1c-${identity.slice(0, 20)}`,
     mode: "DRY RUN",
+    safetyContract: {
+      phase: "1C.5",
+      applyEnabled: false,
+      existingD1UpdateDefault: "DENY",
+      precedence: loadSafetyContract().precedence
+    },
     source: { database: "sqlite", snapshot: path.basename(source.path), checksum: source.sha256, integrity: source.integrity },
     target: { database: "d1", environment: target.environment, databaseName: target.databaseName, databaseId: target.databaseId, snapshotChecksum: target.sha256, migrationState: target.migrations },
     creator: { sqliteCreatorId: creatorId, d1CreatorId: mapping.d1CreatorId, confidence: mapping.confidence, evidence: mapping.evidence },
