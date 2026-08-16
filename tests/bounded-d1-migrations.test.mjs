@@ -23,12 +23,17 @@ function fixture() {
 function planFor(inventory, remoteApplied = inventory.slice(0, 27).map((entry) => entry.name)) {
   return buildBoundedPlan({ environment: "staging", releaseId: "phase2a-expand", from: "0028", through: "0031", inventory, remoteApplied, registry, policy, git });
 }
+function currentStagingPlan(inventory) {
+  return buildBoundedPlan({ environment: "staging", releaseId: "phase2a-expand-resume", from: "0029", through: "0031", inventory, remoteApplied: inventory.slice(0, 28).map((entry) => entry.name), registry, policy, git });
+}
 
-test("bounded planner selects 0028 through 0031 and explicitly excludes 0032", () => {
+test("current canonical 0028 baseline selects only 0029 through 0031 and explicitly excludes 0032", () => {
   const { inventory } = fixture();
-  const plan = planFor(inventory);
-  assert.deepEqual(plan.execution.map((entry) => entry.number), [28, 29, 30, 31]);
+  const plan = currentStagingPlan(inventory);
+  assert.equal(plan.preMigrationState.at(-1), "0028_fixture.sql");
+  assert.deepEqual(plan.execution.map((entry) => entry.number), [29, 30, 31]);
   assert.deepEqual(plan.excludedPending.map((entry) => entry.number), [32]);
+  assert.equal(plan.remoteMutation, "NONE");
   assert.equal(plan.planSha256, planDigest(plan));
   assert.equal(plan.confirmation, `bounded:${plan.planSha256.slice(0, 16)}`);
   const changed = structuredClone(plan); changed.requestedRange.through = "0030_fixture.sql";
@@ -45,16 +50,20 @@ test("planner fails closed for production, reversed ranges, and non-prefix state
 
 test("executor applies only selected migrations using canonical ordered bookkeeping", async () => {
   const { directory, inventory } = fixture();
-  const plan = planFor(inventory);
+  const plan = currentStagingPlan(inventory);
   const state = [...plan.preMigrationState];
   const calls = [];
   const receipt = await executeBoundedPlan({
     plan, directory,
-    executeOne: ({ migration, sql }) => { calls.push({ name: migration.name, sql }); state.push(migration.name); },
+    executeOne: ({ migration, sql, markSubmitted }) => { markSubmitted(); calls.push({ name: migration.name, sql }); state.push(migration.name); },
     getApplied: () => state,
     receiptBase: { target: plan.target },
   });
   assert.equal(receipt.result, "APPLIED");
+  assert.equal(receipt.remoteMutation, "CONFIRMED");
+  assert.deepEqual(receipt.attempted, ["0029_fixture.sql", "0030_fixture.sql", "0031_fixture.sql"]);
+  assert.deepEqual(receipt.locallyConfirmed, receipt.attempted);
+  assert.deepEqual(receipt.remotelyConfirmed, receipt.attempted);
   assert.deepEqual(calls.map((call) => call.name), plan.execution.map((entry) => entry.name));
   assert.ok(calls.every((call) => call.sql.includes(`INSERT INTO "d1_migrations" (name) VALUES ('${call.name}')`)));
   assert.ok(calls.every((call) => !call.sql.includes("0032_fixture.sql")));
@@ -62,22 +71,123 @@ test("executor applies only selected migrations using canonical ordered bookkeep
   assert.equal(state.includes("0032_fixture.sql"), false);
 });
 
-test("executor stops at the failing 0030 migration and makes no automatic rollback claim", async () => {
+test("post-command local parse failure is reconciled from D1 history and execution continues", async () => {
   const { directory, inventory } = fixture();
-  const plan = planFor(inventory);
+  const plan = currentStagingPlan(inventory);
   const state = [...plan.preMigrationState];
   const calls = [];
   const receipt = await executeBoundedPlan({
     plan, directory,
-    executeOne: ({ migration }) => { calls.push(migration.number); if (migration.number === 30) throw new Error("simulated failure"); state.push(migration.name); },
+    executeOne: ({ migration, markSubmitted }) => { markSubmitted(); calls.push(migration.number); state.push(migration.name); if (migration.number === 29) throw new Error("JSON stdout parse failure"); },
     getApplied: () => state,
     receiptBase: { target: plan.target },
   });
-  assert.equal(receipt.result, "FAILED");
-  assert.deepEqual(calls, [28, 29, 30]);
-  assert.equal(receipt.failed.migration, "0030_fixture.sql");
-  assert.deepEqual(receipt.applied, ["0028_fixture.sql", "0029_fixture.sql"]);
+  assert.equal(receipt.result, "APPLIED");
+  assert.deepEqual(calls, [29, 30, 31]);
+  assert.deepEqual(receipt.remotelyConfirmed, ["0029_fixture.sql", "0030_fixture.sql", "0031_fixture.sql"]);
+  assert.deepEqual(receipt.localCommandErrors, [{ migration: "0029_fixture.sql", diagnostic: "LOCAL_RESULT_UNAVAILABLE" }]);
   assert.deepEqual(receipt.excludedPending, ["0032_fixture.sql"]);
+});
+
+test("precise 0028 incident is remotely confirmed despite local failure, then a fresh plan begins at 0029", async () => {
+  const { directory, inventory } = fixture();
+  const incidentPlan = planFor(inventory);
+  const state = [...incidentPlan.preMigrationState];
+  const receipt = await executeBoundedPlan({
+    plan: { ...incidentPlan, execution: [incidentPlan.execution[0]], postMigrationState: [...incidentPlan.preMigrationState, incidentPlan.execution[0].name] },
+    directory,
+    executeOne: ({ migration, markSubmitted }) => { markSubmitted(); state.push(migration.name); throw new Error("Wrangler JSON stdout parse failure"); },
+    getApplied: () => state,
+    receiptBase: { target: incidentPlan.target },
+  });
+  assert.equal(receipt.result, "APPLIED");
+  assert.deepEqual(receipt.attempted, ["0028_fixture.sql"]);
+  assert.deepEqual(receipt.locallyConfirmed, []);
+  assert.deepEqual(receipt.remotelyConfirmed, ["0028_fixture.sql"]);
+  assert.equal(receipt.remoteMutation, "CONFIRMED");
+  const resume = currentStagingPlan(inventory);
+  assert.equal(resume.preMigrationState.at(-1), "0028_fixture.sql");
+});
+
+test("submitted command with unchanged history remains POSSIBLE unless a reviewed no-effects verifier proves no change", async () => {
+  const { directory, inventory } = fixture();
+  const plan = currentStagingPlan(inventory);
+  const state = [...plan.preMigrationState];
+  const uncertain = await executeBoundedPlan({
+    plan, directory,
+    executeOne: ({ markSubmitted }) => { markSubmitted(); throw new Error("transport timeout"); },
+    getApplied: () => state,
+    receiptBase: { target: plan.target },
+  });
+  assert.equal(uncertain.result, "STOPPED_UNCERTAIN");
+  assert.equal(uncertain.remoteMutation, "POSSIBLE");
+  assert.deepEqual(uncertain.outcomeUnknown, ["0029_fixture.sql"]);
+
+  const noChange = await executeBoundedPlan({
+    plan, directory,
+    executeOne: ({ markSubmitted }) => { markSubmitted(); throw new Error("transport timeout"); },
+    getApplied: () => state,
+    verifyNoEffects: () => ({ status: "NO_EFFECTS" }),
+    receiptBase: { target: plan.target },
+  });
+  assert.equal(noChange.result, "FAILED");
+  assert.equal(noChange.remoteMutation, "CONFIRMED_NO_CHANGE");
+  assert.deepEqual(noChange.confirmedNoChange, ["0029_fixture.sql"]);
+});
+
+test("reconciliation outage after submission is POSSIBLE and never retries; pre-submission failure is NONE", async () => {
+  const { directory, inventory } = fixture();
+  const plan = currentStagingPlan(inventory);
+  let submittedCalls = 0;
+  const unavailable = await executeBoundedPlan({
+    plan, directory,
+    executeOne: ({ markSubmitted }) => { markSubmitted(); submittedCalls += 1; },
+    getApplied: () => { throw new Error("fetch transport unavailable"); },
+    receiptBase: { target: plan.target },
+  });
+  assert.equal(submittedCalls, 1);
+  assert.equal(unavailable.remoteMutation, "POSSIBLE");
+  assert.equal(unavailable.result, "STOPPED_UNCERTAIN");
+
+  const beforePointOfNoReturn = await executeBoundedPlan({
+    plan, directory,
+    executeOne: () => { throw new Error("input file validation failed"); },
+    getApplied: () => [...plan.preMigrationState],
+    receiptBase: { target: plan.target },
+  });
+  assert.equal(beforePointOfNoReturn.remoteMutation, "NONE");
+  assert.equal(beforePointOfNoReturn.result, "FAILED");
+  assert.deepEqual(beforePointOfNoReturn.attempted, []);
+});
+
+test("a 0029 local parse failure reconciles before 0030, then a 0030 outage stops before 0031 and 0032", async () => {
+  const { directory, inventory } = fixture();
+  const plan = currentStagingPlan(inventory);
+  const state = [...plan.preMigrationState];
+  const calls = [];
+  const receipt = await executeBoundedPlan({
+    plan, directory,
+    executeOne: ({ migration, markSubmitted }) => {
+      markSubmitted();
+      calls.push(migration.number);
+      if (migration.number === 29) {
+        state.push(migration.name);
+        throw new Error("Wrangler stdout JSON parse failure");
+      }
+    },
+    getApplied: () => {
+      if (calls.at(-1) === 30) throw new Error("structured API transport unavailable");
+      return state;
+    },
+    receiptBase: { target: plan.target },
+  });
+  assert.deepEqual(calls, [29, 30]);
+  assert.deepEqual(receipt.remotelyConfirmed, ["0029_fixture.sql"]);
+  assert.deepEqual(receipt.outcomeUnknown, ["0030_fixture.sql"]);
+  assert.equal(receipt.remoteMutation, "POSSIBLE");
+  assert.equal(receipt.result, "STOPPED_UNCERTAIN");
+  assert.equal(receipt.attempted.includes("0031_fixture.sql"), false);
+  assert.equal(receipt.excludedPending.includes("0032_fixture.sql"), true);
 });
 
 test("a partial run can resume only as a new exact-prefix plan", () => {

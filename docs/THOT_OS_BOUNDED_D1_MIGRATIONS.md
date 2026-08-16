@@ -1,95 +1,117 @@
 # Bounded D1 migrations
 
-`wrangler d1 migrations apply` always applies every pending migration in its configured directory. It cannot safely perform the Phase 2A EXPAND release because `0032_service_auth_compatibility.sql` is intentionally pending after the safe EXPAND boundary.
+`wrangler d1 migrations apply` always applies every pending migration in its
+configured directory. It cannot safely perform the Phase 2A EXPAND release
+because `0032_service_auth_compatibility.sql` is intentionally pending after
+the safe EXPAND boundary.
 
-The repository-owned executor applies an explicit inclusive range while preserving Cloudflare's canonical `d1_migrations` table. It sends one selected migration at a time as the same unit Wrangler uses: the exact SQL file contents followed by `INSERT INTO "d1_migrations" (name) VALUES ('<filename>')`. After each command it reads the table in `id` order and requires the exact expected prefix.
+The repository-owned executor applies a reviewed inclusive range while
+preserving Cloudflare's canonical `d1_migrations` table. The database—not
+Wrangler terminal output—is the source of truth for target identity, migration
+history, and post-mutation reconciliation.
 
 ## Safety contract
 
-- Only the registry allow-listed staging D1 can be addressed. Production is hard-disabled.
-- Plan mode uses only `wrangler d1 info` and a `SELECT` from `d1_migrations`; it never uses `wrangler d1 migrations list`, because that command may initialize bookkeeping.
-- The repository-pinned Wrangler binary is used, with the account, database name, UUID, and canonical Web DB binding required to agree.
-- The migration directory must be a contiguous, unique, valid filename sequence. A reviewed plan records every selected SHA-256 digest, the exact prior migration history, Git SHA/branch, and the later pending files that are deliberately excluded.
-- Apply requires a clean tree at the reviewed Git identity, an unchanged plan digest and explicit `bounded:<digest-prefix>` confirmation, matching current D1 history/source files, and a fresh checksum-validated read-only export receipt from `npm run migration:export-target`.
-- Each selected migration is executed in a restrictive temporary file and then deleted. Repository migration files are never moved, hidden, copied into the configured directory, or altered.
-- On failure, execution stops immediately. Earlier successfully applied migrations remain applied; the failing unit follows D1 file-execution rollback semantics. The receipt records the verified post-state. Resume is only a new reviewed plan from that exact partial state with a new backup.
+- Only the registry allow-listed staging D1 can be addressed. Production is
+  hard-disabled.
+- Planning and reconciliation use the Cloudflare D1 REST API with the existing
+  `CLOUDFLARE_API_TOKEN` environment contract. The client first verifies the
+  account/database UUID and name, then issues a parameterized, single-statement
+  read-only `SELECT` against `d1_migrations`. It rejects a response unless the
+  API declares `changed_db: false`, `rows_written: 0`, and `changes: 0`.
+- The token is required at runtime but is never written to a plan, receipt,
+  log, diagnostic, or fixture. The required token scope is limited to the
+  reviewed staging D1 read paths; mutation authority remains the separately
+  reviewed Wrangler path.
+- The repository-pinned Wrangler binary is used only for the selected mutation
+  command. The account, database name, UUID, and canonical Web DB binding must
+  agree before it can be reached. The reviewed local version is Wrangler
+  `4.120.0`; release tooling must not substitute an unpinned `npx wrangler`.
+- The migration directory must be contiguous, unique, and valid. A reviewed
+  plan records selected SHA-256 digests, exact prior history, Git SHA/branch,
+  and deliberately excluded pending files.
+- Apply requires a clean tree at the reviewed Git identity, unchanged plan
+  digest and explicit `bounded:<digest-prefix>` confirmation, matching current
+  structured D1 history/source files, and a fresh checksum-validated read-only
+  export receipt from `npm run migration:export-target`.
+- Repository migration files are never moved, hidden, copied into the
+  configured directory, or altered. The temporary mutation file is deleted
+  after its command returns.
 
-## Machine-readable CLI boundary
+## Mutation accounting and recovery boundary
+
+Before calling Wrangler for a selected migration, the mutation adapter marks
+the submission point of no return. A local exit, parse, stdout/stderr, timeout,
+or transport error after that marker is **not** proof that the database is
+unchanged. The executor immediately re-reads canonical `d1_migrations` through
+the structured client and never advances until it is reconciled.
+
+The receipt's `remoteMutation` field is one of:
+
+- `NONE`: no command reached the submission point.
+- `POSSIBLE`: a command was submitted but canonical history or a reviewed
+  no-effects proof was unavailable or divergent. The run hard-stops; it must
+  not retry the migration.
+- `CONFIRMED`: canonical history contains the exact next migration name.
+- `CONFIRMED_NO_CHANGE`: canonical history stayed at the pre-state and an
+  explicit, reviewed migration-specific schema verifier independently proved
+  that no effects occurred. The run still stops for human recovery.
+
+Receipts separate `attempted`, `locallyConfirmed`, `remotelyConfirmed`,
+`confirmedNoChange`, and `outcomeUnknown`. They also preserve a categorical
+local diagnostic without raw command output. A command that returned locally
+but did not mark submission is treated as an adapter fault, never as a success.
+
+There is intentionally no generic schema inference or automatic retry. A
+future reviewed no-effects verifier may inspect only explicitly named schema
+objects through parameterized structured D1 reads and invoke the allow-listed
+read-only `PRAGMA quick_check` and `PRAGMA foreign_key_check` helper. An absent
+migration record or a clean integrity result alone is insufficient to claim
+rollback or no change.
+
+## Local file and Wrangler boundaries
 
 Plans, approved plans, policy files, and export receipts are trusted local
-evidence inputs. Each must be exactly one JSON document; a malformed,
-concatenated, or trailing-text file is rejected. The executor writes a real
+evidence inputs. Each must be exactly one JSON document; malformed,
+concatenated, or trailing-text files are rejected. The executor writes a real
 final newline, never a literal `\\n` trailer.
 
-Cloudflare/Wrangler output is a separate, untrusted external boundary. The
-executor captures stdout and stderr separately, requires an exit status of
-zero and empty stderr, then parses stdout as exactly one JSON document. It
-validates the D1 command-specific schema before trusting it: `d1 info` must
-return a single UUID-bearing object, and a D1 query must return exactly one
-successful result envelope with an array of rows. Migration history rows must
-have positive, strictly increasing IDs and nonempty names/timestamps.
+Wrangler output is not used for target identity or migration-history reads.
+For the mutation command only, its stdout/stderr boundary remains deliberately
+strict: separate capture, zero exit, empty stderr, one JSON document on stdout,
+and one successful D1 result envelope. This is local confirmation only; a
+subsequent structured D1 reconciliation determines the remote outcome.
 
-It deliberately rejects empty/truncated JSON, JSONL or concatenated objects,
-logging or warning text on stdout, ANSI/control contamination, nonzero exits,
-unexpected stderr, and ambiguous/malformed result envelopes. It never searches
-for braces or attempts to recover a JSON fragment from mixed output. If a
-future Wrangler version changes this output contract, the safe action is to
-abort and add a reviewed fixture/schema update—not to weaken parsing during a
-release.
+Backup integrity uses distinct digests for distinct evidence: deterministic
+canonical JSON for plans/structured receipts, UTF-8 text for migration SQL,
+and raw bytes for exports and file artefacts. Backup validation requires a
+nonempty export, matching raw-byte checksum, current timestamp, staging target
+identity, and exact pre-migration history.
 
-If an evidence file fails strict JSON parsing, discard it and generate a new
-plan or export; do not edit the file or reuse the release. Diagnostic output is
-limited to the operation category and failure class so credentials and raw
-remote output are not placed in receipts.
+## Current Phase 2A baseline and next reviewed range
 
-## Hashing semantics and backup integrity
+The historical 2026-08-16 release submitted `0028_migration_ledger.sql` and
+Wrangler reported a local failure, but the canonical post-stop D1 history
+contains `0028`. That migration is applied and must **never** be replayed or
+manually edited in `d1_migrations`.
 
-The bounded executor uses distinct hash functions for distinct evidence:
-
-- Plans and structured receipts use a deterministic canonical-JSON digest.
-- SQL migration source uses a UTF-8 text digest.
-- Exports, approved-plan source files, and other file artefacts use a raw-byte
-  digest over the exact stored bytes.
-
-Byte values are rejected by the canonical-JSON hash helper. A binary or file
-artefact must never be stringified, decoded, normalised, or represented as a
-JSON object before its integrity digest is calculated. This matters for null
-bytes, non-UTF-8 content, line endings, and every other byte-level difference.
-
-Backup validation requires all of the following: a nonempty export file, a
-well-formed 64-character checksum, matching raw bytes, staging environment,
-database name/UUID, and an exact migration-history match to the reviewed plan
-pre-state. A wrong, stale, malformed, tampered, or cross-target receipt fails
-closed before any migration command is considered.
-
-The executor has no service-auth, credential, Worker, traffic, principal, grant, or secret logic. Release-specific checks remain external reviewed gates.
-
-## Phase 2A EXPAND example
-
-After a fresh approved read-only export while staging is exactly at `0027`, create a plan outside the repository:
+For a separately authorized release, only after a fresh matching backup and
+review, the next plan begins at `0029_service_principal_capabilities.sql` and
+ends at `0031_service_auth_activation_support.sql`:
 
 ```sh
 npm run d1:migrations:plan -- \
   --environment staging \
-  --release-id phase2a-expand-20260816 \
-  --from 0028 \
+  --release-id phase2a-expand-resume-<approved-id> \
+  --from 0029 \
   --through 0031 \
-  --output /absolute/safe-location/phase2a-expand.plan.json
+  --output /absolute/safe-location/phase2a-expand-resume.plan.json
 ```
 
-The plan must show `0028`–`0031` selected and `0032_service_auth_compatibility.sql` in `excludedPending`. Review its digests, database identity, pre-state, and confirmation string. A later authorized operator can use:
+The plan must show `0029`–`0031` selected, `0028` in its exact pre-state, and
+`0032_service_auth_compatibility.sql` in `excludedPending`. It is intentionally
+not executed by local development or this implementation task.
 
-```sh
-npm run d1:migrations:apply -- \
-  --apply \
-  --approved-plan /absolute/safe-location/phase2a-expand.plan.json \
-  --backup-receipt /absolute/safe-location/staging.sql.receipt.json \
-  --confirmation bounded:<reviewed-prefix> \
-  --receipt /absolute/safe-location/phase2a-expand.apply.json
-```
-
-This is intentionally not executed as part of local development. The JSON receipt and a redacted Markdown sibling are evidence artifacts; neither contains secrets, token values, credential hashes, raw export data, or migration SQL.
-
-## Boundary proof and later compatibility
-
-The EXPAND release finishes at `0031`. The trigger replacement in `0032` remains excluded and requires its own reviewed compatibility release. Existing local boundary tests prove `identity_audit_service_scope` has an identical normalized SQL definition before and after `0031`; no bounded executor result substitutes for the separate release validation and protected application smoke checks.
+`0032` remains a separately reviewed compatibility release. The staging-gateway
+drift is recorded as deferred work: it is not changed or deployed by this
+bounded D1 tooling.

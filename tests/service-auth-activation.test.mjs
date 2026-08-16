@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { activationConfirmation, assertApplyGates, buildActivationPlan, planDigest, redactActivationReceipt } from "../scripts/service-auth-activation-lib.mjs";
-import { parseArgs } from "../scripts/service-auth-activate.mjs";
+import { d1Migrations, parseArgs } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -41,6 +41,26 @@ test("activation requires COMPATIBILITY after EXPAND and then fail-closes on oth
   assert.throws(() => assertApplyGates({ ...base, confirmation: "wrong" }), /confirmation/i);
   assert.throws(() => assertApplyGates({ ...base, cleanGit: false, confirmation: plan.confirmation }), /clean Git/i);
   assert.throws(() => assertApplyGates({ ...base, backupReceipt: { ...base.backupReceipt, databaseId: "wrong" }, confirmation: plan.confirmation }), /backup/i);
+});
+
+test("canonical partial EXPAND baseline at 0028 is accepted but remains activation-blocked", async () => {
+  const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const observed = [...baseline, activation.expected.expandMigrations[0]];
+  const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: observed, git: { sha: "a".repeat(40), branch: "audit/test" } });
+  assert.equal(plan.partialExpandReady, true);
+  assert.equal(plan.partialExpandThrough, "0028_migration_ledger.sql");
+  assert.equal(plan.expandReady, false);
+  assert.equal(plan.compatibilityReady, false);
+  assert.equal(plan.blockingPrecondition, "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED");
+});
+
+test("service-auth D1 migration reader uses the injected structured client and validates registry identity", async () => {
+  const [activation, , registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const calls = [];
+  const result = await d1Migrations(registry, activation, { readMigrationHistory: async (target) => { calls.push(target); return ["0028_migration_ledger.sql"]; } });
+  assert.deepEqual(result, ["0028_migration_ledger.sql"]);
+  assert.deepEqual(calls, [{ accountId: registry.environments.staging.accountId, databaseId: activation.expected.databaseId, databaseName: activation.expected.databaseName }]);
+  await assert.rejects(() => d1Migrations({ ...registry, environments: { ...registry.environments, staging: { ...registry.environments.staging, resources: { d1: {} } } } }, activation, { readMigrationHistory: async () => [] }), /identity/);
 });
 
 test("activation CLI has explicit plan/apply modes and receipts reject secret material", () => {

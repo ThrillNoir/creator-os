@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateBackup } from "./bounded-d1-migrations-lib.mjs";
+import { createStructuredD1ReadClient } from "./cloudflare-d1-read.mjs";
 import { readDeploymentRegistry, readJsoncFile } from "./deployment-preflight.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,7 +14,7 @@ const canonicalConfigPath = path.join(root, "cloudflare/thot-os-next/wrangler.js
 const wrangler = path.join(root, "cloudflare/thot-os-next/node_modules/.bin/wrangler");
 
 function usage() {
-  return `Usage: npm run d1:migrations:plan -- --environment staging --release-id <id> --from 0028 --through 0031 [--output <absolute plan.json>]
+  return `Usage: npm run d1:migrations:plan -- --environment staging --release-id <id> --from 0029 --through 0031 [--output <absolute plan.json>]
        npm run d1:migrations:apply -- --apply --approved-plan <absolute plan.json> --backup-receipt <absolute export.receipt.json> --confirmation bounded:<digest> --receipt <absolute receipt.json>`;
 }
 
@@ -85,24 +86,6 @@ export function migrationNamesFromRows(rows) {
   if (!rows.every((row, index) => Number.isInteger(row.id) && row.id > 0 && (index === 0 || row.id > rows[index - 1].id) && typeof row.name === "string" && row.name.length > 0 && typeof row.applied_at === "string" && row.applied_at.length > 0)) throw new Error("Remote d1_migrations response is malformed.");
   return rows.map((row) => row.name);
 }
-export function readRemoteIdentity(authority, databaseName) {
-  const result = runWrangler(authority, ["d1", "info", databaseName, "--json"], "Cloudflare D1 identity read");
-  if (!result || Array.isArray(result) || typeof result.uuid !== "string" || result.uuid.length === 0) throw new Error("Cloudflare D1 identity response has no valid UUID.");
-  return result.uuid;
-}
-export function readRemoteApplied(authority, databaseName) {
-  let rows;
-  try {
-    rows = resultRows(runWrangler(authority, ["d1", "execute", databaseName, "--remote", "--command", "SELECT id, name, applied_at FROM d1_migrations ORDER BY id", "--json"], "Cloudflare D1 migration-history read"));
-  } catch {
-    throw new Error("Cannot read canonical d1_migrations without mutation; refusing to initialize it.");
-  }
-  return migrationNamesFromRows(rows);
-}
-function assertRemoteIdentity(authority, target) {
-  const uuid = readRemoteIdentity(authority, target.databaseName);
-  if (uuid !== target.databaseId) throw new Error("Remote D1 UUID does not match registry and canonical Web binding.");
-}
 export function writeNew(file, content) {
   const resolved = absolute(file, "Output path");
   if (existsSync(resolved)) throw new Error("Refusing to overwrite an existing evidence file.");
@@ -116,17 +99,39 @@ function markdownReceipt(receipt) {
 - Release: ${receipt.releaseId}
 - Target: ${receipt.target.databaseName} (${receipt.target.databaseId})
 - Requested: ${receipt.requestedRange.from} through ${receipt.requestedRange.through}
-- Applied: ${receipt.applied.join(", ") || "none"}
+- Attempted: ${receipt.attempted.join(", ") || "none"}
+- Locally confirmed: ${receipt.locallyConfirmed.join(", ") || "none"}
+- Remotely confirmed: ${receipt.remotelyConfirmed.join(", ") || "none"}
+- Confirmed no change: ${receipt.confirmedNoChange.join(", ") || "none"}
+- Outcome unknown: ${receipt.outcomeUnknown.join(", ") || "none"}
 - Failed: ${receipt.failed?.migration ?? "none"}
 - Excluded: ${receipt.excludedPending.join(", ") || "none"}
-- Production touched: no
+- Remote mutation: ${receipt.remoteMutation}
+- Production touched: ${receipt.productionTouched ? "yes" : "no"}
 `;
 }
-function executeFile(authority, databaseName, sql) {
+function structuredTarget(authority, databaseName) {
+  if (!authority?.registry?.environments?.staging?.accountId || authority?.target?.id == null) throw new Error("Structured D1 target is incomplete.");
+  return { accountId: authority.registry.environments.staging.accountId, databaseId: authority.target.id, databaseName };
+}
+export async function readRemoteIdentity(authority, databaseName, d1Client) {
+  const target = structuredTarget(authority, databaseName);
+  const verified = await d1Client.verifyTarget(target);
+  return verified.databaseId;
+}
+export async function readRemoteApplied(authority, databaseName, d1Client) {
+  const target = structuredTarget(authority, databaseName);
+  return d1Client.readMigrationHistory(target);
+}
+function executeFile(authority, databaseName, sql, markSubmitted) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "thot-os-bounded-d1-"));
   const file = path.join(directory, "single-migration.sql");
   try {
     writeFileSync(file, sql, { mode: 0o600 });
+    // Wrangler is the mutation adapter. It cannot prove whether a request
+    // committed after control leaves this process, so the point of no return
+    // is recorded before invoking it and D1 is reconciled independently.
+    markSubmitted();
     resultRows(runWrangler(authority, ["d1", "execute", databaseName, "--remote", "--file", file, "--json"], "Selected bounded D1 migration"));
   } catch {
     throw new Error("Selected migration command failed; no later migration was attempted.");
@@ -135,7 +140,7 @@ function executeFile(authority, databaseName, sql) {
   }
 }
 
-function makePlan(options) {
+export async function makePlan(options, d1Client = createStructuredD1ReadClient()) {
   if (options.environment !== "staging") throw new Error("An explicit staging environment is required.");
   const authority = loadAuthority();
   const inventoryDirectory = path.resolve(path.dirname(canonicalConfigPath), authority.target.migrationsDir);
@@ -143,9 +148,11 @@ function makePlan(options) {
   const gitState = gitIdentity();
   if (!gitClean()) throw new Error("Planning requires a clean Git working tree.");
   gitState.clean = true;
-  assertRemoteIdentity(authority, { databaseName: Object.keys(authority.registry.environments.staging.resources.d1)[0], databaseId: authority.target.id });
-  const remoteApplied = readRemoteApplied(authority, Object.keys(authority.registry.environments.staging.resources.d1)[0]);
-  return { authority, inventoryDirectory, plan: buildBoundedPlan({ environment: options.environment, from: options.from, through: options.through, releaseId: options.releaseId, inventory, remoteApplied, registry: authority.registry, policy: authority.policy, git: gitState }) };
+  const databaseName = Object.keys(authority.registry.environments.staging.resources.d1)[0];
+  const remoteDatabaseId = await readRemoteIdentity(authority, databaseName, d1Client);
+  if (remoteDatabaseId !== authority.target.id) throw new Error("Structured D1 target UUID does not match registry and canonical Web binding.");
+  const remoteApplied = await readRemoteApplied(authority, databaseName, d1Client);
+  return { authority, d1Client, inventoryDirectory, plan: buildBoundedPlan({ environment: options.environment, from: options.from, through: options.through, releaseId: options.releaseId, inventory, remoteApplied, registry: authority.registry, policy: authority.policy, git: gitState }) };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -153,7 +160,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) console.log(usage());
     else if (!options.apply) {
-      const { plan } = makePlan(options);
+      const { plan } = await makePlan(options);
       if (options.output) writeNew(options.output, JSON.stringify(plan, null, 2));
       console.log(JSON.stringify(plan, null, 2));
     } else {
@@ -161,22 +168,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const approved = json(options.approvedPlan, "Approved plan");
       if (approved.value.environment !== "staging") throw new Error("Production and non-staging apply are disabled.");
       const regeneratedOptions = { environment: approved.value.environment, from: approved.value.requestedRange?.from, through: approved.value.requestedRange?.through, releaseId: approved.value.releaseId };
-      const { authority, inventoryDirectory, plan: currentPlan } = makePlan(regeneratedOptions);
+      const { authority, d1Client, inventoryDirectory, plan: currentPlan } = await makePlan(regeneratedOptions);
       const backupInput = json(options.backupReceipt, "Backup receipt");
       const backup = validateBackup({ receipt: backupInput.value, receiptPath: backupInput.path, target: approved.value.target, expectedMigrationState: approved.value.preMigrationState, maxAgeMinutes: authority.policy.backupMaxAgeMinutes });
       assertApplyGates({ plan: approved.value, currentPlan, remoteApplied: currentPlan.preMigrationState, git: gitIdentity(), clean: gitClean(), backup, confirmation: options.confirmation });
       const receipt = await executeBoundedPlan({
         plan: approved.value,
         directory: inventoryDirectory,
-        executeOne: ({ sql }) => executeFile(authority, approved.value.target.databaseName, sql),
-        getApplied: () => readRemoteApplied(authority, approved.value.target.databaseName),
-        receiptBase: { schemaVersion: 1, releaseId: approved.value.releaseId, target: approved.value.target, git: gitIdentity(), backup, startedAt: new Date().toISOString(), planSourceSha256: hashFileBytes(approved.path) },
+        executeOne: ({ sql, markSubmitted }) => executeFile(authority, approved.value.target.databaseName, sql, markSubmitted),
+        getApplied: () => readRemoteApplied(authority, approved.value.target.databaseName, d1Client),
+        receiptBase: { schemaVersion: 2, releaseId: approved.value.releaseId, target: approved.value.target, git: gitIdentity(), backup, startedAt: new Date().toISOString(), planSourceSha256: hashFileBytes(approved.path) },
       });
       receipt.completedAt = new Date().toISOString();
       receipt.receiptSha256 = hashCanonicalJson(receipt);
       const receiptPath = writeNew(options.receipt, JSON.stringify(receipt, null, 2));
       writeNew(`${receiptPath}.md`, markdownReceipt(receipt));
-      console.log(JSON.stringify({ result: receipt.result, receipt: receiptPath, applied: receipt.applied, failed: receipt.failed?.migration ?? null, excludedPending: receipt.excludedPending }, null, 2));
+      console.log(JSON.stringify({ result: receipt.result, receipt: receiptPath, attempted: receipt.attempted, remotelyConfirmed: receipt.remotelyConfirmed, outcomeUnknown: receipt.outcomeUnknown, remoteMutation: receipt.remoteMutation, failed: receipt.failed?.migration ?? null, excludedPending: receipt.excludedPending }, null, 2));
       if (receipt.result !== "APPLIED") process.exitCode = 1;
     }
   } catch (error) {

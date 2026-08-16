@@ -5,9 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertApplyGates, buildActivationPlan, planDigest, redactActivationReceipt, sha256 } from "./service-auth-activation-lib.mjs";
+import { createStructuredD1ReadClient } from "./cloudflare-d1-read.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = { activation: path.join(root, "config/service-auth-activation.staging.json"), contract: path.join(root, "config/service-principals.json"), registry: path.join(root, "config/deployments.json") };
+const webWorkerDirectory = path.join(root, "cloudflare/thot-os-next");
+const wrangler = path.join(webWorkerDirectory, "node_modules/.bin/wrangler");
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
@@ -32,18 +35,18 @@ export function parseArgs(argv) {
 export function currentGitIdentity() { return { sha: git(["rev-parse", "HEAD"]), branch: git(["branch", "--show-current"]) }; }
 export function cleanGitTree() { return git(["status", "--porcelain"]) === ""; }
 
-function d1Migrations(registry, activation) {
-  const accountId = registry.environments.staging.accountId;
-  const output = execFileSync("npx", ["wrangler", "d1", "execute", activation.expected.databaseName, "--remote", "--command", "SELECT name FROM d1_migrations ORDER BY name", "--json"], {
-    cwd: root, encoding: "utf8", env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId }, stdio: ["ignore", "pipe", "pipe"],
+export async function d1Migrations(registry, activation, d1Client = createStructuredD1ReadClient()) {
+  const database = registry?.environments?.staging?.resources?.d1?.[activation?.expected?.databaseName];
+  if (!database || database.id !== activation.expected.databaseId) throw new Error("Activation D1 identity does not match the deployment registry.");
+  return d1Client.readMigrationHistory({
+    accountId: registry.environments.staging.accountId,
+    databaseId: database.id,
+    databaseName: activation.expected.databaseName,
   });
-  const parsed = JSON.parse(output);
-  const rows = parsed?.[0]?.results ?? parsed?.results ?? [];
-  return rows.map((row) => row.name);
 }
 
 function d1Execute(registry, databaseName, sql) {
-  return execFileSync("npx", ["wrangler", "d1", "execute", databaseName, "--remote", "--command", sql, "--json"], {
+  return execFileSync(wrangler, ["--cwd", webWorkerDirectory, "d1", "execute", databaseName, "--remote", "--command", sql, "--json"], {
     cwd: root, encoding: "utf8", env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: registry.environments.staging.accountId }, stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -79,7 +82,7 @@ function stageWebSecrets(plan, registry) {
   const secretFile = path.join(mkdtempSync(path.join(os.tmpdir(), "thot-os-service-auth-")), "web-secrets.json");
   try {
     writeFileSync(secretFile, JSON.stringify(Object.fromEntries(plan.principals.map((principal) => [principal.secretName, credentials[principal.principalName]]))), { mode: 0o600 });
-    execFileSync("npx", ["wrangler", "versions", "upload", "--config", registry.environments.staging.components.web.config, "--secrets-file", secretFile], {
+    execFileSync(wrangler, ["versions", "upload", "--config", registry.environments.staging.components.web.config, "--secrets-file", secretFile], {
       cwd: root, encoding: "utf8", env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: registry.environments.staging.accountId }, stdio: ["ignore", "pipe", "pipe"],
     });
     return credentials;
@@ -99,7 +102,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const activation = readJson(options.activation ?? defaults.activation);
       const contract = readJson(defaults.contract);
       const registry = readJson(defaults.registry);
-      const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: d1Migrations(registry, activation), git: currentGitIdentity() });
+      const d1Client = createStructuredD1ReadClient();
+      const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: await d1Migrations(registry, activation, d1Client), git: currentGitIdentity() });
       if (options.mode === "plan") {
         if (options.output) writeFileSync(options.output, `${JSON.stringify(plan, null, 2)}\n`, { mode: 0o600 });
         console.log(JSON.stringify(plan, null, 2));
@@ -109,7 +113,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         if (planDigest(approvedPlan) !== approvedPlan.planSha256) throw new Error("Approved plan checksum is invalid.");
         const backupReceipt = readJson(options.backupReceipt);
         assertApplyGates({ plan: approvedPlan, confirmation: options.confirmation, cleanGit: cleanGitTree(), currentGit: currentGitIdentity(), backupReceipt, registry });
-        const migrations = d1Migrations(registry, activation);
+        const migrations = await d1Migrations(registry, activation, d1Client);
         if (JSON.stringify(migrations) !== JSON.stringify(approvedPlan.observedMigrations)) throw new Error("Activation apply requires the exact expanded and compatibility-ready D1 migration state.");
         const credentials = stageWebSecrets(approvedPlan, registry);
         try {

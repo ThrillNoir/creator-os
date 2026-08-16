@@ -23,11 +23,14 @@ target in this architecture.
 
 ## Migration policy
 
-Remote staging was verified at `0001`–`0027` before this change. Migrations
-`0028`–`0031` were never applied to a canonical remote, so amending local
-`0029` is permitted and recorded here. It now creates only additive canonical
-principal structures. `0030` is unchanged. `0031` adds only dormant activation
-records and telemetry. It does not touch `identity_audit_service_scope`.
+The historical Phase 2A EXPAND attempt submitted `0028_migration_ledger.sql`.
+Its local Wrangler result was ambiguous, but canonical D1 history confirms
+that `0028` is applied. `0029`–`0031` and `0032` remain unapplied. `0028` must
+not be replayed, removed, or manually changed in `d1_migrations`; the next
+separately approved range begins at `0029`. `0029` creates only additive
+canonical principal structures. `0030` is unchanged. `0031` adds only dormant
+activation records and telemetry. None of these migrations touches
+`identity_audit_service_scope`.
 `0032_service_auth_compatibility.sql` is the separate, reviewed migration that
 recreates the SQLite audit trigger with the legacy and canonical scoped
 branches. It is a compatibility release, not an expand or contract release.
@@ -40,11 +43,15 @@ rollback no longer depending on legacy authentication.
 ## Activation workflow
 
 `npm run services:activate -- --environment staging --activation config/service-auth-activation.staging.json --plan`
-is read-only and default-safe. It reads only the explicitly registered staging
-D1 migration list and emits a redacted exact plan. It reports independent
-`expandReady`, `compatibilityReady`, and `activationReady` states. `0027` is
-blocked pending EXPAND; `0031` is an explicit safe stop blocked pending
-COMPATIBILITY; only `0032` is activation-ready.
+is read-only and default-safe. It uses the repository-owned structured D1 REST
+reader with the existing `CLOUDFLARE_API_TOKEN` environment contract to verify
+the registered staging D1 UUID/name and read its ordered migration list. It
+emits a redacted exact plan and reports independent `partialExpandReady`,
+`expandReady`, `compatibilityReady`, and `activationReady` states. The current
+canonical `0028` partial-EXPAND state remains blocked pending `0029`–`0031`;
+`0031` is an explicit safe stop blocked pending COMPATIBILITY; only `0032` is
+activation-ready. Tokens and raw API responses are never included in plans or
+receipts.
 
 An eventual `--apply` has to fail closed unless its approved plan, confirmation
 token, clean Git SHA and branch, staging registry/D1 ID, exact EXPAND **and**

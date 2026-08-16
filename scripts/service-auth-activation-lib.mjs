@@ -55,7 +55,11 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
   const compatibilityReady = expandReady && compatibilityMigrations.every((name) => observedMigrations.includes(name))
     && observedMigrations.at(-1) === compatibilityMigrations.at(-1);
   const remoteBaseline = observedMigrations.at(-1) === "0027_reddit_post_flairs.sql";
-  if (!compatibilityReady && !expandReady && !remoteBaseline) throw new Error("Remote migration state is outside the approved baseline, EXPAND, and COMPATIBILITY boundaries.");
+  const partialExpandIndex = expandMigrations.indexOf(observedMigrations.at(-1));
+  const partialExpandReady = partialExpandIndex >= 0
+    && expandMigrations.slice(0, partialExpandIndex + 1).every((name) => observedMigrations.includes(name))
+    && compatibilityMigrations.every((name) => !observedMigrations.includes(name));
+  if (!compatibilityReady && !expandReady && !partialExpandReady && !remoteBaseline) throw new Error("Remote migration state is outside the approved baseline, partial-EXPAND, EXPAND, and COMPATIBILITY boundaries.");
   const plan = {
     schemaVersion: 1,
     mode: "plan",
@@ -64,6 +68,8 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
     database: activation.expected,
     git,
     observedMigrations,
+    partialExpandReady,
+    partialExpandThrough: partialExpandReady ? expandMigrations[partialExpandIndex] : null,
     expandReady,
     compatibilityReady,
     activationReady: compatibilityReady,
