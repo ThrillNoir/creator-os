@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { humanAuditActor, identityAuditStatement } from "@/lib/audit-identity";
 import { requireCreatorContext, getCreatorIdentity } from "@/lib/identity";
+import { getOnboardingResult, validateOnboardingRequest } from "@/lib/creator-onboarding";
+import { isAgencyStaffRole } from "@/lib/authorization";
 import type { CreatorRole } from "@/lib/identity";
 
 const membershipRoles = new Set<CreatorRole>(["agency_admin", "operator", "creator", "viewer"]);
@@ -23,13 +25,50 @@ function requireConfirmation(formData: FormData, expected: string) {
 export async function switchCreatorAction(formData: FormData) {
   const identity = await getCreatorIdentity();
   const creatorId = String(formData.get("creatorId") ?? "");
-  const membership = identity.memberships.find((item) => item.creator_id === creatorId && item.role === "agency_admin");
+  const membership = identity.memberships.find((item) => item.creator_id === creatorId && isAgencyStaffRole(item.role));
   if (!membership) throw new Error("Only an agency administrator can switch to that creator workspace.");
   const { DB } = cloudflareEnv();
   await identityAuditStatement(DB, humanAuditActor({ email: identity.email, creator: membership }), "creator_workspace_selected", creatorId, { administrativeAction: true }).run();
   const localBypass = (cloudflareEnv() as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string }).LOCAL_ACCESS_BYPASS;
   (await cookies()).set("thot_os_creator", creatorId, { httpOnly: true, sameSite: "lax", secure: localBypass !== "1", path: "/", maxAge: 60 * 60 * 24 * 365 });
   redirect("/");
+}
+
+export async function onboardCreatorWorkspaceAction(formData: FormData) {
+  const identity = await getCreatorIdentity();
+  const operatorMembership = identity.memberships.find((membership) => membership.role === "agency_admin");
+  if (!operatorMembership) throw new Error("Only an agency administrator can create a creator workspace.");
+  const request = await validateOnboardingRequest(Object.fromEntries(formData), identity.email);
+  const { DB } = cloudflareEnv();
+  const completed = await getOnboardingResult(DB, request);
+  if (completed) {
+    revalidatePath("/");
+    revalidatePath("/creators");
+    return;
+  }
+  const collision = await DB.prepare("SELECT id FROM creators WHERE id=? OR slug=? LIMIT 1").bind(request.creatorId, request.slug).first<{ id: string }>();
+  if (collision) throw new Error("A creator workspace already exists with that ID or slug. Use its existing onboarding receipt.");
+  const user = await DB.prepare("SELECT status FROM users WHERE lower(email)=?").bind(request.requestedBy).first<{ status: string }>();
+  if (user?.status === "suspended") throw new Error("The signed-in operator is globally suspended.");
+  const auditActor = { identity: identity.email, role: "agency_admin" as const, creatorId: request.creatorId };
+  try {
+    await DB.batch([
+      DB.prepare("INSERT INTO creators (id,name,slug,initials,accent,status) VALUES (?,?,?,?,?,'active')").bind(request.creatorId, request.name, request.slug, request.initials, request.accent),
+      DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?,'active')").bind(request.requestedBy, identity.email),
+      DB.prepare("INSERT INTO creator_memberships (creator_id,user_email,role,status) VALUES (?,?,'agency_admin','active')").bind(request.creatorId, request.requestedBy),
+      DB.prepare(`INSERT INTO creator_onboarding_receipts
+        (id,idempotency_key,creator_id,requested_by,request_fingerprint,status)
+        VALUES (?,?,?,?,?,'completed')`).bind(crypto.randomUUID(), request.idempotencyKey, request.creatorId, request.requestedBy, request.fingerprint),
+      identityAuditStatement(DB, auditActor, "creator_workspace_onboarded", request.creatorId, { onboardingReceipt: request.idempotencyKey, metadataOnly: true }),
+    ]);
+  } catch (error) {
+    // A duplicate retry may race the first accepted request. Resolve only an
+    // identical immutable receipt; never treat a different request as success.
+    const raced = await getOnboardingResult(DB, request);
+    if (!raced) throw error;
+  }
+  revalidatePath("/");
+  revalidatePath("/creators");
 }
 
 export async function registerBrowserProfileAction(creatorId: string, formData: FormData) {

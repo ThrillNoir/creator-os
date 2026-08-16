@@ -239,12 +239,19 @@ async function creatorIdFromBody(request: Request) {
   return requiredCreatorId((await request.json<{ creatorId?: string }>()).creatorId);
 }
 
-async function authenticatedCreatorId(request: Request, env: Env, url: URL) {
+const routeCapabilities: Record<string, string> = {
+  "POST /validate": "telegram.connection.manage",
+  "POST /run": "telegram.messages.sync",
+  "POST /send": "telegram.messages.write",
+  "GET /status": "telegram.status.read",
+};
+
+async function authenticatedCreatorId(request: Request, env: Env, url: URL, capability: string) {
   const candidate = request.method === "GET"
     ? url.searchParams.get("creator")
     : (await request.clone().json<{ creatorId?: unknown }>()).creatorId;
   const creatorId = requiredCreatorId(candidate);
-  const service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-telegram");
+  const service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-telegram", capability);
   await internalServiceAuditStatement(env.DB, service, url.pathname).run();
   return creatorId;
 }
@@ -257,9 +264,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
+      const capability = routeCapabilities[`${request.method} ${url.pathname}`];
+      if (!capability) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
       let creatorId: string;
       try {
-        creatorId = await authenticatedCreatorId(request, env, url);
+        creatorId = await authenticatedCreatorId(request, env, url, capability);
       } catch {
         return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
       }

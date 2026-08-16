@@ -356,12 +356,20 @@ async function status(env: Env, creatorId: string) {
   return Response.json({ ok: true, connection, lastRun, due: due?.count ?? 0 });
 }
 
-async function authenticatedCreatorId(request: Request, env: Env, url: URL) {
+const routeCapabilities: Record<string, string> = {
+  "POST /connections/reddit/start": "reddit.connection.manage",
+  "POST /connections/reddit/complete": "reddit.connection.manage",
+  "POST /communities/reddit/flairs/refresh": "reddit.communities.read",
+  "POST /posts/reddit/publish": "reddit.publish.execute",
+  "GET /status": "reddit.status.read",
+};
+
+async function authenticatedCreatorId(request: Request, env: Env, url: URL, capability: string) {
   const candidate = request.method === "GET"
     ? url.searchParams.get("creator")
     : (await request.clone().json<{ creatorId?: unknown }>()).creatorId;
   if (typeof candidate !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(candidate)) throw new Error("Creator scope is required.");
-  const service = await requireInternalServiceForCreator(request, env.DB, candidate, "thot-os-web-reddit");
+  const service = await requireInternalServiceForCreator(request, env.DB, candidate, "thot-os-web-reddit", capability);
   await internalServiceAuditStatement(env.DB, service, url.pathname).run();
   return candidate;
 }
@@ -370,9 +378,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
+      const capability = routeCapabilities[`${request.method} ${url.pathname}`];
+      if (!capability) return new Response("Not found", { status: 404 });
       let creatorId: string;
       try {
-        creatorId = await authenticatedCreatorId(request, env, url);
+        creatorId = await authenticatedCreatorId(request, env, url, capability);
       } catch {
         return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
       }

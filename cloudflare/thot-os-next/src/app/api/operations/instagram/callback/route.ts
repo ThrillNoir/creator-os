@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     const state = new URL(request.url).searchParams.get("state");
     if (!state) throw new Error("Instagram connection state is missing.");
     const env = cloudflareEnv();
-    const response = await fetchInternalService(env, "instagram", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/complete", {
+    const response = await fetchInternalService(env, "instagram", "instagram.connection.manage", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/complete", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, creatorId: context.creator.creator_id }),
     });
     const result = await response.json() as { ok?: boolean; error?: string };

@@ -38,7 +38,7 @@ test("URL, cookie, form and payload creator selection never creates a role or ca
     source("../src/app/api/staging/qa/human-mutation/route.ts"),
   ]);
   assert.doesNotMatch(actions, /formData\.get\(["']creatorId["']\)/);
-  assert.match(identities, /identity\.memberships\.find\(\(item\) => item\.creator_id === creatorId && item\.role === "agency_admin"\)/);
+  assert.match(identities, /identity\.memberships\.find\(\(item\) => item\.creator_id === creatorId && isAgencyStaffRole\(item\.role\)\)/);
   assert.match(humanProbe, /requireCreatorContext\("mutate", creatorId\)/);
 });
 
@@ -66,19 +66,21 @@ test("invalid or cross-creator internal service identities are rejected before W
       return {
         bind(...values) {
           calls.push({ sql, values });
-          return { first: async () => values[2] === "adelaide" && values[1] === "thot-os-web-reddit" ? { id: "reddit-credential", service_name: "thot-os-web-reddit" } : null };
+          return { first: async () => values[2] === "adelaide" && values[1] === "thot-os-web-reddit" && values[3] === "reddit.status.read" ? { id: "reddit-credential", principal_name: "thot-os-web-reddit" } : null };
         },
       };
     },
   };
-  const request = new Request("https://reddit-scheduler/status?creator=adelaide", { headers: { authorization: `Bearer ${"x".repeat(48)}` } });
-  assert.deepEqual(await requireInternalServiceForCreator(request, DB, "adelaide", "thot-os-web-reddit"), {
-    credentialId: "reddit-credential", serviceName: "thot-os-web-reddit", creatorId: "adelaide",
+  const request = new Request("https://reddit-scheduler/status?creator=adelaide", { headers: { authorization: `Bearer ${"x".repeat(48)}`, "x-thot-os-service-capability": "reddit.status.read" } });
+  assert.deepEqual(await requireInternalServiceForCreator(request, DB, "adelaide", "thot-os-web-reddit", "reddit.status.read"), {
+    credentialId: "reddit-credential", serviceName: "thot-os-web-reddit", creatorId: "adelaide", capability: "reddit.status.read",
   });
-  await assert.rejects(() => requireInternalServiceForCreator(request, DB, "foreign", "thot-os-web-reddit"), /invalid/);
-  await assert.rejects(() => requireInternalServiceForCreator(new Request("https://reddit-scheduler/status"), DB, "adelaide", "thot-os-web-reddit"), /invalid/);
-  assert.match(calls[0].sql, /service_creator_grants/);
+  await assert.rejects(() => requireInternalServiceForCreator(request, DB, "foreign", "thot-os-web-reddit", "reddit.status.read"), /invalid/);
+  await assert.rejects(() => requireInternalServiceForCreator(request, DB, "adelaide", "thot-os-web-reddit", "reddit.publish.execute"), /invalid/);
+  await assert.rejects(() => requireInternalServiceForCreator(new Request("https://reddit-scheduler/status"), DB, "adelaide", "thot-os-web-reddit", "reddit.status.read"), /invalid/);
+  assert.match(calls[0].sql, /service_principal_creator_grants/);
   assert.match(calls[0].sql, /g\.creator_id=\?/);
+  assert.match(calls[0].sql, /g\.capability=\?/);
 });
 
 test("receiving Workers use named D1-backed service credentials and device credentials stay bound", async () => {
@@ -91,6 +93,8 @@ test("receiving Workers use named D1-backed service credentials and device crede
   ]);
   const helper = await source("../../shared/service-auth.ts");
   assert.match(helper, /internal_service_request_authorized/);
+  assert.match(helper, /x-thot-os-service-capability/);
+  assert.match(helper, /service_principal_credentials/);
   for (const [worker, service] of [[instagram, "thot-os-web-instagram"], [reddit, "thot-os-web-reddit"], [telegram, "thot-os-web-telegram"]]) {
     assert.match(worker, /requireInternalServiceForCreator/);
     assert.match(worker, new RegExp(service));

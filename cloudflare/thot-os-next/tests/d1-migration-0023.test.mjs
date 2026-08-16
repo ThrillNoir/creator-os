@@ -36,8 +36,8 @@ async function databasePath(directory) {
   return null;
 }
 
-test("fresh migrations through 0028 retain device invariants and enable Composio Reddit API delivery", async () => {
-  assert.equal(migrationNames.at(-1), "0028_migration_ledger.sql");
+test("fresh migrations retain device invariants and enable Composio Reddit API delivery", async () => {
+  assert.ok(migrationNames.includes("0028_migration_ledger.sql"));
   const local = await workspace();
   try {
     const result = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-0023-local-repro", "--local", "--persist-to", local.state], {

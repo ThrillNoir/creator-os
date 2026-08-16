@@ -17,8 +17,8 @@ if (response.status !== 200) {
 const contentType = response.headers.get("content-type") ?? "";
 if (!contentType.includes("application/json")) throw new Error("Authenticated health check did not return JSON.");
 const result = await response.json();
-if (result?.ok !== true || result?.runtime !== "nextjs-opennext" || typeof result?.creatorId !== "string") {
+if (result?.ok !== true || result?.runtime !== "nextjs-opennext" || typeof result?.creatorId !== "string" || result?.database?.connected !== true || typeof result?.database?.migration !== "string" || typeof result?.deployment?.gitSha !== "string" || typeof result?.bindings?.d1 !== "boolean") {
   throw new Error("Authenticated health response did not match the THOT OS contract.");
 }
 
-console.log(JSON.stringify({ ok: true, service: result.service, runtime: result.runtime, status: response.status }));
+console.log(JSON.stringify({ ok: true, service: result.service, environment: result.environment, runtime: result.runtime, migration: result.database.migration, gitSha: result.deployment.gitSha, status: response.status }));

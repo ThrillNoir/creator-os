@@ -188,7 +188,7 @@ async function refreshDropboxCatalogue(request: Request, env: Env) {
   if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
   let service;
   try {
-    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue");
+    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue", "vault.catalogue.refresh");
   } catch {
     return json(request, { ok: false, error: "unauthorized" }, 401);
   }

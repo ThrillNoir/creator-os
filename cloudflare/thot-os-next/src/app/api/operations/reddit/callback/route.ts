@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     const state = new URL(request.url).searchParams.get("state");
     if (!state) throw new Error("Reddit connection state is missing.");
     const env = cloudflareEnv();
-    const response = await fetchInternalService(env, "reddit", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/complete", {
+    const response = await fetchInternalService(env, "reddit", "reddit.connection.manage", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/complete", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ state, creatorId: context.creator.creator_id }),

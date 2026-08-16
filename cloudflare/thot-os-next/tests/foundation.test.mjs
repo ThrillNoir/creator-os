@@ -142,7 +142,9 @@ test("health and library APIs preserve authenticated staging contracts", async (
   const [health, library] = await Promise.all([source("src/app/health/route.ts"), source("src/app/api/library/route.ts")]);
   assert.match(health, /nextjs-opennext/);
   assert.match(health, /requireCreatorContext/);
-  assert.match(health, /deployment: getDeploymentMetadata\(\)/);
+  assert.match(health, /const deployment = getDeploymentMetadata\(\)/);
+  assert.match(health, /SELECT name FROM d1_migrations/);
+  assert.match(health, /bindings: \{ d1:/);
   assert.match(library, /getCreatorContext\(creatorId\)/);
   assert.match(library, /status: 404/);
 });

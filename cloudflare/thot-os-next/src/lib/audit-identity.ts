@@ -55,16 +55,17 @@ export async function requireServiceAuditActor(request: Request, DB: D1Database,
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   if (!token || token.length > 512 || !creatorId) throw new Error("Service credential is invalid.");
   const tokenHash = await sha256(token);
-  const credential = await DB.prepare(`SELECT s.id,s.service_name
-    FROM service_credentials s
-    JOIN service_creator_grants g ON g.service_credential_id=s.id
-    WHERE s.token_hash=? AND s.status='active'
-      AND (s.expires_at IS NULL OR unixepoch(s.expires_at)>unixepoch(CURRENT_TIMESTAMP))
+  const credential = await DB.prepare(`SELECT c.id,p.principal_name
+    FROM service_principal_credentials c
+    JOIN service_principals p ON p.id=c.service_principal_id
+    JOIN service_principal_creator_grants g ON g.service_principal_id=p.id
+    WHERE c.token_hash=? AND c.status='active' AND p.status='active'
+      AND (c.expires_at IS NULL OR unixepoch(c.expires_at)>unixepoch(CURRENT_TIMESTAMP))
       AND g.creator_id=? AND g.status='active'
-    LIMIT 1`).bind(tokenHash, creatorId).first<{ id: string; service_name: string }>();
+    LIMIT 1`).bind(tokenHash, creatorId).first<{ id: string; principal_name: string }>();
   if (!credential) throw new Error("Service credential is invalid.");
   return {
-    actor: { identity: `service:${credential.service_name}`, role: "service", creatorId } satisfies AuditActor,
+    actor: { identity: `service:${credential.principal_name}`, role: "service", creatorId } satisfies AuditActor,
     credentialId: credential.id,
   };
 }

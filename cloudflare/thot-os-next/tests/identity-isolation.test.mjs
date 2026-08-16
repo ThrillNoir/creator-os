@@ -71,7 +71,7 @@ test("service role is returned only after credential and creator-grant validatio
       return {
         bind(_hash, creatorId) {
           boundCreator = creatorId;
-          return { first: async () => creatorId === "adelaide" ? { id: "service-id", service_name: "qa-runner" } : null };
+          return { first: async () => creatorId === "adelaide" ? { id: "service-id", principal_name: "qa-runner" } : null };
         },
       };
     },

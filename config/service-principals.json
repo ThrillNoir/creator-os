@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "purpose": "Canonical service-principal capability contract. This file contains only names and allowed capabilities; it never contains credential material, hashes, creator grants, or deployment approval.",
+  "principals": [
+    {
+      "id": "web-instagram",
+      "principalName": "thot-os-web-instagram",
+      "secretName": "INTERNAL_INSTAGRAM_SCHEDULER_TOKEN",
+      "receiver": "instagram",
+      "capabilities": [
+        "instagram.status.read",
+        "instagram.connection.manage",
+        "instagram.publish.execute",
+        "instagram.sync.execute",
+        "instagram.messages.sync",
+        "instagram.messages.write"
+      ]
+    },
+    {
+      "id": "web-reddit",
+      "principalName": "thot-os-web-reddit",
+      "secretName": "INTERNAL_REDDIT_SCHEDULER_TOKEN",
+      "receiver": "reddit",
+      "capabilities": [
+        "reddit.status.read",
+        "reddit.connection.manage",
+        "reddit.communities.read",
+        "reddit.publish.execute"
+      ]
+    },
+    {
+      "id": "web-telegram",
+      "principalName": "thot-os-web-telegram",
+      "secretName": "INTERNAL_TELEGRAM_BRIDGE_TOKEN",
+      "receiver": "telegram",
+      "capabilities": [
+        "telegram.status.read",
+        "telegram.connection.manage",
+        "telegram.messages.sync",
+        "telegram.messages.write"
+      ]
+    },
+    {
+      "id": "web-vault-catalogue",
+      "principalName": "thot-os-web-vault-catalogue",
+      "secretName": "INTERNAL_VAULT_CATALOGUE_TOKEN",
+      "receiver": "vault",
+      "capabilities": [
+        "vault.catalogue.refresh"
+      ]
+    }
+  ]
+}

@@ -59,8 +59,8 @@ function bridgeDatabase(batchLog) {
           return this;
         },
         async first() {
-          if (sql.includes("FROM service_credentials")) {
-            return { id: "telegram-service-credential", service_name: "thot-os-web-telegram" };
+          if (sql.includes("FROM service_principal_credentials")) {
+            return { id: "telegram-service-credential", principal_name: "thot-os-web-telegram" };
           }
           if (sql.includes("FROM telegram_connector_state")) {
             return {
@@ -101,7 +101,7 @@ test("the local validate route uses the service pair and records a creator-scope
 
   try {
     const response = await telegramBridge.fetch(
-      new Request("http://local.test/validate", { method: "POST", headers: { authorization: `Bearer ${"x".repeat(48)}` }, body: JSON.stringify({ creatorId: "adelaide" }) }),
+      new Request("http://local.test/validate", { method: "POST", headers: { authorization: `Bearer ${"x".repeat(48)}`, "x-thot-os-service-capability": "telegram.connection.manage" }, body: JSON.stringify({ creatorId: "adelaide" }) }),
       { ...correctIdentity, DB: bridgeDatabase(batches) },
     );
     assert.equal(response.status, 200);
@@ -126,7 +126,7 @@ test("the local validate route rejects a Composio ownership mismatch", async () 
 
   try {
     const response = await telegramBridge.fetch(
-      new Request("http://local.test/validate", { method: "POST", headers: { authorization: `Bearer ${"x".repeat(48)}` }, body: JSON.stringify({ creatorId: "adelaide" }) }),
+      new Request("http://local.test/validate", { method: "POST", headers: { authorization: `Bearer ${"x".repeat(48)}`, "x-thot-os-service-capability": "telegram.connection.manage" }, body: JSON.stringify({ creatorId: "adelaide" }) }),
       { ...correctIdentity, DB: bridgeDatabase(batches) },
     );
     assert.equal(response.status, 500);

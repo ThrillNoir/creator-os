@@ -38,7 +38,7 @@ async function databasePath(directory) {
 }
 
 test("0028 migration ledger replays locally and is creator-scoped and append-only", async () => {
-  assert.equal(migrationNames.at(-1), "0028_migration_ledger.sql");
+  assert.ok(migrationNames.includes("0028_migration_ledger.sql"));
   const local = await workspace();
   try {
     const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-0028-local-repro", "--local", "--persist-to", local.state], {
@@ -70,6 +70,16 @@ test("0028 migration ledger replays locally and is creator-scoped and append-onl
       assert.throws(() => db.prepare("UPDATE migration_ledger_runs SET approval_ref='changed' WHERE id='run-adelaide'").run(), /migration_ledger_append_only/);
       assert.throws(() => db.prepare("DELETE FROM migration_ledger_records WHERE id='record-adelaide'").run(), /migration_ledger_append_only/);
       assert.throws(() => db.prepare("UPDATE migration_ledger_events SET actor_identity='changed' WHERE id='event-adelaide'").run(), /migration_ledger_append_only/);
+      db.prepare("INSERT INTO service_principals (id,principal_name) VALUES ('web-reddit','thot-os-web-reddit')").run();
+      db.prepare("INSERT INTO service_principal_credentials (id,service_principal_id,token_hash) VALUES ('web-reddit-current','web-reddit',?)").run("b".repeat(64));
+      db.prepare("INSERT INTO service_principal_credentials (id,service_principal_id,token_hash) VALUES ('web-reddit-next','web-reddit',?)").run("c".repeat(64));
+      db.prepare("INSERT INTO service_principal_creator_grants (service_principal_id,creator_id,capability) VALUES ('web-reddit','adelaide','reddit.status.read')").run();
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM service_principal_credentials WHERE service_principal_id='web-reddit' AND status='active'").get().count, 2);
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM service_principal_creator_grants WHERE creator_id='adelaide' AND capability='reddit.status.read'").get().count, 1);
+      db.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES ('principal-request','adelaide','service:thot-os-web-reddit','service','internal_service_request_authorized','/status','{}')").run();
+      assert.throws(() => db.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES ('principal-foreign','bryshanagy','service:thot-os-web-reddit','service','internal_service_request_authorized','/status','{}')").run(), /audit_service_actor_scope_invalid/);
+      db.prepare("INSERT INTO service_principal_audit_events (id,service_principal_id,credential_id,creator_id,event_type,actor_identity) VALUES ('principal-event','web-reddit','web-reddit-current','adelaide','credential_created','fixture-operator')").run();
+      assert.throws(() => db.prepare("UPDATE service_principal_audit_events SET event_type='changed' WHERE id='principal-event'").run(), /service_principal_audit_events_append_only/);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM assets").get().count, beforeAssets);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM social_posts").get().count, beforePosts);
       assert.equal(db.pragma("quick_check", { simple: true }), "ok");

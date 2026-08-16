@@ -3,7 +3,7 @@ import { AppShell, PageHeader } from "@/components/app-shell";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorRoleLabel, requireCreatorContext } from "@/lib/identity";
 import type { CreatorRole } from "@/lib/identity";
-import { assignBrowserProfileAction, registerBrowserProfileAction, revokeBridgeCredentialsAction, saveCreatorMembershipAction, suspendCreatorMembershipAction } from "@/app/identity-actions";
+import { assignBrowserProfileAction, onboardCreatorWorkspaceAction, registerBrowserProfileAction, revokeBridgeCredentialsAction, saveCreatorMembershipAction, suspendCreatorMembershipAction } from "@/app/identity-actions";
 
 type AdminCreator = { id: string; name: string; status: string; assets: number; active_memberships: number; accounts: number; platforms: string | null; profiles: number };
 type Membership = { user_email: string; display_name: string; role: CreatorRole; status: string; created_at: string; updated_at: string };
@@ -97,6 +97,10 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
       </section>
       <section className="panel reserved-control"><span className="eyebrow">RESERVED GLOBAL CONTROL</span><h2>Pause all AI messaging</h2><p>This location is reserved for a future agency-wide emergency control. It has no action or side effect in Phase 1G.</p><button type="button" disabled>Not enabled</button><small>Phase 1H must define authority, confirmation, audit and recovery semantics before activation.</small></section>
     </div>
+
+    <section className="panel admin-section"><div className="section-heading"><div><h2>Onboard a canonical creator workspace</h2><p>Creates identity, one agency-administrator membership and an immutable receipt only. It does not import legacy data, create accounts or connect credentials.</p></div><span>Metadata only</span></div>
+      <form action={onboardCreatorWorkspaceAction} className="inline-form admin-membership-form"><label>Canonical ID<input name="creatorId" required maxLength={64} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="thrill-noir" /></label><label>Creator name<input name="name" required maxLength={100} placeholder="THRILL NOIR" /></label><label>Initials<input name="initials" required maxLength={8} pattern="[A-Za-z0-9]+" placeholder="TN" /></label><label>Accent<input name="accent" defaultValue="#6f4df6" required pattern="#[0-9a-fA-F]{6}" /></label><input type="hidden" name="slug" value="" /><button className="primary" type="submit">Create canonical workspace</button></form>
+    </section>
 
     <section className="panel admin-section"><div className="section-heading"><div><h2>{selectedCreator.name} memberships</h2><p>Cloudflare Access establishes identity. These creator-scoped memberships establish authorization.</p></div><span>Administrative action</span></div>
       {memberships.results.map((membership) => <article className="identity-row admin-identity-row" key={membership.user_email}><div><strong>{membership.display_name}</strong><small>{membership.user_email}</small><span>{creatorRoleLabel(membership.role)} · {statusLabel(membership.status)}</span></div>

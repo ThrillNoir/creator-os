@@ -2,6 +2,7 @@ export type InternalServiceIdentity = {
   credentialId: string;
   serviceName: string;
   creatorId: string;
+  capability: string;
 };
 
 async function sha256(value: string) {
@@ -26,18 +27,21 @@ export async function requireInternalServiceForCreator(
   db: D1Database,
   creatorId: string,
   expectedServiceName: string,
+  expectedCapability: string,
 ): Promise<InternalServiceIdentity> {
-  if (!creatorId || !expectedServiceName) throw new Error("Internal service credential is invalid.");
+  if (!creatorId || !expectedServiceName || !expectedCapability || request.headers.get("x-thot-os-service-capability") !== expectedCapability) throw new Error("Internal service credential is invalid.");
   const tokenHash = await sha256(bearerToken(request));
-  const credential = await db.prepare(`SELECT s.id,s.service_name
-    FROM service_credentials s
-    JOIN service_creator_grants g ON g.service_credential_id=s.id
-    WHERE s.token_hash=? AND s.service_name=? AND s.status='active'
-      AND (s.expires_at IS NULL OR unixepoch(s.expires_at)>unixepoch(CURRENT_TIMESTAMP))
+  const credential = await db.prepare(`SELECT c.id,p.principal_name
+    FROM service_principal_credentials c
+    JOIN service_principals p ON p.id=c.service_principal_id
+    JOIN service_principal_creator_grants g ON g.service_principal_id=p.id
+    WHERE c.token_hash=? AND p.principal_name=? AND c.status='active' AND p.status='active'
+      AND (c.expires_at IS NULL OR unixepoch(c.expires_at)>unixepoch(CURRENT_TIMESTAMP))
       AND g.creator_id=? AND g.status='active'
-    LIMIT 1`).bind(tokenHash, expectedServiceName, creatorId).first<{ id: string; service_name: string }>();
+      AND g.capability=?
+    LIMIT 1`).bind(tokenHash, expectedServiceName, creatorId, expectedCapability).first<{ id: string; principal_name: string }>();
   if (!credential) throw new Error("Internal service credential is invalid.");
-  return { credentialId: credential.id, serviceName: credential.service_name, creatorId };
+  return { credentialId: credential.id, serviceName: credential.principal_name, creatorId, capability: expectedCapability };
 }
 
 /** Records the authenticated machine principal before the route performs work. */
@@ -54,6 +58,6 @@ export function internalServiceAuditStatement(
       identity.creatorId,
       `service:${identity.serviceName}`,
       route,
-      JSON.stringify({ credentialId: identity.credentialId, route }),
+      JSON.stringify({ credentialId: identity.credentialId, capability: identity.capability, route }),
     );
 }

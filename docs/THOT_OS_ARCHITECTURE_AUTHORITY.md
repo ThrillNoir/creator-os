@@ -2,6 +2,8 @@
 
 **Decision phase:** analyse → compare → decide → design only.
 
+> **Phase 2A boundary (2026-08-16):** the canonical Cloud control-plane implementation lives in `cloudflare/thot-os-next` with D1/R2. The root SQLite application is feature-frozen for canonical product work and remains a protected archive/migration source or future Local Node capability. See [`THOT_OS_CANONICAL_CONTROL_PLANE.md`](THOT_OS_CANONICAL_CONTROL_PLANE.md) for the current staging gate and workspace contract.
+
 No application code, infrastructure, data, configuration, deployment, credential, queue, or migration was changed while preparing this document. This is a decision record derived from the verified audit and Phase 0 protection record, not an implementation plan that is already in effect.
 
 ## Short answer

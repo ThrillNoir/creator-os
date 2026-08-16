@@ -18,6 +18,15 @@ export function isCreatorPortalRole(role: string): role is "creator" | "viewer" 
   return role === "creator" || role === "viewer";
 }
 
+export function isAgencyStaffRole(role: string): role is "agency_admin" | "operator" {
+  return role === "agency_admin" || role === "operator";
+}
+
+export function selectableWorkspaceMemberships(memberships: readonly CreatorMembership[]) {
+  if (isCreatorPortalIdentity(memberships)) return [];
+  return memberships.filter((membership) => isAgencyStaffRole(membership.role));
+}
+
 export function isCreatorPortalIdentity(memberships: readonly CreatorMembership[]) {
   return memberships.some((membership) => isCreatorPortalRole(membership.role));
 }
