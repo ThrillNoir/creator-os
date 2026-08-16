@@ -14,6 +14,34 @@ The repository-owned executor applies an explicit inclusive range while preservi
 - Each selected migration is executed in a restrictive temporary file and then deleted. Repository migration files are never moved, hidden, copied into the configured directory, or altered.
 - On failure, execution stops immediately. Earlier successfully applied migrations remain applied; the failing unit follows D1 file-execution rollback semantics. The receipt records the verified post-state. Resume is only a new reviewed plan from that exact partial state with a new backup.
 
+## Machine-readable CLI boundary
+
+Plans, approved plans, policy files, and export receipts are trusted local
+evidence inputs. Each must be exactly one JSON document; a malformed,
+concatenated, or trailing-text file is rejected. The executor writes a real
+final newline, never a literal `\\n` trailer.
+
+Cloudflare/Wrangler output is a separate, untrusted external boundary. The
+executor captures stdout and stderr separately, requires an exit status of
+zero and empty stderr, then parses stdout as exactly one JSON document. It
+validates the D1 command-specific schema before trusting it: `d1 info` must
+return a single UUID-bearing object, and a D1 query must return exactly one
+successful result envelope with an array of rows. Migration history rows must
+have positive, strictly increasing IDs and nonempty names/timestamps.
+
+It deliberately rejects empty/truncated JSON, JSONL or concatenated objects,
+logging or warning text on stdout, ANSI/control contamination, nonzero exits,
+unexpected stderr, and ambiguous/malformed result envelopes. It never searches
+for braces or attempts to recover a JSON fragment from mixed output. If a
+future Wrangler version changes this output contract, the safe action is to
+abort and add a reviewed fixture/schema update—not to weaken parsing during a
+release.
+
+If an evidence file fails strict JSON parsing, discard it and generate a new
+plan or export; do not edit the file or reuse the release. Diagnostic output is
+limited to the operation category and failure class so credentials and raw
+remote output are not placed in receipts.
+
 The executor has no service-auth, credential, Worker, traffic, principal, grant, or secret logic. Release-specific checks remain external reviewed gates.
 
 ## Phase 2A EXPAND example
