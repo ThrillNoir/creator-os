@@ -1,4 +1,5 @@
 export type InternalServiceIdentity = {
+  principalId: string;
   credentialId: string;
   serviceName: string;
   creatorId: string;
@@ -31,7 +32,7 @@ export async function requireInternalServiceForCreator(
 ): Promise<InternalServiceIdentity> {
   if (!creatorId || !expectedServiceName || !expectedCapability || request.headers.get("x-thot-os-service-capability") !== expectedCapability) throw new Error("Internal service credential is invalid.");
   const tokenHash = await sha256(bearerToken(request));
-  const credential = await db.prepare(`SELECT c.id,p.principal_name
+  const credential = await db.prepare(`SELECT c.id,p.id AS principal_id,p.principal_name
     FROM service_principal_credentials c
     JOIN service_principals p ON p.id=c.service_principal_id
     JOIN service_principal_creator_grants g ON g.service_principal_id=p.id
@@ -39,12 +40,12 @@ export async function requireInternalServiceForCreator(
       AND (c.expires_at IS NULL OR unixepoch(c.expires_at)>unixepoch(CURRENT_TIMESTAMP))
       AND g.creator_id=? AND g.status='active'
       AND g.capability=?
-    LIMIT 1`).bind(tokenHash, expectedServiceName, creatorId, expectedCapability).first<{ id: string; principal_name: string }>();
+    LIMIT 1`).bind(tokenHash, expectedServiceName, creatorId, expectedCapability).first<{ id: string; principal_id: string; principal_name: string }>();
   if (!credential) throw new Error("Internal service credential is invalid.");
-  return { credentialId: credential.id, serviceName: credential.principal_name, creatorId, capability: expectedCapability };
+  return { principalId: credential.principal_id, credentialId: credential.id, serviceName: credential.principal_name, creatorId, capability: expectedCapability };
 }
 
-/** Records the authenticated machine principal before the route performs work. */
+/** Records a canonical request. Migration 0031 accepts canonical and legacy scoped actors. */
 export function internalServiceAuditStatement(
   db: D1Database,
   identity: InternalServiceIdentity,
@@ -58,6 +59,6 @@ export function internalServiceAuditStatement(
       identity.creatorId,
       `service:${identity.serviceName}`,
       route,
-      JSON.stringify({ credentialId: identity.credentialId, capability: identity.capability, route }),
+      JSON.stringify({ authPath: "canonical", capability: identity.capability, route }),
     );
 }

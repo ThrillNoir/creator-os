@@ -37,7 +37,7 @@ async function databasePath(directory) {
   return null;
 }
 
-test("0028 migration ledger replays locally and is creator-scoped and append-only", async () => {
+test("expand migrations retain legacy service audit while adding canonical principals and activation records", async () => {
   assert.ok(migrationNames.includes("0028_migration_ledger.sql"));
   const local = await workspace();
   try {
@@ -76,10 +76,19 @@ test("0028 migration ledger replays locally and is creator-scoped and append-onl
       db.prepare("INSERT INTO service_principal_creator_grants (service_principal_id,creator_id,capability) VALUES ('web-reddit','adelaide','reddit.status.read')").run();
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM service_principal_credentials WHERE service_principal_id='web-reddit' AND status='active'").get().count, 2);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM service_principal_creator_grants WHERE creator_id='adelaide' AND capability='reddit.status.read'").get().count, 1);
+      db.prepare("INSERT INTO service_credentials (id,service_name,token_hash) VALUES ('legacy-reddit','legacy-reddit',?)").run("d".repeat(64));
+      db.prepare("INSERT INTO service_creator_grants (service_credential_id,creator_id) VALUES ('legacy-reddit','adelaide')").run();
+      db.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES ('legacy-request','adelaide','service:legacy-reddit','service','legacy_request','/status','{}')").run();
       db.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES ('principal-request','adelaide','service:thot-os-web-reddit','service','internal_service_request_authorized','/status','{}')").run();
       assert.throws(() => db.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES ('principal-foreign','bryshanagy','service:thot-os-web-reddit','service','internal_service_request_authorized','/status','{}')").run(), /audit_service_actor_scope_invalid/);
       db.prepare("INSERT INTO service_principal_audit_events (id,service_principal_id,credential_id,creator_id,event_type,actor_identity) VALUES ('principal-event','web-reddit','web-reddit-current','adelaide','credential_created','fixture-operator')").run();
       assert.throws(() => db.prepare("UPDATE service_principal_audit_events SET event_type='changed' WHERE id='principal-event'").run(), /service_principal_audit_events_append_only/);
+      db.prepare(`INSERT INTO service_auth_activation_runs
+        (id,environment,plan_sha256,registry_sha256,backup_receipt_sha256,target_database_id,target_migration_state_sha256,git_sha,git_branch,operator_identity)
+        VALUES ('activation-fixture','staging',?,?,?,?,?,?,?,?)`).run(checksum, checksum, checksum, "174532e8-5ada-4e30-abba-1276b3540b3f", checksum, "fixture-git", "fixture-branch", "fixture-operator");
+      db.prepare("INSERT INTO service_auth_activation_steps (id,activation_id,step) VALUES ('activation-planned','activation-fixture','PLANNED')").run();
+      db.prepare("INSERT INTO service_auth_telemetry (id,creator_id,principal_name,auth_path,capability,route,outcome) VALUES ('canonical-telemetry','adelaide','thot-os-web-reddit','canonical','reddit.status.read','/status','allowed')").run();
+      assert.throws(() => db.prepare("UPDATE service_auth_activation_runs SET git_sha='changed' WHERE id='activation-fixture'").run(), /service_auth_activation_runs_append_only/);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM assets").get().count, beforeAssets);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM social_posts").get().count, beforePosts);
       assert.equal(db.pragma("quick_check", { simple: true }), "ok");

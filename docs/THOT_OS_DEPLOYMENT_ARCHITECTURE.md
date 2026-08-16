@@ -152,3 +152,12 @@ Current interactive developer authentication is broader than a deploy identity s
 None are required to establish the local collision safeguard, registry, preflight, provenance design, receipt design, or CI validation. No remote resource was created, renamed, modified, deployed, or deleted in Phase 1A.
 
 Before the next real staging deployment, an operator must perform the controlled flow above and confirm the live Worker inventory and Access policy immediately before deployment. A later dedicated phase must decide whether to provision the uniquely named legacy Worker (only if it is genuinely needed) or retire its source after exit criteria are met. Production requires a separate provisioning and security review; it must never reuse staging names, identifiers, queues, or credentials.
+# Canonical service-auth activation
+
+The service-auth activation plan is not a deployment. Before any Worker traffic
+changes, run the staging-only plan described in
+[THOT_OS_SERVICE_AUTH_CUTOVER.md](THOT_OS_SERVICE_AUTH_CUTOVER.md), apply only
+reviewed additive migrations, and retain a fresh D1 backup receipt. Never use
+`wrangler secret put` as an isolated activation action because it creates a
+Worker version; stage secrets with the compatible Web release and record the
+rollback state.

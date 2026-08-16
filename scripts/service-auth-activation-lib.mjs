@@ -1,0 +1,91 @@
+import crypto from "node:crypto";
+
+export const ACTIVATION_STATES = new Set(["PLANNED", "SECRET_STAGED", "D1_ACTIVE", "VERIFIED", "ACTIVE", "FAILED", "ROLLBACK_REQUIRED", "REVOKED"]);
+
+export function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+export function sha256(value) {
+  return crypto.createHash("sha256").update(typeof value === "string" ? value : stableJson(value)).digest("hex");
+}
+
+export function activationConfirmation(activationId, planSha256) {
+  return `${activationId}:${planSha256.slice(0, 12)}`;
+}
+
+export function validateActivation({ activation, contract, registry }) {
+  if (activation?.schemaVersion !== 1 || activation.environment !== "staging") throw new Error("Activation is restricted to staging.");
+  if (!/^[a-z0-9][a-z0-9-]{2,100}$/i.test(activation.activationId ?? "")) throw new Error("Activation id is invalid.");
+  const staging = registry?.environments?.staging;
+  if (!staging?.provisioned || !staging?.deployable || registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Only the explicit staging target may be activated.");
+  const d1 = staging.resources?.d1?.[activation.expected?.databaseName];
+  if (!d1 || d1.id !== activation.expected.databaseId) throw new Error("Activation D1 identity does not match the deployment registry.");
+  const principals = new Map((contract?.principals ?? []).map((entry) => [entry.principalName, entry]));
+  if (principals.size !== 4 || new Set([...principals.values()].map((entry) => entry.secretName)).size !== 4) throw new Error("Exactly four distinct service principals and secret names are required.");
+  const grants = [];
+  for (const grant of activation.grants ?? []) {
+    const principal = principals.get(grant.principalName);
+    if (!principal || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(grant.creatorId ?? "") || !Array.isArray(grant.capabilities) || !grant.capabilities.length) throw new Error("Activation grant is invalid.");
+    for (const capability of grant.capabilities) {
+      if (!principal.capabilities.includes(capability)) throw new Error(`Capability ${capability} is not permitted for ${grant.principalName}.`);
+      grants.push({ principalName: grant.principalName, creatorId: grant.creatorId, capability });
+    }
+  }
+  if (!grants.length || new Set(grants.map((grant) => `${grant.principalName}:${grant.creatorId}:${grant.capability}`)).size !== grants.length) throw new Error("Activation grants must be explicit and unique.");
+  return { principals: [...principals.values()], grants };
+}
+
+export function buildActivationPlan({ activation, contract, registry, observedMigrations, git }) {
+  const { principals, grants } = validateActivation({ activation, contract, registry });
+  const requiredMigrations = activation.expected.expandMigrations;
+  const remoteReady = requiredMigrations.every((name) => observedMigrations.includes(name)) && observedMigrations.at(-1) === requiredMigrations.at(-1);
+  const remoteBaseline = observedMigrations.at(-1) === "0027_reddit_post_flairs.sql";
+  if (!remoteReady && !remoteBaseline) throw new Error("Remote migration state is neither the approved baseline nor the approved expanded state.");
+  const plan = {
+    schemaVersion: 1,
+    mode: "plan",
+    activationId: activation.activationId,
+    environment: "staging",
+    database: activation.expected,
+    git,
+    observedMigrations,
+    activationReady: remoteReady,
+    blockingPrecondition: remoteReady ? null : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED",
+    principals: principals.map(({ id, principalName, secretName, receiver, capabilities }) => ({ id, principalName, secretName, receiver, capabilities })),
+    grants,
+    operationsIfApplied: {
+      stagedWebSecrets: principals.map(({ secretName, principalName }) => ({ worker: "thot-os-staging", secretName, principalName })),
+      d1Principals: principals.length,
+      d1CredentialHashes: principals.length,
+      d1CreatorCapabilityGrants: grants.length,
+      auditSteps: ["PLANNED", "SECRET_STAGED", "D1_ACTIVE", "VERIFIED", "ACTIVE"],
+      legacyAuthenticationRemoved: false,
+    },
+    rollback: ["Do not route traffic to the staged web version if D1 activation fails.", "If verification fails after traffic change, roll Workers back before revoking canonical credentials.", "Record ROLLBACK_REQUIRED/REVOKED as append-only activation steps; do not delete audit history."],
+  };
+  plan.planSha256 = sha256(plan);
+  plan.confirmation = activationConfirmation(plan.activationId, plan.planSha256);
+  return plan;
+}
+
+export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, backupReceipt, registry }) {
+  if (plan?.mode !== "plan" || plan.environment !== "staging" || !plan.activationReady) throw new Error("Activation apply requires an expanded staging plan.");
+  if (confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) throw new Error("Activation confirmation does not match the approved plan.");
+  if (!cleanGit || currentGit?.sha !== plan.git?.sha || currentGit?.branch !== plan.git?.branch) throw new Error("Activation apply requires the exact clean Git identity used for the plan.");
+  if (!backupReceipt?.sha256 || backupReceipt.environment !== "staging" || backupReceipt.databaseId !== plan.database.databaseId) throw new Error("Activation apply requires a fresh matching staging backup receipt.");
+  if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for activation.");
+  return true;
+}
+
+export function redactActivationReceipt(receipt) {
+  const visit = (value, key = "") => {
+    if (/^(token|bearer|credential|tokenHash|credentialHash|secret)$/i.test(key)) throw new Error("Activation receipt contains prohibited credential material.");
+    if (Array.isArray(value)) value.forEach((entry) => visit(entry));
+    else if (value && typeof value === "object") Object.entries(value).forEach(([childKey, childValue]) => visit(childValue, childKey));
+  };
+  visit(receipt);
+  return receipt;
+}

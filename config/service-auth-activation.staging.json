@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "activationId": "staging-canonical-service-auth-v1",
+  "environment": "staging",
+  "operatorIdentity": "approved-release-operator",
+  "expected": {
+    "databaseName": "thot-os-staging",
+    "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+    "expandMigrations": [
+      "0028_migration_ledger.sql",
+      "0029_service_principal_capabilities.sql",
+      "0030_canonical_control_plane.sql",
+      "0031_service_auth_activation_support.sql"
+    ]
+  },
+  "grants": [
+    { "principalName": "thot-os-web-instagram", "creatorId": "adelaide", "capabilities": ["instagram.status.read", "instagram.connection.manage", "instagram.publish.execute", "instagram.sync.execute", "instagram.messages.sync", "instagram.messages.write"] },
+    { "principalName": "thot-os-web-reddit", "creatorId": "adelaide", "capabilities": ["reddit.status.read", "reddit.connection.manage", "reddit.communities.read", "reddit.publish.execute"] },
+    { "principalName": "thot-os-web-telegram", "creatorId": "adelaide", "capabilities": ["telegram.status.read", "telegram.connection.manage", "telegram.messages.sync", "telegram.messages.write"] },
+    { "principalName": "thot-os-web-vault-catalogue", "creatorId": "adelaide", "capabilities": ["vault.catalogue.refresh"] }
+  ]
+}

@@ -1,9 +1,11 @@
 PRAGMA foreign_keys = ON;
 
--- Phase 2A: replace the one-credential-per-service compatibility model with
--- named principals, independently revocable credential rotations, and explicit
--- per-creator capabilities. The Phase 0018/0019 tables remain untouched for
--- historical compatibility and are not an authorization fallback.
+-- Phase 2A.2 EXPAND: add named principals, independently revocable credential
+-- rotations, and explicit per-creator capabilities. The Phase 0018/0019
+-- service tables and identity_audit_service_scope trigger deliberately remain
+-- untouched: deployed staging Workers still depend on that legacy audit path.
+-- Canonical requests write service_principal_audit_events instead. Replacing
+-- the legacy trigger is a later, separately approved CONTRACT migration.
 CREATE TABLE IF NOT EXISTS service_principals (
   id TEXT PRIMARY KEY,
   principal_name TEXT NOT NULL UNIQUE,
@@ -65,25 +67,4 @@ CREATE TRIGGER service_principal_audit_events_append_only_delete
 BEFORE DELETE ON service_principal_audit_events
 BEGIN
   SELECT RAISE(ABORT,'service_principal_audit_events_append_only');
-END;
-
--- The Phase 0019 trigger protected service provenance against the retired
--- one-credential-per-name model. Rebind it atomically to the capability model
--- so a verified request can continue to write its required identity receipt.
-DROP TRIGGER IF EXISTS identity_audit_service_scope;
-CREATE TRIGGER identity_audit_service_scope
-BEFORE INSERT ON identity_audit_events
-WHEN NEW.actor_role='service' AND NOT EXISTS (
-  SELECT 1 FROM service_principal_credentials c
-  JOIN service_principals p ON p.id=c.service_principal_id
-  JOIN service_principal_creator_grants g ON g.service_principal_id=p.id
-  WHERE lower(NEW.actor_email)=lower('service:' || p.principal_name)
-    AND g.creator_id=NEW.creator_id
-    AND p.status='active'
-    AND c.status='active'
-    AND g.status='active'
-    AND (c.expires_at IS NULL OR unixepoch(c.expires_at)>unixepoch(CURRENT_TIMESTAMP))
-)
-BEGIN
-  SELECT RAISE(ABORT, 'audit_service_actor_scope_invalid');
 END;

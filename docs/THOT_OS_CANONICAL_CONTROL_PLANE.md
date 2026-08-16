@@ -90,3 +90,10 @@ At present the service-principal and deployment gates are not satisfied. Therefo
 ## Legacy boundary
 
 The root SQLite application and `.creator-os` state remain protected archive/migration sources. They may not receive new canonical product features. Root-local browser automation, CLI execution and read-only source media work are future Local Node candidates; they must return creator-scoped receipts to D1 and never become a second operational database.
+# Service-auth release boundary
+
+Canonical service principals are an expand-only staging contract until the
+separate service-auth contract phase. See
+[the cutover runbook](THOT_OS_SERVICE_AUTH_CUTOVER.md). The canonical Web
+Worker is the only holder of its four outbound service credentials; grants are
+per principal, creator, and capability, never global.

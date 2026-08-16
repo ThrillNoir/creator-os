@@ -66,13 +66,14 @@ test("invalid or cross-creator internal service identities are rejected before W
       return {
         bind(...values) {
           calls.push({ sql, values });
-          return { first: async () => values[2] === "adelaide" && values[1] === "thot-os-web-reddit" && values[3] === "reddit.status.read" ? { id: "reddit-credential", principal_name: "thot-os-web-reddit" } : null };
+          return { first: async () => values[2] === "adelaide" && values[1] === "thot-os-web-reddit" && values[3] === "reddit.status.read" ? { id: "reddit-credential", principal_id: "reddit-principal", principal_name: "thot-os-web-reddit" } : null };
         },
       };
     },
   };
   const request = new Request("https://reddit-scheduler/status?creator=adelaide", { headers: { authorization: `Bearer ${"x".repeat(48)}`, "x-thot-os-service-capability": "reddit.status.read" } });
   assert.deepEqual(await requireInternalServiceForCreator(request, DB, "adelaide", "thot-os-web-reddit", "reddit.status.read"), {
+    principalId: "reddit-principal",
     credentialId: "reddit-credential", serviceName: "thot-os-web-reddit", creatorId: "adelaide", capability: "reddit.status.read",
   });
   await assert.rejects(() => requireInternalServiceForCreator(request, DB, "foreign", "thot-os-web-reddit", "reddit.status.read"), /invalid/);
