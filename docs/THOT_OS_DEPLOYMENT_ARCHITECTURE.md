@@ -67,6 +67,10 @@ or activate credentials. The compatibility migration is a distinct approval
 because SQLite replaces triggers by drop/recreate. Activation and Worker
 traffic changes require both prior boundaries; production remains disabled.
 
+The EXPAND boundary must use the repository-owned bounded executor described
+in [THOT_OS_BOUNDED_D1_MIGRATIONS.md](THOT_OS_BOUNDED_D1_MIGRATIONS.md), not
+`wrangler d1 migrations apply`: normal Wrangler would also apply `0032`.
+
 `npm run deploy` can no longer deploy ambiguously. With no arguments it fails. The only Phase 1A-supported form is a non-mutating plan:
 
 ```sh
