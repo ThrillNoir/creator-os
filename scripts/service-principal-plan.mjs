@@ -77,7 +77,7 @@ export function buildServicePrincipalPlan({ environment, contract, registry, gra
     grants: normalizedGrants,
     requiredRemoteGates: [
       "Verify the staging D1 identity and take a fresh recoverable backup/export.",
-      "Apply reviewed expand migrations 0028, 0029, 0030, and 0031 only after the migration replay and staging preflight pass; do not remove the legacy branch.",
+      "Apply reviewed EXPAND migrations 0028, 0029, 0030, and 0031, stop and verify the unchanged legacy trigger, then apply separately approved COMPATIBILITY migration 0032 before activation; do not remove the legacy branch.",
       "Generate one high-entropy credential per principal outside source control; do not print, commit, or place it in this plan.",
       "Store each raw credential only as its named canonical-web Cloudflare secret and store only its SHA-256 hash in service_principal_credentials.",
       "Create only the explicitly listed creator/capability grants and append lifecycle audit receipts.",

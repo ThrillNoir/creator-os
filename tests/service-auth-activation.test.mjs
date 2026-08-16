@@ -12,6 +12,8 @@ const baseline = Array.from({ length: 27 }, (_, index) => `${String(index + 1).p
 test("service-auth activation plan is redacted, deterministic, staging-only, and blocked before expansion", async () => {
   const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
   const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: baseline, git: { sha: "a".repeat(40), branch: "audit/test" } });
+  assert.equal(plan.expandReady, false);
+  assert.equal(plan.compatibilityReady, false);
   assert.equal(plan.activationReady, false);
   assert.equal(plan.principals.length, 4);
   assert.equal(plan.grants.length, 15);
@@ -23,9 +25,17 @@ test("service-auth activation plan is redacted, deterministic, staging-only, and
   assert.throws(() => buildActivationPlan({ activation: { ...activation, environment: "production" }, contract, registry, observedMigrations: baseline, git: {} }), /staging/i);
 });
 
-test("activation apply gates fail closed for bad confirmation, dirty source, target, and backup", async () => {
+test("activation requires COMPATIBILITY after EXPAND and then fail-closes on other gates", async () => {
   const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
-  const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: activation.expected.expandMigrations, git: { sha: "a".repeat(40), branch: "audit/test" } });
+  const expanded = buildActivationPlan({ activation, contract, registry, observedMigrations: activation.expected.expandMigrations, git: { sha: "a".repeat(40), branch: "audit/test" } });
+  assert.equal(expanded.expandReady, true);
+  assert.equal(expanded.compatibilityReady, false);
+  assert.equal(expanded.activationReady, false);
+  assert.throws(() => assertApplyGates({ plan: expanded, confirmation: expanded.confirmation, cleanGit: true, currentGit: expanded.git, backupReceipt: { sha256: "b".repeat(64), environment: "staging", databaseId: activation.expected.databaseId }, registry }), /compatibility-ready/i);
+  const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
+  assert.equal(plan.expandReady, true);
+  assert.equal(plan.compatibilityReady, true);
+  assert.equal(plan.activationReady, true);
   const base = { plan, cleanGit: true, currentGit: plan.git, backupReceipt: { sha256: "b".repeat(64), environment: "staging", databaseId: activation.expected.databaseId }, registry };
   assert.equal(assertApplyGates({ ...base, confirmation: plan.confirmation }), true);
   assert.throws(() => assertApplyGates({ ...base, confirmation: "wrong" }), /confirmation/i);

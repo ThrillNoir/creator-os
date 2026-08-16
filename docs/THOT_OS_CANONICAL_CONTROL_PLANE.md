@@ -54,6 +54,11 @@ The control-plane overview derives a normalized status without rewriting legacy 
 
 ## Service principals
 
+The service-auth migration boundary is explicit: `0028`–`0031` are dormant
+EXPAND schema with a safe stop after `0031`; `0032` is the separately approved
+COMPATIBILITY trigger change. Activation is forbidden before both boundaries
+have been verified.
+
 The intended current principals are named web-to-worker callers for Instagram scheduling, Reddit scheduling, Telegram bridge, and Vault catalogue work. Each credential must be independently provisioned, hashed before insertion into D1, explicitly granted to named creators, capability-scoped, auditable, revocable, and rotated without printing its secret.
 
 The provisioning planner is local-only until an approved staging release. It validates an allowed service/capability/creator plan and emits a redacted receipt/command plan; it never reads or prints an existing Cloudflare secret. Staging secret provisioning is an operator approval gate because it creates credential material and must be coordinated atomically with sender and receiver Worker deployments.

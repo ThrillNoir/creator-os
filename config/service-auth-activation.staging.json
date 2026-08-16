@@ -11,7 +11,8 @@
       "0029_service_principal_capabilities.sql",
       "0030_canonical_control_plane.sql",
       "0031_service_auth_activation_support.sql"
-    ]
+    ],
+    "compatibilityMigrations": ["0032_service_auth_compatibility.sql"]
   },
   "grants": [
     { "principalName": "thot-os-web-instagram", "creatorId": "adelaide", "capabilities": ["instagram.status.read", "instagram.connection.manage", "instagram.publish.execute", "instagram.sync.execute", "instagram.messages.sync", "instagram.messages.write"] },

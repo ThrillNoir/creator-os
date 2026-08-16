@@ -17,7 +17,9 @@ export function activationConfirmation(activationId, planSha256) {
 }
 
 export function planDigest(plan) {
-  const { planSha256: _planSha256, confirmation: _confirmation, ...body } = plan;
+  const body = { ...plan };
+  delete body.planSha256;
+  delete body.confirmation;
   return sha256(body);
 }
 
@@ -45,10 +47,15 @@ export function validateActivation({ activation, contract, registry }) {
 
 export function buildActivationPlan({ activation, contract, registry, observedMigrations, git }) {
   const { principals, grants } = validateActivation({ activation, contract, registry });
-  const requiredMigrations = activation.expected.expandMigrations;
-  const remoteReady = requiredMigrations.every((name) => observedMigrations.includes(name)) && observedMigrations.at(-1) === requiredMigrations.at(-1);
+  const expandMigrations = activation.expected.expandMigrations;
+  const compatibilityMigrations = activation.expected.compatibilityMigrations;
+  if (!Array.isArray(expandMigrations) || !expandMigrations.length || !Array.isArray(compatibilityMigrations) || !compatibilityMigrations.length) throw new Error("Activation requires explicit EXPAND and COMPATIBILITY migration contracts.");
+  const expandReady = expandMigrations.every((name) => observedMigrations.includes(name))
+    && [expandMigrations.at(-1), compatibilityMigrations.at(-1)].includes(observedMigrations.at(-1));
+  const compatibilityReady = expandReady && compatibilityMigrations.every((name) => observedMigrations.includes(name))
+    && observedMigrations.at(-1) === compatibilityMigrations.at(-1);
   const remoteBaseline = observedMigrations.at(-1) === "0027_reddit_post_flairs.sql";
-  if (!remoteReady && !remoteBaseline) throw new Error("Remote migration state is neither the approved baseline nor the approved expanded state.");
+  if (!compatibilityReady && !expandReady && !remoteBaseline) throw new Error("Remote migration state is outside the approved baseline, EXPAND, and COMPATIBILITY boundaries.");
   const plan = {
     schemaVersion: 1,
     mode: "plan",
@@ -57,8 +64,10 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
     database: activation.expected,
     git,
     observedMigrations,
-    activationReady: remoteReady,
-    blockingPrecondition: remoteReady ? null : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED",
+    expandReady,
+    compatibilityReady,
+    activationReady: compatibilityReady,
+    blockingPrecondition: compatibilityReady ? null : expandReady ? "COMPATIBILITY_MIGRATION_0032_REQUIRED" : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED",
     principals: principals.map(({ id, principalName, secretName, receiver, capabilities }) => ({ id, principalName, secretName, receiver, capabilities })),
     grants,
     operationsIfApplied: {
@@ -77,7 +86,7 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
 }
 
 export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, backupReceipt, registry }) {
-  if (plan?.mode !== "plan" || plan.environment !== "staging" || !plan.activationReady) throw new Error("Activation apply requires an expanded staging plan.");
+  if (plan?.mode !== "plan" || plan.environment !== "staging" || !plan.expandReady || !plan.compatibilityReady || !plan.activationReady) throw new Error("Activation apply requires both expanded and compatibility-ready staging state.");
   if (confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) throw new Error("Activation confirmation does not match the approved plan.");
   if (!cleanGit || currentGit?.sha !== plan.git?.sha || currentGit?.branch !== plan.git?.branch) throw new Error("Activation apply requires the exact clean Git identity used for the plan.");
   if (!backupReceipt?.sha256 || backupReceipt.environment !== "staging" || backupReceipt.databaseId !== plan.database.databaseId) throw new Error("Activation apply requires a fresh matching staging backup receipt.");

@@ -37,8 +37,9 @@ async function databasePath(directory) {
   return null;
 }
 
-test("expand migrations retain legacy service audit while adding canonical principals and activation records", async () => {
+test("full replay through the explicit compatibility boundary accepts both scoped audit models", async () => {
   assert.ok(migrationNames.includes("0028_migration_ledger.sql"));
+  assert.ok(migrationNames.includes("0032_service_auth_compatibility.sql"));
   const local = await workspace();
   try {
     const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-0028-local-repro", "--local", "--persist-to", local.state], {
@@ -52,6 +53,7 @@ test("expand migrations retain legacy service audit while adding canonical princ
     const db = new Database(file);
     try {
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, migrationNames.length);
+      assert.match(db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='identity_audit_service_scope'").get().sql, /service_principal_credentials/);
       const beforeAssets = db.prepare("SELECT COUNT(*) AS count FROM assets").get().count;
       const beforePosts = db.prepare("SELECT COUNT(*) AS count FROM social_posts").get().count;
       db.prepare(`INSERT INTO migration_ledger_runs

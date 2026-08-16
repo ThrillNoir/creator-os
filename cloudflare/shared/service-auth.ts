@@ -45,7 +45,7 @@ export async function requireInternalServiceForCreator(
   return { principalId: credential.principal_id, credentialId: credential.id, serviceName: credential.principal_name, creatorId, capability: expectedCapability };
 }
 
-/** Records a canonical request. Migration 0031 accepts canonical and legacy scoped actors. */
+/** Records a canonical request. Compatibility migration 0032 accepts canonical and legacy scoped actors. */
 export function internalServiceAuditStatement(
   db: D1Database,
   identity: InternalServiceIdentity,

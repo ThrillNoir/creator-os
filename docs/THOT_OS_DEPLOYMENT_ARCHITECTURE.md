@@ -58,6 +58,15 @@ The preview queue and DLQ have the vault bridge consumer. The intake and AI queu
 
 ## Guarded deployment model
 
+### Service-auth release boundaries
+
+The Phase 2A sequence is `EXPAND (0028–0031) → verify → COMPATIBILITY (0032)
+→ verify → ACTIVATE → CUTOVER → CONTRACT`. The EXPAND release may stop safely
+after `0031`: it does not alter the live `identity_audit_service_scope` trigger
+or activate credentials. The compatibility migration is a distinct approval
+because SQLite replaces triggers by drop/recreate. Activation and Worker
+traffic changes require both prior boundaries; production remains disabled.
+
 `npm run deploy` can no longer deploy ambiguously. With no arguments it fails. The only Phase 1A-supported form is a non-mutating plan:
 
 ```sh

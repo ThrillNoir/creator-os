@@ -1,10 +1,9 @@
 PRAGMA foreign_keys = ON;
 
--- Phase 2A.2 EXPAND: activation bookkeeping and telemetry are separate from
--- identity_audit_events. These records contain no bearer values or credential
--- hashes. The trigger below is a reviewed compatibility change (SQLite cannot
--- alter a trigger in place): it preserves the Phase 0019 legacy branch and
--- adds a separately scoped canonical branch. It is not a legacy contract.
+-- Phase 2A.3 EXPAND: activation bookkeeping and telemetry are dormant schema.
+-- This migration deliberately does not read, drop, recreate, or otherwise
+-- change identity_audit_service_scope. Compatibility behaviour belongs solely
+-- to the separately reviewed 0032 migration.
 CREATE TABLE IF NOT EXISTS service_auth_activation_runs (
   id TEXT PRIMARY KEY,
   environment TEXT NOT NULL CHECK(environment='staging'),
@@ -49,39 +48,6 @@ CREATE INDEX IF NOT EXISTS service_auth_telemetry_path_observed
 
 CREATE INDEX IF NOT EXISTS service_auth_telemetry_creator_observed
   ON service_auth_telemetry(creator_id, observed_at DESC);
-
--- During the overlap a service audit actor is valid only through one of the
--- two explicitly scoped credential models. Neither branch grants global
--- creator authority; receiver code still verifies the route capability before
--- it writes an audit event. A later CONTRACT migration may remove the legacy
--- branch only after the documented zero-usage window.
-DROP TRIGGER IF EXISTS identity_audit_service_scope;
-CREATE TRIGGER identity_audit_service_scope
-BEFORE INSERT ON identity_audit_events
-WHEN NEW.actor_role='service'
-  AND NOT EXISTS (
-    SELECT 1 FROM service_credentials s
-    JOIN service_creator_grants g ON g.service_credential_id=s.id
-    WHERE lower(NEW.actor_email)=lower('service:' || s.service_name)
-      AND g.creator_id=NEW.creator_id
-      AND s.status='active'
-      AND g.status='active'
-      AND (s.expires_at IS NULL OR unixepoch(s.expires_at)>unixepoch(CURRENT_TIMESTAMP))
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM service_principal_credentials c
-    JOIN service_principals p ON p.id=c.service_principal_id
-    JOIN service_principal_creator_grants g ON g.service_principal_id=p.id
-    WHERE lower(NEW.actor_email)=lower('service:' || p.principal_name)
-      AND g.creator_id=NEW.creator_id
-      AND c.status='active'
-      AND p.status='active'
-      AND g.status='active'
-      AND (c.expires_at IS NULL OR unixepoch(c.expires_at)>unixepoch(CURRENT_TIMESTAMP))
-  )
-BEGIN
-  SELECT RAISE(ABORT, 'audit_service_actor_scope_invalid');
-END;
 
 CREATE TRIGGER service_auth_activation_runs_append_only_update
 BEFORE UPDATE ON service_auth_activation_runs

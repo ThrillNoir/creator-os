@@ -110,7 +110,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         const backupReceipt = readJson(options.backupReceipt);
         assertApplyGates({ plan: approvedPlan, confirmation: options.confirmation, cleanGit: cleanGitTree(), currentGit: currentGitIdentity(), backupReceipt, registry });
         const migrations = d1Migrations(registry, activation);
-        if (JSON.stringify(migrations) !== JSON.stringify(approvedPlan.observedMigrations)) throw new Error("Activation apply requires the exact expanded D1 migration state.");
+        if (JSON.stringify(migrations) !== JSON.stringify(approvedPlan.observedMigrations)) throw new Error("Activation apply requires the exact expanded and compatibility-ready D1 migration state.");
         const credentials = stageWebSecrets(approvedPlan, registry);
         try {
           d1Execute(registry, activation.expected.databaseName, activationSql({ plan: approvedPlan, activation, credentials, backupReceipt }));
