@@ -42,6 +42,26 @@ plan or export; do not edit the file or reuse the release. Diagnostic output is
 limited to the operation category and failure class so credentials and raw
 remote output are not placed in receipts.
 
+## Hashing semantics and backup integrity
+
+The bounded executor uses distinct hash functions for distinct evidence:
+
+- Plans and structured receipts use a deterministic canonical-JSON digest.
+- SQL migration source uses a UTF-8 text digest.
+- Exports, approved-plan source files, and other file artefacts use a raw-byte
+  digest over the exact stored bytes.
+
+Byte values are rejected by the canonical-JSON hash helper. A binary or file
+artefact must never be stringified, decoded, normalised, or represented as a
+JSON object before its integrity digest is calculated. This matters for null
+bytes, non-UTF-8 content, line endings, and every other byte-level difference.
+
+Backup validation requires all of the following: a nonempty export file, a
+well-formed 64-character checksum, matching raw bytes, staging environment,
+database name/UUID, and an exact migration-history match to the reviewed plan
+pre-state. A wrong, stale, malformed, tampered, or cross-target receipt fails
+closed before any migration command is considered.
+
 The executor has no service-auth, credential, Worker, traffic, principal, grant, or secret logic. Release-specific checks remain external reviewed gates.
 
 ## Phase 2A EXPAND example

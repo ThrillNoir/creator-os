@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSy
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, inventoryFromDirectory, sha256, validateBackup } from "./bounded-d1-migrations-lib.mjs";
+import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateBackup } from "./bounded-d1-migrations-lib.mjs";
 import { readDeploymentRegistry, readJsoncFile } from "./deployment-preflight.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -163,17 +163,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const regeneratedOptions = { environment: approved.value.environment, from: approved.value.requestedRange?.from, through: approved.value.requestedRange?.through, releaseId: approved.value.releaseId };
       const { authority, inventoryDirectory, plan: currentPlan } = makePlan(regeneratedOptions);
       const backupInput = json(options.backupReceipt, "Backup receipt");
-      const backup = validateBackup({ receipt: backupInput.value, receiptPath: backupInput.path, target: approved.value.target, maxAgeMinutes: authority.policy.backupMaxAgeMinutes });
+      const backup = validateBackup({ receipt: backupInput.value, receiptPath: backupInput.path, target: approved.value.target, expectedMigrationState: approved.value.preMigrationState, maxAgeMinutes: authority.policy.backupMaxAgeMinutes });
       assertApplyGates({ plan: approved.value, currentPlan, remoteApplied: currentPlan.preMigrationState, git: gitIdentity(), clean: gitClean(), backup, confirmation: options.confirmation });
       const receipt = await executeBoundedPlan({
         plan: approved.value,
         directory: inventoryDirectory,
         executeOne: ({ sql }) => executeFile(authority, approved.value.target.databaseName, sql),
         getApplied: () => readRemoteApplied(authority, approved.value.target.databaseName),
-        receiptBase: { schemaVersion: 1, releaseId: approved.value.releaseId, target: approved.value.target, git: gitIdentity(), backup, startedAt: new Date().toISOString(), planSourceSha256: sha256(readFileSync(approved.path)) },
+        receiptBase: { schemaVersion: 1, releaseId: approved.value.releaseId, target: approved.value.target, git: gitIdentity(), backup, startedAt: new Date().toISOString(), planSourceSha256: hashFileBytes(approved.path) },
       });
       receipt.completedAt = new Date().toISOString();
-      receipt.receiptSha256 = sha256(receipt);
+      receipt.receiptSha256 = hashCanonicalJson(receipt);
       const receiptPath = writeNew(options.receipt, JSON.stringify(receipt, null, 2));
       writeNew(`${receiptPath}.md`, markdownReceipt(receipt));
       console.log(JSON.stringify({ result: receipt.result, receipt: receiptPath, applied: receipt.applied, failed: receipt.failed?.migration ?? null, excludedPending: receipt.excludedPending }, null, 2));

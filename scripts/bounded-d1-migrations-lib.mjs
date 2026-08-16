@@ -9,13 +9,32 @@ export const stableJson = (value) => {
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
 };
-export const sha256 = (value) => createHash("sha256").update(typeof value === "string" ? value : stableJson(value)).digest("hex");
+function containsByteValue(value, seen = new Set()) {
+  if (Buffer.isBuffer(value) || value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return true;
+  if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen.add(value);
+  return Object.values(value).some((entry) => containsByteValue(entry, seen));
+}
+export const hashCanonicalJson = (value) => {
+  if (containsByteValue(value)) throw new Error("Canonical JSON hashing does not accept byte values.");
+  return createHash("sha256").update(stableJson(value), "utf8").digest("hex");
+};
+export const hashText = (value) => {
+  if (typeof value !== "string") throw new Error("Text hashing requires a string.");
+  return createHash("sha256").update(value, "utf8").digest("hex");
+};
+export const hashBytes = (value) => {
+  if (!(Buffer.isBuffer(value) || value instanceof ArrayBuffer || ArrayBuffer.isView(value))) throw new Error("Byte hashing requires a Buffer, ArrayBuffer, or typed array.");
+  const bytes = Buffer.isBuffer(value) ? value : value instanceof ArrayBuffer ? Buffer.from(value) : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  return createHash("sha256").update(bytes).digest("hex");
+};
+export const hashFileBytes = (filePath) => hashBytes(readFileSync(filePath));
 
 export function planDigest(plan) {
   const copy = { ...plan };
   delete copy.planSha256;
   delete copy.confirmation;
-  return sha256(copy);
+  return hashCanonicalJson(copy);
 }
 
 export function migrationNumber(value) {
@@ -46,7 +65,7 @@ export function inventoryFromDirectory(directory, readdir) {
     const match = name.match(migrationPattern);
     if (!match) throw new Error(`Unexpected SQL migration filename: ${name}.`);
     const file = path.join(directory, name);
-    return { number: Number(match[1]), name, sha256: sha256(readFileSync(file, "utf8")) };
+    return { number: Number(match[1]), name, sha256: hashText(readFileSync(file, "utf8")) };
   }).sort((left, right) => left.number - right.number || left.name.localeCompare(right.name));
   return assertInventory(migrations);
 }
@@ -97,15 +116,15 @@ export function buildBoundedPlan({ environment, from, through, inventory, remote
   return plan;
 }
 
-export function validateBackup({ receipt, receiptPath, target, maxAgeMinutes, now = new Date() }) {
+export function validateBackup({ receipt, receiptPath, target, expectedMigrationState, maxAgeMinutes, now = new Date() }) {
   if (!receiptPath || !path.isAbsolute(receiptPath) || !existsSync(receiptPath)) throw new Error("A readable absolute backup receipt is required.");
   const backup = receipt?.target;
-  if (receipt?.mode !== "READ ONLY REMOTE EXPORT" || !backup || backup.environment !== target.environment || backup.databaseName !== target.databaseName || backup.databaseId !== target.databaseId || !/^[a-f0-9]{64}$/i.test(receipt.sqlChecksum ?? "")) throw new Error("Backup receipt does not match the bounded migration target.");
+  if (receipt?.mode !== "READ ONLY REMOTE EXPORT" || !backup || backup.environment !== target.environment || backup.databaseName !== target.databaseName || backup.databaseId !== target.databaseId || !exact(backup.migrations, expectedMigrationState) || !/^[a-f0-9]{64}$/i.test(receipt.sqlChecksum ?? "")) throw new Error("Backup receipt does not match the bounded migration target.");
   const exportedAt = new Date(receipt.exportedAt);
   if (Number.isNaN(exportedAt.valueOf()) || now.valueOf() - exportedAt.valueOf() > maxAgeMinutes * 60_000 || exportedAt > now) throw new Error("Backup receipt is stale or invalid.");
   const exportPath = receiptPath.replace(/\.receipt\.json$/, "");
-  if (!existsSync(exportPath) || statSync(exportPath).size === 0 || sha256(readFileSync(exportPath)) !== receipt.sqlChecksum) throw new Error("Backup export is missing or its checksum does not match the receipt.");
-  return { receiptPath, exportedAt: exportedAt.toISOString(), sqlChecksum: receipt.sqlChecksum, receiptHash: sha256(receipt) };
+  if (!existsSync(exportPath) || statSync(exportPath).size === 0 || hashFileBytes(exportPath) !== receipt.sqlChecksum) throw new Error("Backup export is missing or its checksum does not match the receipt.");
+  return { receiptPath, exportedAt: exportedAt.toISOString(), sqlChecksum: receipt.sqlChecksum, receiptHash: hashCanonicalJson(receipt) };
 }
 
 export function assertApplyGates({ plan, currentPlan, remoteApplied, git, clean, backup, confirmation }) {
@@ -119,7 +138,7 @@ export function assertApplyGates({ plan, currentPlan, remoteApplied, git, clean,
 
 export function migrationSql({ directory, migration }) {
   const content = readFileSync(path.join(directory, migration.name), "utf8");
-  if (sha256(content) !== migration.sha256) throw new Error(`Migration digest changed for ${migration.name}.`);
+  if (hashText(content) !== migration.sha256) throw new Error(`Migration digest changed for ${migration.name}.`);
   return `${content}\nINSERT INTO "d1_migrations" (name) VALUES ('${migration.name.replaceAll("'", "''")}');\n`;
 }
 
