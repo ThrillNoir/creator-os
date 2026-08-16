@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { activationConfirmation, assertApplyGates, buildActivationPlan, redactActivationReceipt } from "../scripts/service-auth-activation-lib.mjs";
+import { activationConfirmation, assertApplyGates, buildActivationPlan, planDigest, redactActivationReceipt } from "../scripts/service-auth-activation-lib.mjs";
 import { parseArgs } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -18,6 +18,7 @@ test("service-auth activation plan is redacted, deterministic, staging-only, and
   assert.equal(plan.operationsIfApplied.d1CredentialHashes, 4);
   assert.equal(plan.operationsIfApplied.legacyAuthenticationRemoved, false);
   assert.equal(plan.confirmation, activationConfirmation(plan.activationId, plan.planSha256));
+  assert.equal(planDigest(plan), plan.planSha256);
   assert.doesNotMatch(JSON.stringify(plan), /Bearer|token_hash|credential value/i);
   assert.throws(() => buildActivationPlan({ activation: { ...activation, environment: "production" }, contract, registry, observedMigrations: baseline, git: {} }), /staging/i);
 });

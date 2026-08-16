@@ -16,6 +16,11 @@ export function activationConfirmation(activationId, planSha256) {
   return `${activationId}:${planSha256.slice(0, 12)}`;
 }
 
+export function planDigest(plan) {
+  const { planSha256: _planSha256, confirmation: _confirmation, ...body } = plan;
+  return sha256(body);
+}
+
 export function validateActivation({ activation, contract, registry }) {
   if (activation?.schemaVersion !== 1 || activation.environment !== "staging") throw new Error("Activation is restricted to staging.");
   if (!/^[a-z0-9][a-z0-9-]{2,100}$/i.test(activation.activationId ?? "")) throw new Error("Activation id is invalid.");
@@ -66,7 +71,7 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
     },
     rollback: ["Do not route traffic to the staged web version if D1 activation fails.", "If verification fails after traffic change, roll Workers back before revoking canonical credentials.", "Record ROLLBACK_REQUIRED/REVOKED as append-only activation steps; do not delete audit history."],
   };
-  plan.planSha256 = sha256(plan);
+  plan.planSha256 = planDigest(plan);
   plan.confirmation = activationConfirmation(plan.activationId, plan.planSha256);
   return plan;
 }

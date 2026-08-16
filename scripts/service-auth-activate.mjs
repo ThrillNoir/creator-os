@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertApplyGates, buildActivationPlan, redactActivationReceipt, sha256 } from "./service-auth-activation-lib.mjs";
+import { assertApplyGates, buildActivationPlan, planDigest, redactActivationReceipt, sha256 } from "./service-auth-activation-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = { activation: path.join(root, "config/service-auth-activation.staging.json"), contract: path.join(root, "config/service-principals.json"), registry: path.join(root, "config/deployments.json") };
@@ -106,7 +106,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       } else {
         if (!options.approvedPlan || !options.backupReceipt || !options.output) throw new Error("Apply requires --approved-plan, --backup-receipt, and redacted --output receipt paths.");
         const approvedPlan = readJson(options.approvedPlan);
-        if (sha256({ ...approvedPlan, planSha256: undefined, confirmation: undefined }) !== approvedPlan.planSha256) throw new Error("Approved plan checksum is invalid.");
+        if (planDigest(approvedPlan) !== approvedPlan.planSha256) throw new Error("Approved plan checksum is invalid.");
         const backupReceipt = readJson(options.backupReceipt);
         assertApplyGates({ plan: approvedPlan, confirmation: options.confirmation, cleanGit: cleanGitTree(), currentGit: currentGitIdentity(), backupReceipt, registry });
         const migrations = d1Migrations(registry, activation);
