@@ -82,6 +82,6 @@ The bounded executor marked each migration submitted before Wrangler. Its local 
 
 - The executor deliberately rejected all three local Wrangler results as non-authoritative. Structured D1 confirmed the remote state after each submission, so the release advanced only on that canonical evidence.
 - A display-only preliminary checksum helper initially pointed at the JSON receipt rather than the SQL export; repository backup validation and the corrected independent raw-byte check both matched the export checksum above. No database evidence differed.
-- The protected temporary export/evidence directory contains raw staging data and is not committed. It must be moved recoverably to this Mac user's Trash after any needed follow-up smoke test.
+- The protected temporary export/evidence directory contained raw staging data and was moved recoverably to this Mac user's Trash after receipt capture. It is not committed.
 - Recovery assessment: no rollback or remediation is indicated by the verified schema, history, data, and integrity state. Do not apply 0032 as remediation.
 - Recommended immediate action: sign in to the already opened THOT OS staging Cloudflare Access page in Chrome, then run the authenticated health smoke. Update this receipt with that result before declaring the release PASS. Do not apply 0032, activate service auth, create secrets, deploy Workers, change traffic, or touch production.
