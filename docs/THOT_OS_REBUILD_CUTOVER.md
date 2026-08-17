@@ -22,10 +22,13 @@ this release.
   removed; no real creator route exists.
 - Deployment receipts are stored outside the repository at
   `/Users/thotos/THOT-OS-PHASE2A-RELEASES/staging-worker-rollout-2026-08-17/`.
-  The Stage 3 web rollout receipt is `stage3-growth-web.json`, for Worker
-  version `01508612-6dbd-4ff5-a30b-7d4c392c6bdc`. Its authenticated health
-  check remains pending a local Cloudflare Access session; an unauthenticated
-  request correctly received the Access gate rather than application data.
+  The Stage 3 Growth Insights rollout receipt is `stage3-growth-web.json`, for
+  Worker version `01508612-6dbd-4ff5-a30b-7d4c392c6bdc`. The subsequent
+  Accounts-page Instagram connection rollout is
+  `stage3-instagram-accounts-web.json`, for current Worker version
+  `cc90b550-9142-45a3-b04d-d00244d2fb61`. The latter received authenticated
+  browser verification without starting an OAuth flow or returning application
+  data to an unauthenticated request.
 
 ## What is now implemented locally
 
