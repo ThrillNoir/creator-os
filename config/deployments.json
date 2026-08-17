@@ -138,8 +138,8 @@
           "config": "cloudflare/thot-os-public-links/wrangler.jsonc",
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-staging",
-          "deployable": false,
-          "retirement": "Provision the isolated public KV namespace, Analytics Engine dataset and approved custom domain before enabling. This Worker must never bind operational D1 or private R2.",
+          "deployable": true,
+          "stagingBoundary": "Isolated staging Worker only. Do not attach a custom domain or publish a real creator profile until the synthetic publication-and-withdrawal check and written destination approval are complete. This Worker must never bind operational D1 or private R2.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],
@@ -155,8 +155,8 @@
           "config": "cloudflare/thot-os-public-links-control/wrangler.jsonc",
           "directory": "cloudflare/thot-os-public-links-control",
           "worker": "thot-os-public-links-control-staging",
-          "deployable": false,
-          "retirement": "Enable only with the public Worker after creator-scoped service grants, the isolated KV namespace and the publication Workflow have been verified.",
+          "deployable": true,
+          "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
           "requiredSecrets": [],
           "resources": {
             "d1": ["thot-os-staging"],

@@ -17,7 +17,8 @@
   ],
   "kv_namespaces": [
     {
-      "binding": "PUBLIC_LINKS"
+      "binding": "PUBLIC_LINKS",
+      "id": "34a4601e8bbb4d3bb05656bf1f59c2c1"
     }
   ],
   "workflows": [
