@@ -112,7 +112,14 @@ export default {
       const destination = link && safeHttpsUrl(link.destinationUrl);
       if (!snapshot || !link || !destination || destination.hostname.toLowerCase() !== link.destinationHost.toLowerCase()) return textResponse("Not found", 404);
       try {
-        env.LINK_EVENTS.writeDataPoint({ blobs: ["link_click", snapshot.creator.slug, link.id, destination.hostname.toLowerCase()], doubles: [1] });
+        env.LINK_EVENTS.writeDataPoint({
+          // Analytics Engine's index is the tenant boundary. The creator slug
+          // is already the public profile identifier and is deliberately not
+          // derived from visitor data.
+          indexes: [snapshot.creator.slug],
+          blobs: ["link_click", link.id, destination.hostname.toLowerCase()],
+          doubles: [1],
+        });
       } catch (error) {
         console.warn(JSON.stringify({ event: "public_link_analytics_write_failed", creatorSlug: snapshot.creator.slug, linkId: link.id, message: error instanceof Error ? error.message : "unknown" }));
       }

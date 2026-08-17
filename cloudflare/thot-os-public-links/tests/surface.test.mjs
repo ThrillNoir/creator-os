@@ -39,7 +39,8 @@ test("redirects can only use a destination present in the approved snapshot", as
   assert.equal(response.status, 302);
   assert.equal(response.headers.get("location"), "https://example.com/path?source=profile");
   assert.equal(events.length, 1);
-  assert.deepEqual(events[0].blobs, ["link_click", "adelaide", "official", "example.com"]);
+  assert.deepEqual(events[0].indexes, ["adelaide"]);
+  assert.deepEqual(events[0].blobs, ["link_click", "official", "example.com"]);
 });
 
 test("invalid snapshots and unapproved paths fail closed", async () => {
