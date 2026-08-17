@@ -59,7 +59,26 @@ API responses are never included in plans or receipts.
 An eventual `--apply` has to fail closed unless its approved plan, confirmation
 token, clean Git SHA and branch, staging registry/D1 ID, exact EXPAND **and**
 COMPATIBILITY migrations, fresh structured D1 `ABSENT` state, and a fresh
-matching backup receipt all agree. Its state record is append-only:
+activation-bound backup receipt all agree. The backup is produced only from an
+approved plan with:
+
+```sh
+npm run services:activation-backup -- \
+  --environment staging \
+  --approved-plan /absolute/secure/path/activation.plan.json \
+  --output-dir "/absolute/secure/non-repository/activation-backups"
+```
+
+It invokes only a read-only remote D1 export through the isolated Wrangler
+Keychain/OAuth boundary, parses the export locally only to verify its ordered
+migration history, and deletes that temporary parse copy. The retained SQL
+export and its `0600` receipt remain in the user-owned `0700` external backup
+directory, never in the repository. The receipt binds its raw-byte SHA-256,
+freshness, target identity, activation ID, plan digest, Git identity, and exact
+migration history. `--apply` rechecks the receipt and the raw export bytes; a
+historical, stale, altered, insecure, or differently bound receipt is refused.
+
+Its state record is append-only:
 `PLANNED`, `SECRET_STAGED`, `D1_ACTIVE`, `VERIFIED`, `ACTIVE`, or a
 failure/rollback state. Plain bearers are generated only at the approved
 operation, supplied to Wrangler by stdin, stored only as Cloudflare Web Worker

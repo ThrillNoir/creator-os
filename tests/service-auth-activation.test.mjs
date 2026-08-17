@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
+import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
 import { activationSql, applyActivation, canonicalActivationRecords, captureWorkerMetadata, classifyActivationStatus, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -25,6 +27,33 @@ function workerMetadataFor(plan, { staged = false } = {}) {
 function metadataSequence(plan) {
   const snapshots = [workerMetadataFor(plan), workerMetadataFor(plan, { staged: true })];
   return () => snapshots.shift() ?? snapshots.at(-1);
+}
+
+function validBackupReceipt(plan, registry) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "thot-os-service-auth-test-backup-"));
+  chmodSync(directory, 0o700);
+  const exportPath = path.join(directory, "staging-d1.sql");
+  const bytes = Buffer.from("test export\n");
+  writeFileSync(exportPath, bytes, { mode: 0o600 });
+  const receipt = {
+    schemaVersion: 1,
+    mode: "READ_ONLY_ACTIVATION_BACKUP",
+    activationId: plan.activationId,
+    environment: "staging",
+    accountId: registry.environments.staging.accountId,
+    databaseName: plan.database.databaseName,
+    databaseId: plan.database.databaseId,
+    planSha256: plan.planSha256,
+    planGit: plan.git,
+    migrationHistory: plan.observedMigrations,
+    migrationStateSha256: sha256(plan.observedMigrations),
+    exportedAt: new Date().toISOString(),
+    exportPath,
+    export: { fileName: "staging-d1.sql", bytes: bytes.length, sha256: sha256Bytes(bytes) },
+    integrity: { quickCheck: "ok", foreignKeyViolations: 0 },
+  };
+  receipt.sha256 = activationBackupReceiptDigest(receipt);
+  return { receipt, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
 }
 
 function satisfiedActivationRows(plan) {
@@ -67,11 +96,16 @@ test("activation requires COMPATIBILITY after EXPAND and then fail-closes on oth
   assert.equal(plan.expandReady, true);
   assert.equal(plan.compatibilityReady, true);
   assert.equal(plan.activationReady, true);
-  const base = { plan, cleanGit: true, currentGit: plan.git, backupReceipt: { sha256: "b".repeat(64), environment: "staging", databaseId: activation.expected.databaseId }, registry };
-  assert.equal(assertApplyGates({ ...base, confirmation: plan.confirmation }), true);
-  assert.throws(() => assertApplyGates({ ...base, confirmation: "wrong" }), /confirmation/i);
-  assert.throws(() => assertApplyGates({ ...base, cleanGit: false, confirmation: plan.confirmation }), /clean Git/i);
-  assert.throws(() => assertApplyGates({ ...base, backupReceipt: { ...base.backupReceipt, databaseId: "wrong" }, confirmation: plan.confirmation }), /backup/i);
+  const backup = validBackupReceipt(plan, registry);
+  try {
+    const base = { plan, cleanGit: true, currentGit: plan.git, backupReceipt: backup.receipt, registry };
+    assert.equal(assertApplyGates({ ...base, confirmation: plan.confirmation }), true);
+    assert.throws(() => assertApplyGates({ ...base, confirmation: "wrong" }), /confirmation/i);
+    assert.throws(() => assertApplyGates({ ...base, cleanGit: false, confirmation: plan.confirmation }), /clean Git/i);
+    assert.throws(() => assertApplyGates({ ...base, backupReceipt: { ...base.backupReceipt, databaseId: "wrong" }, confirmation: plan.confirmation }), /backup/i);
+  } finally {
+    backup.cleanup();
+  }
 });
 
 test("canonical partial EXPAND baseline at 0028 is accepted but remains activation-blocked", async () => {

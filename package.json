@@ -22,6 +22,7 @@
     "d1:migrations:apply": "node scripts/bounded-d1-migrations.mjs --apply",
     "service-principals:plan": "node scripts/service-principal-plan.mjs",
     "services:activate": "node scripts/service-auth-activate.mjs",
+    "services:activation-backup": "node scripts/service-auth-activation-backup.mjs",
     "deployment:preflight": "node scripts/deployment-preflight.mjs",
     "deployment:receipt": "node scripts/deployment-receipt.mjs",
     "deploy": "node scripts/deploy-component.mjs",

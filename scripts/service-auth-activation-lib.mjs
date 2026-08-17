@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
 
 export const ACTIVATION_STATES = new Set(["PLANNED", "SECRET_STAGED", "D1_ACTIVE", "VERIFIED", "ACTIVE", "FAILED", "ROLLBACK_REQUIRED", "REVOKED"]);
 
@@ -10,6 +12,66 @@ export function stableJson(value) {
 
 export function sha256(value) {
   return crypto.createHash("sha256").update(typeof value === "string" ? value : stableJson(value)).digest("hex");
+}
+
+export function sha256Bytes(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+export const ACTIVATION_BACKUP_MAX_AGE_MS = 15 * 60 * 1000;
+const SHA256 = /^[a-f0-9]{64}$/;
+
+function sameArray(left, right) {
+  return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function backupReceiptBody(receipt) {
+  const body = { ...receipt };
+  delete body.sha256;
+  return body;
+}
+
+/**
+ * The activation backup is a local, read-only D1 export. Its receipt binds the
+ * raw export bytes and the structured migration state to one reviewed plan;
+ * apply rechecks the artifact rather than accepting a historical receipt.
+ */
+export function activationBackupReceiptDigest(receipt) {
+  return sha256(backupReceiptBody(receipt));
+}
+
+export function assertActivationBackupReceipt({ backupReceipt, plan, registry, now = Date.now(), statSyncImpl = statSync, readFileSyncImpl = readFileSync } = {}) {
+  const staging = registry?.environments?.staging;
+  if (!backupReceipt || typeof backupReceipt !== "object" || Array.isArray(backupReceipt)) throw new Error("Activation apply requires a valid activation backup receipt.");
+  if (backupReceipt.schemaVersion !== 1 || backupReceipt.mode !== "READ_ONLY_ACTIVATION_BACKUP") throw new Error("Activation backup receipt has an invalid schema or mode.");
+  if (backupReceipt.activationId !== plan?.activationId || backupReceipt.environment !== "staging" || backupReceipt.accountId !== staging?.accountId || backupReceipt.databaseName !== plan?.database?.databaseName || backupReceipt.databaseId !== plan?.database?.databaseId) {
+    throw new Error("Activation backup receipt does not match the reviewed staging target.");
+  }
+  if (backupReceipt.planSha256 !== plan?.planSha256 || backupReceipt.planGit?.sha !== plan?.git?.sha || backupReceipt.planGit?.branch !== plan?.git?.branch) {
+    throw new Error("Activation backup receipt is not bound to the approved activation plan.");
+  }
+  if (!sameArray(backupReceipt.migrationHistory, plan?.observedMigrations) || backupReceipt.migrationStateSha256 !== sha256(plan.observedMigrations)) {
+    throw new Error("Activation backup receipt migration state does not match the approved plan.");
+  }
+  if (!SHA256.test(backupReceipt.sha256 ?? "") || backupReceipt.sha256 !== activationBackupReceiptDigest(backupReceipt)) throw new Error("Activation backup receipt checksum is invalid.");
+  const exportedAt = Date.parse(backupReceipt.exportedAt);
+  if (!Number.isFinite(exportedAt) || exportedAt > now + 60_000 || now - exportedAt > ACTIVATION_BACKUP_MAX_AGE_MS) throw new Error("Activation backup receipt is not fresh enough for apply.");
+  const exportPath = backupReceipt.exportPath;
+  const exportInfo = backupReceipt.export;
+  if (typeof exportPath !== "string" || !path.isAbsolute(exportPath) || !exportInfo || typeof exportInfo !== "object" || exportInfo.fileName !== path.basename(exportPath) || !Number.isInteger(exportInfo.bytes) || exportInfo.bytes <= 0 || !SHA256.test(exportInfo.sha256 ?? "")) {
+    throw new Error("Activation backup receipt export metadata is invalid.");
+  }
+  try {
+    const directory = statSyncImpl(path.dirname(exportPath));
+    const file = statSyncImpl(exportPath);
+    const bytes = readFileSyncImpl(exportPath);
+    if (!directory.isDirectory() || !file.isFile() || (directory.mode & 0o077) !== 0 || (file.mode & 0o077) !== 0 || file.size !== exportInfo.bytes || sha256Bytes(bytes) !== exportInfo.sha256) {
+      throw new Error("invalid artifact");
+    }
+  } catch {
+    throw new Error("Activation backup export is missing, insecure, or no longer matches its receipt.");
+  }
+  return true;
 }
 
 export function activationConfirmation(activationId, planSha256) {
@@ -148,7 +210,7 @@ export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, bac
   if (plan?.mode !== "plan" || plan.environment !== "staging" || !plan.expandReady || !plan.compatibilityReady || !plan.activationReady) throw new Error("Activation apply requires both expanded and compatibility-ready staging state.");
   if (confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) throw new Error("Activation confirmation does not match the approved plan.");
   if (!cleanGit || currentGit?.sha !== plan.git?.sha || currentGit?.branch !== plan.git?.branch) throw new Error("Activation apply requires the exact clean Git identity used for the plan.");
-  if (!backupReceipt?.sha256 || backupReceipt.environment !== "staging" || backupReceipt.databaseId !== plan.database.databaseId) throw new Error("Activation apply requires a fresh matching staging backup receipt.");
+  assertActivationBackupReceipt({ backupReceipt, plan, registry });
   if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for activation.");
   return true;
 }
