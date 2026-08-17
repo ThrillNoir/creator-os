@@ -1,7 +1,7 @@
 # Phase 2A EXPAND continuation — staging release receipt
 
 - Release ID: `phase2a-expand-staging-20260817-16df0abb`
-- Status: **PENDING_AUTHENTICATED_APPLICATION_SMOKE**
+- Status: **PASS** — Phase 2A EXPAND continuation staging release
 - Branch / HEAD: `audit/pre-cleanup-snapshot-2026-08-15` / `f43ec03bc90adb69f01b4a749c525cbf551e1185`
 - Target: THOT OS staging D1 `thot-os-staging` (`174532e8-5ada-4e30-abba-1276b3540b3f`) in account `3e7cfa6efb7a97825f1dc24515410c63`
 - Production touched: **NO**. The bounded policy allowed `staging` only; production remained `provisioned: false`, `deployable: false`.
@@ -75,13 +75,14 @@ The bounded executor marked each migration submitted before Wrangler. Its local 
   - blocking precondition: `COMPATIBILITY_MIGRATION_0032_REQUIRED`
   - future-only shape: 4 principals, 4 secret names, 4 credential hashes, 15 Adelaide-scoped grants.
 - Service-auth activation: **NO**. No secrets, credentials, principals, grants, Worker deployment, or traffic change occurred.
-- Existing application smoke: **PENDING**. The staging health endpoint was reached only through its Cloudflare Access login boundary; neither this shell nor the available Chrome session had an authenticated THOT OS Access session. No login, credential creation, deployment, or traffic change was attempted.
+- Existing application smoke: **PASS**. An authenticated Cloudflare Access session returned the protected health payload with `ok: true`, `runtime: nextjs-opennext`, creator scope `adelaide`, and connected D1 asset/preview counts. The existing `/library`, `/messages`, and `/operations` routes each loaded without an Access redirect or visible runtime error; the browser reported zero console errors. This was a read-only smoke only: no audit mutation, messaging send, creator mutation, or queue/background job was triggered.
 - Worker deployment identity was not changed by this release. A read-only deployment-list query returned no deployment objects; no Worker deployment command was run.
 
 ## Warnings, recovery, and next action
 
 - The executor deliberately rejected all three local Wrangler results as non-authoritative. Structured D1 confirmed the remote state after each submission, so the release advanced only on that canonical evidence.
 - A display-only preliminary checksum helper initially pointed at the JSON receipt rather than the SQL export; repository backup validation and the corrected independent raw-byte check both matched the export checksum above. No database evidence differed.
+- A later browser-only repeat navigation to `/health` was blocked locally with `ERR_BLOCKED_BY_CLIENT`; it did not alter the already captured authenticated health result or the successful route smoke checks.
 - The protected temporary export/evidence directory contained raw staging data and was moved recoverably to this Mac user's Trash after receipt capture. It is not committed.
 - Recovery assessment: no rollback or remediation is indicated by the verified schema, history, data, and integrity state. Do not apply 0032 as remediation.
-- Recommended immediate action: sign in to the already opened THOT OS staging Cloudflare Access page in Chrome, then run the authenticated health smoke. Update this receipt with that result before declaring the release PASS. Do not apply 0032, activate service auth, create secrets, deploy Workers, change traffic, or touch production.
+- Recommended next action: prepare a separately approved Phase 2A COMPATIBILITY staging release for 0032. Do not execute it from this release or apply 0032, activate service auth, create secrets, deploy Workers, change traffic, or touch production.
