@@ -1,8 +1,26 @@
 # THOT OS rebuild cutover
 
-Status: local implementation complete for the first safety-and-public-links
-slice. No Cloudflare resource, custom domain, D1 database, credential, social
-post, account, or Dropbox object was changed by this work.
+Status: Phase 2B staging release completed on 2026-08-17. No custom domain,
+real creator public profile, social post, social account, or Dropbox object
+was changed by this release.
+
+## Staging execution record
+
+- The approved `0033`–`0036` D1 migrations and creator-scoped service
+  principals are active in the sole staging database.
+- The isolated `thot-os-public-links-staging` KV namespace, public control
+  Worker, public Static Assets Worker, and `thot-os-public-link-events-staging`
+  Analytics Engine dataset are deployed. The public Worker binds only KV,
+  Analytics Engine, and static assets; it has no D1 or private R2 binding.
+- Link analytics use the public creator slug as Analytics Engine's tenant index.
+  The click event contains no visitor identifier, private creator data, or
+  destination query-string telemetry.
+- A synthetic SFW profile using only `example.com` completed draft → explicit
+  approval → publish Workflow → KV projection → public render → transparent
+  click → withdrawal Workflow. The private D1 and KV synthetic rows were then
+  removed; no real creator route exists.
+- Deployment receipts are stored outside the repository at
+  `/Users/thotos/THOT-OS-PHASE2A-RELEASES/staging-worker-rollout-2026-08-17/`.
 
 ## What is now implemented locally
 
@@ -75,7 +93,7 @@ verified first. Their source remains frozen as migration/reference material.
    the release receipt.
 5. Deploy the scheduler/bridge changes only with `0035` present. They depend
    on `operation_outbox` and `external_operation_receipts`.
-6. Provision, but do not route publicly yet, the following isolated staging
+6. Provision the following isolated staging
    resources:
 
    - KV namespace `thot-os-public-links-staging`;
@@ -85,9 +103,9 @@ verified first. Their source remains frozen as migration/reference material.
      `public.profile.publish` and `public.profile.withdraw` capabilities and
      explicit creator grants.
 
-7. Put the real KV namespace identifier into both public Worker configurations
-   and run generated-type checks again. The committed configurations omit an
-   ID intentionally, so they cannot accidentally bind a made-up namespace.
+7. Put the real staging KV namespace identifier into both public Worker
+   configurations and run generated-type checks again. Do not create or bind a
+   production namespace until production has been explicitly approved.
 8. Use a synthetic SFW creator to test draft → explicit approval → Workflow
    publish → KV projection → public render → transparent click → withdrawal.
    Confirm that a public request cannot query D1, private previews, Dropbox,
