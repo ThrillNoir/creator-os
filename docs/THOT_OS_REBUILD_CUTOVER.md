@@ -1,8 +1,9 @@
 # THOT OS rebuild cutover
 
-Status: Phase 2B staging release completed on 2026-08-17. No custom domain,
-real creator public profile, social post, social account, or Dropbox object
-was changed by this release.
+Status: Phase 2B staging release completed on 2026-08-17. Stage 3 Growth
+Insights is implemented locally and awaiting its staging worker rollout. No
+custom domain, real creator public profile, social post, social account, or
+Dropbox object was changed by this release.
 
 ## Staging execution record
 
@@ -130,6 +131,12 @@ release receipt:
 - custom-domain/WAF/security-header test results; and
 - an explicit rollback target for both the Worker version and published profile
   version.
+- Stage 3 adds a private, creator-scoped Growth Insights page and read-only API.
+  It reads only the latest official Instagram observation for each media ID,
+  excludes incomplete metric sets instead of treating them as zero, and returns
+  a source observation time, sample size, confidence and recheck point with
+  every recommendation. It neither calls a provider nor creates a public
+  action.
 
 ## Cloudflare product references
 

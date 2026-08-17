@@ -447,6 +447,30 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .money-kpis span,.money-kpis small { color: var(--muted); }
 .money-kpis strong { margin: 7px 0 5px; font-size: 27px; }
 .money-kpis small { font-size: 11px; }
+.growth-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 28px 0 16px; }
+.growth-summary article { padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
+.growth-summary span,.growth-summary strong,.growth-summary small { display: block; }
+.growth-summary span,.growth-summary small { color: var(--muted); }
+.growth-summary strong { margin: 7px 0 5px; font-size: 25px; }
+.growth-summary small { font-size: 11px; line-height: 1.4; }
+.growth-method { margin-bottom: 16px; }
+.growth-method p { max-width: 880px; color: var(--muted); line-height: 1.55; }
+.growth-recommendation-list { display: grid; margin-top: 17px; }
+.growth-recommendation { padding: 17px 0; border-top: 1px solid var(--line); }
+.growth-recommendation:first-child { padding-top: 0; border-top: 0; }
+.growth-recommendation-heading { display: flex; align-items: center; gap: 10px; }
+.growth-recommendation-heading strong { font-size: 16px; }
+.growth-recommendation p { max-width: 900px; margin: 10px 0 14px; color: var(--muted); line-height: 1.5; }
+.confidence { display: inline-block; flex: none; padding: 4px 7px; border: 1px solid var(--line); border-radius: 999px; background: #211a29; color: var(--muted); font-size: 10px; font-weight: 800; }
+.confidence.strong { border-color: #3a6b58; color: var(--green); }
+.confidence.building { border-color: #4e3b7e; color: var(--purple2); }
+.confidence.early { border-color: #684d25; color: #e2c179; }
+.growth-evidence { display: flex; gap: 12px 22px; flex-wrap: wrap; margin: 0 0 12px; }
+.growth-evidence div { display: grid; gap: 3px; }
+.growth-evidence dt { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.growth-evidence dd { margin: 0; font-size: 12px; }
+.growth-evidence a { color: var(--purple2); }
+.growth-recommendation > small { color: var(--muted); font-size: 11px; }
 .money-layout { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(280px,.5fr); gap: 16px; margin-bottom: 16px; }
 .money-layout.lower { grid-template-columns: minmax(0,1.2fr) minmax(320px,.8fr); }
 .money-table { margin-top: 18px; overflow-x: auto; }
@@ -518,6 +542,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .admin-membership-form { grid-template-columns: 1fr 1fr; }
   .admin-membership-form .section-divider { grid-column: 1 / -1; }
   .money-kpis { grid-template-columns: 1fr 1fr; }
+  .growth-summary { grid-template-columns: 1fr 1fr; }
   .money-layout { grid-template-columns: 1fr; }
   .public-profile-form { grid-template-columns: 1fr; }
   .public-profile-form .wide,.public-profile-form > button { grid-column: auto; }
@@ -536,6 +561,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .asset-select { opacity: 1; transform: none; }
   .ops-summary { grid-template-columns: 1fr 1fr; }
   .ops-grid, .community-grid { grid-template-columns: 1fr; }
+  .growth-summary { grid-template-columns: 1fr; }
   .ops-asset-picker { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .reddit-fields { grid-template-columns: 1fr; }
   .reddit-fields .wide { grid-column: auto; }
