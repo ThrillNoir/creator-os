@@ -16,11 +16,61 @@ export function activationConfirmation(activationId, planSha256) {
   return `${activationId}:${planSha256.slice(0, 12)}`;
 }
 
+export function revokeConfirmation(activationId, planSha256) {
+  return `REVOKE:${activationId}:${planSha256.slice(0, 12)}`;
+}
+
 export function planDigest(plan) {
   const body = { ...plan };
   delete body.planSha256;
   delete body.confirmation;
   return sha256(body);
+}
+
+function finalisePlan(plan) {
+  const finalPlan = { ...plan };
+  delete finalPlan.planSha256;
+  delete finalPlan.confirmation;
+  finalPlan.planSha256 = planDigest(finalPlan);
+  finalPlan.confirmation = activationConfirmation(finalPlan.activationId, finalPlan.planSha256);
+  return finalPlan;
+}
+
+function normaliseActivationStatus(status = {}) {
+  const state = status?.state ?? "ABSENT";
+  if (!new Set(["ABSENT", "SATISFIED", "REVOKED", "CONFLICT"]).has(state)) throw new Error("Activation status is invalid.");
+  return {
+    state,
+    activationRunPresent: status.activationRunPresent === true,
+    canonicalRecordsPresent: status.canonicalRecordsPresent === true,
+    counts: {
+      activationRuns: Number.isInteger(status?.counts?.activationRuns) ? status.counts.activationRuns : 0,
+      activationSteps: Number.isInteger(status?.counts?.activationSteps) ? status.counts.activationSteps : 0,
+      canonicalPrincipals: Number.isInteger(status?.counts?.canonicalPrincipals) ? status.counts.canonicalPrincipals : 0,
+      canonicalCredentialCount: Number.isInteger(status?.counts?.canonicalCredentialCount) ? status.counts.canonicalCredentialCount : 0,
+      canonicalGrantCount: Number.isInteger(status?.counts?.canonicalGrantCount) ? status.counts.canonicalGrantCount : 0,
+      canonicalAuditEventCount: Number.isInteger(status?.counts?.canonicalAuditEventCount) ? status.counts.canonicalAuditEventCount : 0,
+    },
+  };
+}
+
+/**
+ * Adds a structured, credential-free D1 state observation to a plan. The
+ * observation is included in its digest so an approval cannot be replayed
+ * after canonical state has changed.
+ */
+export function withActivationStatus(plan, status) {
+  const activationStatus = normaliseActivationStatus(status);
+  let blockingPrecondition = plan.compatibilityReady ? null : plan.expandReady ? "COMPATIBILITY_MIGRATION_0032_REQUIRED" : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED";
+  if (activationStatus.state === "SATISFIED") blockingPrecondition = "ACTIVATION_ALREADY_SATISFIED";
+  else if (activationStatus.state === "CONFLICT") blockingPrecondition = "ACTIVATION_STATE_CONFLICT";
+  else if (activationStatus.state === "REVOKED") blockingPrecondition = "ACTIVATION_ALREADY_REVOKED";
+  return finalisePlan({
+    ...plan,
+    activationStatus,
+    activationReady: plan.compatibilityReady && activationStatus.state === "ABSENT",
+    blockingPrecondition,
+  });
 }
 
 export function validateActivation({ activation, contract, registry }) {
@@ -45,7 +95,7 @@ export function validateActivation({ activation, contract, registry }) {
   return { principals: [...principals.values()], grants };
 }
 
-export function buildActivationPlan({ activation, contract, registry, observedMigrations, git }) {
+export function buildActivationPlan({ activation, contract, registry, observedMigrations, git, activationStatus }) {
   const { principals, grants } = validateActivation({ activation, contract, registry });
   const expandMigrations = activation.expected.expandMigrations;
   const compatibilityMigrations = activation.expected.compatibilityMigrations;
@@ -90,17 +140,26 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
       cutover: "If a later verification fails after a separately approved traffic change, roll Workers back before revoking canonical credentials.",
     },
   };
-  plan.planSha256 = planDigest(plan);
-  plan.confirmation = activationConfirmation(plan.activationId, plan.planSha256);
-  return plan;
+  return withActivationStatus(plan, activationStatus);
 }
 
 export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, backupReceipt, registry }) {
+  if (plan?.activationStatus?.state !== "ABSENT") throw new Error(`Activation apply is blocked by ${plan?.blockingPrecondition ?? "ACTIVATION_STATE_CONFLICT"}.`);
   if (plan?.mode !== "plan" || plan.environment !== "staging" || !plan.expandReady || !plan.compatibilityReady || !plan.activationReady) throw new Error("Activation apply requires both expanded and compatibility-ready staging state.");
   if (confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) throw new Error("Activation confirmation does not match the approved plan.");
   if (!cleanGit || currentGit?.sha !== plan.git?.sha || currentGit?.branch !== plan.git?.branch) throw new Error("Activation apply requires the exact clean Git identity used for the plan.");
   if (!backupReceipt?.sha256 || backupReceipt.environment !== "staging" || backupReceipt.databaseId !== plan.database.databaseId) throw new Error("Activation apply requires a fresh matching staging backup receipt.");
   if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for activation.");
+  return true;
+}
+
+export function assertRevokeGates({ plan, confirmation, registry }) {
+  if (plan?.mode !== "plan" || plan.environment !== "staging") throw new Error("Activation recovery is restricted to a staging plan.");
+  if (confirmation !== revokeConfirmation(plan.activationId, plan.planSha256)) throw new Error("Recovery confirmation does not match the approved plan.");
+  if (!["SATISFIED", "CONFLICT"].includes(plan?.activationStatus?.state) || !plan.activationStatus.activationRunPresent) {
+    throw new Error("Recovery requires a structured status showing this activation run is present and requires revocation.");
+  }
+  if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for recovery.");
   return true;
 }
 

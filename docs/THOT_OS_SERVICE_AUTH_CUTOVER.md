@@ -44,32 +44,52 @@ rollback no longer depending on legacy authentication.
 
 `npm run services:activate -- --environment staging --activation config/service-auth-activation.staging.json --plan`
 is read-only and default-safe. It uses the repository-owned structured D1 REST
-reader with the existing `CLOUDFLARE_API_TOKEN` environment contract to verify
-the registered staging D1 UUID/name and read its ordered migration list. It
-emits a redacted exact plan and reports independent `partialExpandReady`,
-`expandReady`, `compatibilityReady`, and `activationReady` states. The current
-canonical `0028` partial-EXPAND state remains blocked pending `0029`–`0031`;
-`0031` is an explicit safe stop blocked pending COMPATIBILITY; only `0032` is
-activation-ready. Tokens and raw API responses are never included in plans or
-receipts.
+reader with the scoped D1-read credential held only in the approved macOS
+Keychain item. It verifies the registered staging D1 UUID/name, reads its
+ordered migration list, and reads only the deterministic activation run,
+canonical-principal, credential-status, grant-status, and audit-event state.
+It emits a redacted exact plan and reports independent `partialExpandReady`,
+`expandReady`, `compatibilityReady`, and `activationReady` states. A plan with
+an already-complete activation fails closed as
+`ACTIVATION_ALREADY_SATISFIED`; any partial or unexpected canonical state fails
+closed as `ACTIVATION_STATE_CONFLICT`, while a prior recovery remains blocked
+as `ACTIVATION_ALREADY_REVOKED`. Tokens, credential hashes, audit details, and raw
+API responses are never included in plans or receipts.
 
 An eventual `--apply` has to fail closed unless its approved plan, confirmation
 token, clean Git SHA and branch, staging registry/D1 ID, exact EXPAND **and**
-COMPATIBILITY migrations, and a fresh matching backup receipt all agree. Its state record is
-append-only: `PLANNED`, `SECRET_STAGED`, `D1_ACTIVE`, `VERIFIED`, `ACTIVE`,
-or a failure/rollback state. Plain bearers are generated only at the approved
-operation, stored only as Cloudflare Web Worker secrets, and represented in D1
-only by SHA-256 hashes. Receipts record names, counts, grants, backup and plan
-references, and results—never bearer values or hashes.
+COMPATIBILITY migrations, fresh structured D1 `ABSENT` state, and a fresh
+matching backup receipt all agree. Its state record is append-only:
+`PLANNED`, `SECRET_STAGED`, `D1_ACTIVE`, `VERIFIED`, `ACTIVE`, or a
+failure/rollback state. Plain bearers are generated only at the approved
+operation, supplied to Wrangler by stdin, stored only as Cloudflare Web Worker
+secrets, and represented in D1 only by SHA-256 hashes. Mutation and metadata
+Wrangler children strip inherited `CLOUDFLARE_*`, `CF_*`, and `WRANGLER_*`
+variables, then use only the reviewed Keychain/OAuth boundary. Each attempt
+generates a fresh receipt-only release-attempt ID. Receipts record names,
+counts, version/deployment metadata, backup and plan references, and
+results—never bearer values or hashes.
+
+`--status` is a separate read-only diagnostic: it reports the same structured
+D1 state together with Worker version, deployment, and secret-name metadata.
+It does not create a version or change traffic. `--revoke` is not an alias for
+plan or apply: it requires a plan showing the current activation run and a
+separate `REVOKE:<activation-id>:<plan-sha-prefix>` confirmation derived from
+that exact plan, plus an output receipt path.
 
 Cloudflare cannot transactionally combine D1 with Worker secret/version
 changes. The future release order is: fresh backup; additive migrations; plan;
-stage a compatible Web version containing the four secrets without traffic;
-atomically activate D1 principals/hashes/grants; deploy compatible receivers;
-route Web traffic; protected no-op authorization probes; then record receipt.
-If D1 activation fails, do not route traffic to the staged version. If a
-post-deploy probe fails, roll Workers back first, then revoke canonical
-credentials and append a rollback receipt.
+capture the latest Worker-version, secret-name, and deployment metadata; stage
+a compatible Web version containing the four secrets without traffic; require a
+fresh zero-traffic version and unchanged deployment metadata; atomically
+activate D1 principals/hashes/grants; deploy compatible receivers; route Web
+traffic; protected no-op authorization probes; then record receipt. If D1
+activation fails, do not route traffic to the staged version. If a post-deploy
+probe fails, roll Workers back first, then use the explicit confirmed
+`--revoke` recovery path to revoke canonical credentials and append a rollback
+receipt. Recovery re-reads structured D1 state after the deterministic revoke
+SQL and accepts only `REVOKED`; it never changes Worker traffic or legacy
+authentication.
 
 ## Proof and telemetry
 
