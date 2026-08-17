@@ -25,15 +25,15 @@ target in this architecture.
 
 The historical Phase 2A EXPAND attempt submitted `0028_migration_ledger.sql`.
 Its local Wrangler result was ambiguous, but canonical D1 history confirms
-that `0028` is applied. `0029`–`0031` and `0032` remain unapplied. `0028` must
-not be replayed, removed, or manually changed in `d1_migrations`; the next
-separately approved range begins at `0029`. `0029` creates only additive
-canonical principal structures. `0030` is unchanged. `0031` adds only dormant
-activation records and telemetry. None of these migrations touches
-`identity_audit_service_scope`.
-`0032_service_auth_compatibility.sql` is the separate, reviewed migration that
-recreates the SQLite audit trigger with the legacy and canonical scoped
-branches. It is a compatibility release, not an expand or contract release.
+that `0028` is applied. Subsequent reviewed EXPAND releases applied
+`0029`–`0031`, and the reviewed COMPATIBILITY release applied
+`0032_service_auth_compatibility.sql`; canonical staging history is contiguous
+through `0032`. None of `0028`–`0031` touches
+`identity_audit_service_scope`. `0032` recreates the SQLite audit trigger with
+the legacy and canonical scoped branches. It is a compatibility release, not
+an expand or contract release. These migrations must not be replayed, removed,
+or manually changed in `d1_migrations`; the next separately approved action is
+canonical service-auth activation, not another migration attempt.
 
 Legacy tables, secret names, and legacy trigger acceptance must not be removed
 in this phase. A later contract migration requires every canonical Worker to
