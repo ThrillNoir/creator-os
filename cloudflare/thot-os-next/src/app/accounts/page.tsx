@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, saveDropboxCatalogueSourceAction } from "@/app/actions";
+import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, saveDropboxCatalogueSourceAction, startInstagramReconnectAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
@@ -17,6 +17,18 @@ type FanslySetup = {
   bridge_last_seen_at: string | null;
 };
 type DropboxSource = { dropbox_root: string | null; dropbox_link: string | null };
+type InstagramSetup = {
+  id: string;
+  label: string;
+  handle: string | null;
+  connection_status: string;
+  publishing_authority: string;
+  external_identity_confirmed_at: string | null;
+  provider_status: string | null;
+  display_name: string | null;
+  provider_error: string | null;
+  last_analytics_sync_at: string | null;
+};
 
 function formatDate(value: string | null) {
   if (!value) return "Not recorded";
@@ -24,17 +36,30 @@ function formatDate(value: string | null) {
   return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString("en-AU", { timeZone: "Australia/Perth", dateStyle: "medium", timeStyle: "short" });
 }
 
+function instagramStatus(setup: InstagramSetup | null | undefined) {
+  if (!setup) return "Account setup required";
+  if (setup.connection_status === "connected" && setup.provider_status === "active") return "Connected";
+  if (setup.connection_status === "needs_reconnection") return "Reconnect required";
+  return "Connection required";
+}
+
 export default async function AccountsPage({ searchParams }: { searchParams: Promise<{ saved?: string }> }) {
   const [query, context] = await Promise.all([searchParams, requireCreatorContext()]);
   const creatorId = context.creator.creator_id;
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
-  const [setup, dropbox] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
+  const [setup, instagram, dropbox] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
     bp.label AS profile_label,bp.status AS profile_status,abp.verified_at AS profile_verified_at,
     (SELECT MAX(bc.last_seen_at) FROM bridge_credentials bc WHERE bc.creator_id=oa.creator_id AND bc.account_id=oa.id AND bc.status='active') AS bridge_last_seen_at
     FROM operational_accounts oa
     LEFT JOIN account_browser_profiles abp ON abp.creator_id=oa.creator_id AND abp.account_id=oa.id
     LEFT JOIN browser_profiles bp ON bp.creator_id=abp.creator_id AND bp.id=abp.profile_id
     WHERE oa.creator_id=? AND oa.platform='fansly' ORDER BY oa.label LIMIT 1`).bind(creatorId).first<FanslySetup>(),
+    cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.publishing_authority,oa.external_identity_confirmed_at,
+      pc.status AS provider_status,pc.display_name,pc.last_error AS provider_error,state.last_analytics_sync_at
+      FROM operational_accounts oa
+      LEFT JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram'
+      LEFT JOIN instagram_sync_state state ON state.creator_id=oa.creator_id
+      WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label LIMIT 1`).bind(creatorId).first<InstagramSetup>(),
     cloudflareEnv().DB.prepare("SELECT dropbox_root,dropbox_link FROM creators WHERE id=?").bind(creatorId).first<DropboxSource>(),
   ]);
   const hasAssignedProfile = Boolean(setup?.profile_label && setup.profile_status !== "revoked");
@@ -46,6 +71,16 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     {query.saved === "dropbox_source_saved" && <div className="success">Dropbox catalogue source saved. You can now refresh this creator&apos;s read-only catalogue from Content Library.</div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">DROPBOX</span><h2>Read-only catalogue source</h2><p>Record the Dropbox folder path used for catalogue reads and, if useful, the shared file or folder link for the team. THOT OS never edits, moves or deletes source media.</p></div><span>{dropbox?.dropbox_root ? "Source configured" : "Source required"}</span></div>
       {canManageIdentity ? <form action={saveDropboxCatalogueSourceAction} className="inline-form dropbox-source-form"><label>Dropbox folder path<input name="dropboxRoot" required defaultValue={dropbox?.dropbox_root ?? ""} placeholder="/Creator OS/Creator name" autoComplete="off" /></label><label>Dropbox file or folder link <small>(reference only)</small><input name="dropboxLink" type="url" defaultValue={dropbox?.dropbox_link ?? ""} placeholder="https://www.dropbox.com/..." autoComplete="off" /></label><div className="section-divider"><span>The Dropbox link identifies the source for people; the folder path is used for the API catalogue read because a shared-link URL does not reliably include its Dropbox path.</span></div><button className="primary" type="submit">Save Dropbox source</button></form> : <div className="empty"><b>Dropbox source is not configured.</b><span>An agency administrator can add the creator&apos;s read-only Dropbox source.</span></div>}
+    </section>
+    <section className="panel connection-setup">
+      <div className="section-heading"><div><span className="eyebrow">INSTAGRAM</span><h2>Official Instagram connection</h2><p>Connect the creator&apos;s professional Instagram account through the approved provider. Connecting verifies the visible account identity; it does not create, schedule or publish content.</p></div><span>{instagramStatus(instagram)}</span></div>
+      {!instagram && <div className="empty"><b>Instagram account setup is required.</b><span>This creator does not yet have an Instagram account record. Add it during creator onboarding before starting OAuth.</span></div>}
+      {instagram && <div className="fansly-workflow">
+        <div className="connection-details"><div><small>Configured account</small><strong>{instagram.label}</strong><span>{instagram.handle || "Handle confirmed during connection"}</span></div><div><small>Provider identity</small><strong>{instagram.display_name || "Not verified"}</strong><span>{instagram.provider_status || "Connection not started"}</span></div><div><small>Latest analytics sync</small><strong>{formatDate(instagram.last_analytics_sync_at)}</strong><span>{instagram.publishing_authority === "confirmed" ? "Publishing authority confirmed" : "Publishing remains restricted"}</span></div></div>
+        {instagram.provider_error && <div className="connection-banner attention"><div><strong>Connection needs attention</strong><span>{instagram.provider_error}</span></div></div>}
+        {canManageIdentity ? <div className="connection-steps"><section><span>1</span><div><h3>{instagramStatus(instagram) === "Connected" ? "Reconnect the official account" : "Connect the official account"}</h3><p>OAuth opens the provider&apos;s native sign-in page. Complete credentials and 2FA there only. THOT OS verifies that the returned Instagram identity belongs to this creator workspace before enabling data sync.</p><form action={startInstagramReconnectAction}><button className="primary" type="submit">{instagramStatus(instagram) === "Connected" ? "Reconnect Instagram" : "Connect Instagram"}</button></form></div></section></div> : <div className="empty"><b>Instagram is {instagramStatus(instagram).toLowerCase()}.</b><span>An agency administrator can start or repair the provider connection.</span></div>}
+        <div className="form-actions"><Link className="secondary-action" href="/operations?platform=instagram&section=analytics">Open read-only analytics</Link></div>
+      </div>}
     </section>
     <section className="panel connection-setup">
       <div className="section-heading"><div><span className="eyebrow">FANSLY</span><h2>Fansly vault bridge</h2><p>THOT OS records a creator-scoped account and Chrome bridge assignment; it never asks for or stores a Fansly password.</p></div><span>{setup?.external_identity_confirmed_at ? "Identity confirmed" : setup ? "Setup in progress" : "Not configured"}</span></div>

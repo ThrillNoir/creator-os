@@ -60,6 +60,22 @@ test("viewer interface is read-only and hidden controls are denied server-side",
   assert.match(actions, /identity\.creator\.role/);
 });
 
+test("Accounts exposes creator-scoped Instagram OAuth state without treating connection as publishing", async () => {
+  const [accounts, actions] = await Promise.all([
+    source("../src/app/accounts/page.tsx"),
+    source("../src/app/actions.ts"),
+  ]);
+  assert.match(accounts, /Official Instagram connection/);
+  assert.match(accounts, /WHERE oa\.creator_id=\? AND oa\.platform='instagram'/);
+  assert.match(accounts, /provider_connections pc ON pc\.creator_id=oa\.creator_id AND pc\.service='instagram'/);
+  assert.match(accounts, /startInstagramReconnectAction/);
+  assert.match(accounts, /Connect Instagram/);
+  assert.match(accounts, /does not create, schedule or publish content/i);
+  assert.match(accounts, /Open read-only analytics/);
+  assert.match(actions, /requireCreatorContext\("manage_identity"\)/);
+  assert.match(actions, /instagram\.connection\.manage/);
+});
+
 test("creator APIs return only the effective server-derived workspace", async () => {
   const [libraryApi, previewApi, health, access, qaPage] = await Promise.all([
     source("../src/app/api/library/route.ts"),
