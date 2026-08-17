@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateBackup } from "./bounded-d1-migrations-lib.mjs";
-import { createStructuredD1ReadClient } from "./cloudflare-d1-read.mjs";
+import { createActivationD1ReadClient } from "./service-auth-activate.mjs";
 import { readDeploymentRegistry, readJsoncFile } from "./deployment-preflight.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -140,7 +140,12 @@ function executeFile(authority, databaseName, sql, markSubmitted) {
   }
 }
 
-export async function makePlan(options, d1Client = createStructuredD1ReadClient()) {
+/**
+ * Bounded migration planning reads staging through the same scoped Keychain
+ * credential as service-auth planning. The release shell never needs a raw
+ * CLOUDFLARE_API_TOKEN in its environment.
+ */
+export async function makePlan(options, d1Client = createActivationD1ReadClient()) {
   if (options.environment !== "staging") throw new Error("An explicit staging environment is required.");
   const authority = loadAuthority();
   const inventoryDirectory = path.resolve(path.dirname(canonicalConfigPath), authority.target.migrationsDir);
