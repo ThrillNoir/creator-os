@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, sha256, withActivationStatus } from "./service-auth-activation-lib.mjs";
@@ -316,7 +317,19 @@ function activationD1Target(registry, activation) {
 }
 
 export function d1Execute(registry, databaseName, statement, runMutation = runWranglerMutation) {
-  return runMutation(["--cwd", webWorkerDirectory, "d1", "execute", databaseName, "--remote", "--command", statement, "--json"], registry, { operation: "D1 activation" });
+  if (typeof statement !== "string" || statement.trim() === "") throw new Error("D1 activation requires one non-empty reviewed SQL payload.");
+  // Cloudflare's D1 query endpoint rejects transaction controls passed via
+  // --command. The activation and revoke SQL use an explicit transaction, so
+  // provide it through Wrangler's file/import path instead. The temporary file
+  // is owner-only, never named after a credential, and removed immediately.
+  const directory = mkdtempSync(path.join(os.tmpdir(), "thot-os-service-auth-d1-"));
+  const file = path.join(directory, "activation.sql");
+  try {
+    writeFileSync(file, `${statement}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    return runMutation(["--cwd", webWorkerDirectory, "d1", "execute", databaseName, "--remote", "--file", file, "--json"], registry, { operation: "D1 activation" });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 const d1MutationPreflightSql = "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1";

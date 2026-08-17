@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Execute, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -231,6 +231,21 @@ test("D1 write authorization preflight executes only a strictly verified zero-ef
     assert.throws(() => parseD1WriteAuthorizationPreflightJson(JSON.stringify([{ results: [], success: true, meta }])), /zero-effect/i);
   }
   assert.throws(() => parseD1WriteAuthorizationPreflightJson("spinner\n[]"), /clean JSON/i);
+});
+
+test("transactional activation SQL uses an owner-only temporary Wrangler file and removes it", async () => {
+  const [, , registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  let stagedPath;
+  d1Execute(registry, "thot-os-staging", "BEGIN IMMEDIATE; SELECT 1; COMMIT;", (args, _registry, options) => {
+    assert.equal(options.operation, "D1 activation");
+    assert.equal(args.includes("--command"), false);
+    const index = args.indexOf("--file");
+    assert.ok(index >= 0);
+    stagedPath = args[index + 1];
+    assert.equal(statSync(stagedPath).mode & 0o777, 0o600);
+    assert.equal(readFileSync(stagedPath, "utf8"), "BEGIN IMMEDIATE; SELECT 1; COMMIT;\n");
+  });
+  assert.equal(existsSync(stagedPath), false);
 });
 
 test("Worker metadata is strictly parsed and proves secret staging did not route traffic", async () => {
@@ -463,7 +478,8 @@ test("secret staging is an stdin-only bulk update with no secret file or command
   assert.doesNotMatch(String(calls[0].args), /memory-only-test-secret/);
   assert.throws(() => stageWebSecrets(plan, registry, credentials, () => "unexpected output"), /verifiable version acknowledgement/i);
   const source = await readFile(path.join(root, "scripts/service-auth-activate.mjs"), "utf8");
-  assert.doesNotMatch(source, /mkdtempSync|os\.tmpdir|web-secrets\.json|--secrets-file/);
+  assert.doesNotMatch(source, /web-secrets\.json|--secrets-file/);
+  assert.match(source, /thot-os-service-auth-d1-/);
 });
 
 test("secret-stage failure does not attempt canonical D1 activation", async () => {
