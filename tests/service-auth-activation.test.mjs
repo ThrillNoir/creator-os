@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, assertD1MutationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, assertD1MutationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -38,6 +38,12 @@ function stagedSecretResult(plan) {
     secretNames: plan.principals.map((principal) => principal.secretName),
     stagedVersionId: "unpublished-secret-version",
   };
+}
+
+function mutationFailure(category, message = "untrusted sensitive child diagnostic") {
+  const error = new Error(message);
+  Object.defineProperty(error, "failureCategory", { value: category });
+  return error;
 }
 
 function validBackupReceipt(plan, registry) {
@@ -389,6 +395,14 @@ test("activation mutations strip read credentials and use the Wrangler keychain 
     },
   });
   assert.equal(captured, "metadata-only acknowledgement");
+  const rawChildError = Object.assign(new Error("untrusted raw child error"), { stderr: "OAuth rejected Bearer value-that-must-not-escape" });
+  assert.throws(() => runWranglerMutation(["d1", "execute"], registry, { execFileSyncImpl: () => { throw rawChildError; } }), (error) => {
+    assert.equal(error.failureCategory, "OAUTH_AUTHORIZATION_FAILED");
+    assert.doesNotMatch(error.message, /value-that-must-not-escape|Bearer/);
+    return true;
+  });
+  assert.equal(redactedMutationFailureCategory(mutationFailure("D1_COMMAND_REJECTED")), "D1_COMMAND_REJECTED");
+  assert.equal(redactedMutationFailureCategory(new Error("untrusted raw child error")), "UNKNOWN_MUTATION_FAILURE");
 });
 
 test("secret staging is an stdin-only bulk update with no secret file or command-line secret", async () => {
@@ -520,14 +534,18 @@ test("failed automatic revocation fail-closes as rollback-required without revea
     stageSecrets: () => stagedSecretResult(plan),
     executeD1: () => {
       d1Calls += 1;
-      throw new Error("simulated mutation transport failure");
+      throw d1Calls === 1
+        ? mutationFailure("D1_COMMAND_REJECTED", "untrusted D1 failure with Bearer value-that-must-not-escape")
+        : mutationFailure("OAUTH_AUTHORIZATION_FAILED", "untrusted revoke failure with Bearer value-that-must-not-escape");
     },
     writeReceipt: (_output, receipt) => receipts.push(receipt),
   }), /automatic canonical-credential revocation did not complete/i);
   assert.equal(d1Calls, 2);
   assert.equal(receipts.at(-1).result, "ROLLBACK_REQUIRED");
   assert.equal(receipts.at(-1).legacyAuthenticationRemoved, false);
-  assert.doesNotMatch(JSON.stringify(receipts), /rollback-required-test-secret/);
+  assert.equal(receipts.at(-1).activationFailureCategory, "D1_COMMAND_REJECTED");
+  assert.equal(receipts.at(-1).automaticRevokeFailureCategory, "OAUTH_AUTHORIZATION_FAILED");
+  assert.doesNotMatch(JSON.stringify(receipts), /rollback-required-test-secret|value-that-must-not-escape|Bearer|untrusted/);
 });
 
 test("revocation SQL is deterministic, idempotent, and limited to canonical activation records", async () => {

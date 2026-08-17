@@ -96,6 +96,13 @@ export function classifyWranglerMutationFailure(error) {
   return "UNKNOWN_MUTATION_FAILURE";
 }
 
+const mutationFailureCategories = new Set(["OAUTH_AUTHORIZATION_FAILED", "TRANSPORT_FAILED", "D1_COMMAND_REJECTED", "UNKNOWN_MUTATION_FAILURE"]);
+
+/** Returns only an allow-listed error category; never propagate child output. */
+export function redactedMutationFailureCategory(error) {
+  return mutationFailureCategories.has(error?.failureCategory) ? error.failureCategory : "UNKNOWN_MUTATION_FAILURE";
+}
+
 export function runWranglerMutation(args, registry, { input, captureStdout = false, operation = "mutation", execFileSyncImpl = execFileSync } = {}) {
   try {
     const stdout = execFileSyncImpl(wrangler, args, {
@@ -108,7 +115,9 @@ export function runWranglerMutation(args, registry, { input, captureStdout = fal
     return captureStdout ? String(stdout) : "";
   } catch (error) {
     const failure = classifyWranglerMutationFailure(error);
-    throw new Error(`Wrangler staging ${operation} failed through the approved OAuth/Keychain path (${failure}).`);
+    const safeError = new Error(`Wrangler staging ${operation} failed through the approved OAuth/Keychain path (${failure}).`);
+    Object.defineProperty(safeError, "failureCategory", { value: failure });
+    throw safeError;
   }
 }
 
@@ -534,6 +543,7 @@ export function applyActivation({
   let workerSecretMetadata;
   let secretsMayBeStaged = false;
   let d1MayHaveBeenAttempted = false;
+  let activationFailureCategory = "UNKNOWN_MUTATION_FAILURE";
   try {
     preflightD1Mutation(registry, activation);
     const workerMetadataBefore = captureMetadata(registry);
@@ -555,17 +565,18 @@ export function applyActivation({
     const receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "D1_ACTIVE", principalCount: plan.principals.length, secretNames: plan.principals.map((entry) => entry.secretName), creatorGrantCount: plan.grants.length, d1CredentialHashesInstalled: plan.principals.length, secretValuesPersistedLocally: false, workerSecretMetadata, nextStep: "Deploy compatible receivers, route the staged Web version, then run protected no-op probes." });
     writeReceipt(output, receipt);
     return receipt;
-  } catch {
+  } catch (error) {
+    activationFailureCategory = redactedMutationFailureCategory(error);
     let receipt;
     if (secretsMayBeStaged && d1MayHaveBeenAttempted) {
       try {
         executeD1(registry, activation.expected.databaseName, revokeActivationSql({ plan, activation }));
-        receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "REVOKED", stagedSecretNames: plan.principals.map((entry) => entry.secretName), canonicalCredentialsDisabled: plan.principals.length, legacyAuthenticationRemoved: false, workerSecretMetadata, detail: "Activation did not complete; deterministic canonical credentials and grants were revoked." });
-      } catch {
-        receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "ROLLBACK_REQUIRED", stagedSecretNames: plan.principals.map((entry) => entry.secretName), legacyAuthenticationRemoved: false, workerSecretMetadata, detail: "Activation outcome is uncertain and automatic canonical-credential revocation did not complete." });
+        receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "REVOKED", stagedSecretNames: plan.principals.map((entry) => entry.secretName), canonicalCredentialsDisabled: plan.principals.length, legacyAuthenticationRemoved: false, activationFailureCategory, workerSecretMetadata, detail: "Activation did not complete; deterministic canonical credentials and grants were revoked." });
+      } catch (revokeError) {
+        receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "ROLLBACK_REQUIRED", stagedSecretNames: plan.principals.map((entry) => entry.secretName), legacyAuthenticationRemoved: false, activationFailureCategory, automaticRevokeFailureCategory: redactedMutationFailureCategory(revokeError), workerSecretMetadata, detail: "Activation outcome is uncertain and automatic canonical-credential revocation did not complete." });
       }
     } else {
-      receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "FAILED", stagedSecretNames: secretsMayBeStaged ? plan.principals.map((entry) => entry.secretName) : [], canonicalCredentialsDisabled: 0, legacyAuthenticationRemoved: false, workerSecretMetadata, detail: "D1 canonical credentials were not attempted; staged secrets cannot authenticate without a matching canonical D1 credential hash." });
+      receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "FAILED", stagedSecretNames: secretsMayBeStaged ? plan.principals.map((entry) => entry.secretName) : [], canonicalCredentialsDisabled: 0, legacyAuthenticationRemoved: false, activationFailureCategory, workerSecretMetadata, detail: "D1 canonical credentials were not attempted; staged secrets cannot authenticate without a matching canonical D1 credential hash." });
     }
     try { writeReceipt(output, receipt); } catch { /* The failure path must not emit secret-bearing diagnostics. */ }
     if (receipt.result === "REVOKED") throw new Error("Activation failed; canonical credentials and grants were revoked while legacy authentication remained unchanged.");
@@ -606,13 +617,14 @@ export async function revokeActivation({
       activationStatus: status,
       detail: "Explicit recovery revoked only deterministic canonical credentials and grants; no Worker traffic was changed.",
     });
-  } catch {
+  } catch (error) {
     const failureReceipt = redactActivationReceipt({
       releaseAttemptId,
       activationId: plan.activationId,
       environment: "staging",
       result: "ROLLBACK_REQUIRED",
       legacyAuthenticationRemoved: false,
+      recoveryFailureCategory: redactedMutationFailureCategory(error),
       detail: "Explicit recovery could not prove deterministic canonical revocation; stop before any traffic change.",
     });
     try { writeReceipt(output, failureReceipt); } catch { /* Never emit child diagnostics or credential material. */ }
