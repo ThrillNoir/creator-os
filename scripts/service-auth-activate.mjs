@@ -318,10 +318,12 @@ function activationD1Target(registry, activation) {
 
 export function d1Execute(registry, databaseName, statement, runMutation = runWranglerMutation) {
   if (typeof statement !== "string" || statement.trim() === "") throw new Error("D1 activation requires one non-empty reviewed SQL payload.");
-  // Cloudflare's D1 query endpoint rejects transaction controls passed via
-  // --command. The activation and revoke SQL use an explicit transaction, so
-  // provide it through Wrangler's file/import path instead. The temporary file
-  // is owner-only, never named after a credential, and removed immediately.
+  // Cloudflare D1 rejects SQL BEGIN/COMMIT controls even through --file. The
+  // activation and revoke batches therefore avoid transaction syntax and are
+  // deliberately recoverable: a failed batch is treated as potentially partial
+  // and deterministic canonical records are revoked before any traffic change.
+  // The file transport keeps the reviewed batch out of the command line; it is
+  // owner-only, never named after a credential, and removed immediately.
   const directory = mkdtempSync(path.join(os.tmpdir(), "thot-os-service-auth-d1-"));
   const file = path.join(directory, "activation.sql");
   try {
@@ -505,7 +507,7 @@ export function stageWebSecrets(plan, registry, credentials, runMutation = runWr
 export function activationSql({ plan, activation, credentials, backupReceipt }) {
   const registrySha256 = sha256(readJson(defaults.registry));
   const migrationSha256 = sha256(plan.observedMigrations);
-  const statements = ["BEGIN IMMEDIATE;"];
+  const statements = [];
   statements.push(`INSERT INTO service_auth_activation_runs (id,environment,plan_sha256,registry_sha256,backup_receipt_sha256,target_database_id,target_migration_state_sha256,git_sha,git_branch,operator_identity) VALUES (${sql(plan.activationId)},'staging',${sql(plan.planSha256)},${sql(registrySha256)},${sql(backupReceipt.sha256)},${sql(plan.database.databaseId)},${sql(migrationSha256)},${sql(plan.git.sha)},${sql(plan.git.branch)},${sql(activation.operatorIdentity)});`);
   statements.push(`INSERT INTO service_auth_activation_steps (id,activation_id,step,detail) VALUES (${sql(stableId(plan.activationId, "planned"))},${sql(plan.activationId)},'PLANNED','{}');`);
   for (const principal of plan.principals) {
@@ -521,7 +523,6 @@ export function activationSql({ plan, activation, credentials, backupReceipt }) 
   }
   statements.push(`INSERT INTO service_auth_activation_steps (id,activation_id,step,detail) VALUES (${sql(stableId(plan.activationId, "secret-staged"))},${sql(plan.activationId)},'SECRET_STAGED',${sql(JSON.stringify({ secretCount: plan.principals.length, secretValuesPersistedLocally: false }))});`);
   statements.push(`INSERT INTO service_auth_activation_steps (id,activation_id,step,detail) VALUES (${sql(stableId(plan.activationId, "d1-active"))},${sql(plan.activationId)},'D1_ACTIVE',${sql(JSON.stringify({ principalCount: plan.principals.length, grantCount: plan.grants.length }))});`);
-  statements.push("COMMIT;");
   return statements.join("\n");
 }
 
@@ -530,7 +531,7 @@ export function activationSql({ plan, activation, credentials, backupReceipt }) 
  * records. It never deletes data and never touches legacy auth tables.
  */
 export function revokeActivationSql({ plan, activation }) {
-  const statements = ["BEGIN IMMEDIATE;"];
+  const statements = [];
   const principalIds = plan.principals.map((principal) => sql(principalId(plan, principal))).join(",");
   const credentialIds = plan.principals.map((principal) => sql(credentialId(plan, principal))).join(",");
   statements.push(`UPDATE service_principal_creator_grants SET status='revoked', revoked_at=COALESCE(revoked_at,CURRENT_TIMESTAMP) WHERE service_principal_id IN (${principalIds});`);
@@ -542,7 +543,6 @@ export function revokeActivationSql({ plan, activation }) {
     statements.push(`INSERT OR IGNORE INTO service_principal_audit_events (id,service_principal_id,credential_id,event_type,actor_identity,detail) SELECT ${sql(stableId(plan.activationId, `credential-revoked:${principal.id}`))},${sql(currentPrincipalId)},${sql(currentCredentialId)},'credential_revoked',${sql(activation.operatorIdentity)},${sql(JSON.stringify({ activationId: plan.activationId, reason: "activation_rollback" }))} WHERE EXISTS (SELECT 1 FROM service_principals WHERE id=${sql(currentPrincipalId)});`);
   }
   statements.push(`INSERT OR IGNORE INTO service_auth_activation_steps (id,activation_id,step,detail) SELECT ${sql(stableId(plan.activationId, "revoked"))},${sql(plan.activationId)},'REVOKED',${sql(JSON.stringify({ canonicalCredentialsDisabled: plan.principals.length, legacyAuthenticationRemoved: false }))} WHERE EXISTS (SELECT 1 FROM service_auth_activation_runs WHERE id=${sql(plan.activationId)});`);
-  statements.push("COMMIT;");
   return statements.join("\n");
 }
 

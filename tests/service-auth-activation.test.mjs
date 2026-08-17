@@ -233,19 +233,27 @@ test("D1 write authorization preflight executes only a strictly verified zero-ef
   assert.throws(() => parseD1WriteAuthorizationPreflightJson("spinner\n[]"), /clean JSON/i);
 });
 
-test("transactional activation SQL uses an owner-only temporary Wrangler file and removes it", async () => {
+test("activation SQL uses an owner-only temporary Wrangler file and removes it", async () => {
   const [, , registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
   let stagedPath;
-  d1Execute(registry, "thot-os-staging", "BEGIN IMMEDIATE; SELECT 1; COMMIT;", (args, _registry, options) => {
+  d1Execute(registry, "thot-os-staging", "SELECT 1;", (args, _registry, options) => {
     assert.equal(options.operation, "D1 activation");
     assert.equal(args.includes("--command"), false);
     const index = args.indexOf("--file");
     assert.ok(index >= 0);
     stagedPath = args[index + 1];
     assert.equal(statSync(stagedPath).mode & 0o777, 0o600);
-    assert.equal(readFileSync(stagedPath, "utf8"), "BEGIN IMMEDIATE; SELECT 1; COMMIT;\n");
+    assert.equal(readFileSync(stagedPath, "utf8"), "SELECT 1;\n");
   });
   assert.equal(existsSync(stagedPath), false);
+});
+
+test("activation and recovery SQL avoid D1-rejected transaction controls", async () => {
+  const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
+  const credentials = Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `batch-test-secret-${index}`.padEnd(48, "x")]));
+  assert.doesNotMatch(activationSql({ plan, activation, credentials, backupReceipt: { sha256: "b".repeat(64) } }), /\bBEGIN\b|\bCOMMIT\b/i);
+  assert.doesNotMatch(revokeActivationSql({ plan, activation }), /\bBEGIN\b|\bCOMMIT\b/i);
 });
 
 test("Worker metadata is strictly parsed and proves secret staging did not route traffic", async () => {
