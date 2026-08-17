@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, assertD1MutationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -197,6 +197,31 @@ test("Wrangler OAuth/D1 mutation preflight is fixed, read-only, isolated, and re
   assert.doesNotMatch(source, /console\.(log|error)\([^\n]*(stderr|diagnostic)/);
 });
 
+test("D1 write authorization preflight executes only a strictly verified zero-effect UPDATE", async () => {
+  const [activation, , registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const calls = [];
+  const safeResult = JSON.stringify([{ results: [], success: true, meta: { changes: 0, rows_written: 0, changed_db: false } }]);
+  const result = assertD1WriteAuthorizationPreflight(registry, activation, (args, target, options) => {
+    calls.push({ args, target, options });
+    return safeResult;
+  });
+  assert.deepEqual(result, { result: "WRANGLER_OAUTH_D1_WRITE_READY", environment: "staging", databaseName: activation.expected.databaseName, changes: 0, rowsWritten: 0, changedDb: false });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.captureStdout, true);
+  assert.equal(calls[0].options.operation, "D1 zero-effect write-authorization preflight");
+  assert.equal(calls[0].args.at(calls[0].args.indexOf("--command") + 1), "UPDATE service_auth_activation_runs SET id = id WHERE 0 = 1");
+  assert.doesNotMatch(JSON.stringify(calls[0].args), /token_hash|INSERT|DELETE|BEGIN|COMMIT|DROP|CREATE/i);
+  assert.deepEqual(parseD1WriteAuthorizationPreflightJson(safeResult), { changes: 0, rowsWritten: 0, changedDb: false });
+  for (const meta of [
+    { changes: 1, rows_written: 0, changed_db: false },
+    { changes: 0, rows_written: 1, changed_db: false },
+    { changes: 0, rows_written: 0, changed_db: true },
+  ]) {
+    assert.throws(() => parseD1WriteAuthorizationPreflightJson(JSON.stringify([{ results: [], success: true, meta }])), /zero-effect/i);
+  }
+  assert.throws(() => parseD1WriteAuthorizationPreflightJson("spinner\n[]"), /clean JSON/i);
+});
+
 test("Worker metadata is strictly parsed and proves secret staging did not route traffic", async () => {
   const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
   const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
@@ -316,6 +341,7 @@ test("activation CLI has explicit plan/apply modes and receipts reject secret ma
   assert.equal(parseArgs(["--environment", "staging", "--apply"]).mode, "apply");
   assert.equal(parseArgs(["--environment", "staging", "--status"]).mode, "status");
   assert.equal(parseArgs(["--environment", "staging", "--mutation-preflight"]).mode, "mutation-preflight");
+  assert.equal(parseArgs(["--environment", "staging", "--write-authorization-preflight"]).mode, "write-authorization-preflight");
   assert.equal(parseArgs(["--environment", "staging", "--revoke"]).mode, "revoke");
   assert.throws(() => parseArgs(["--environment", "staging", "--apply", "--revoke"]), /exactly one/i);
   assert.throws(() => redactActivationReceipt({ secret: "not allowed" }), /prohibited/i);

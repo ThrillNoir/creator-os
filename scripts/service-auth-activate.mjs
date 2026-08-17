@@ -19,7 +19,7 @@ export function parseArgs(argv) {
   const options = { mode: "plan" };
   let explicitMode = false;
   const setMode = (mode) => {
-    if (explicitMode) throw new Error("Choose exactly one of --plan, --status, --mutation-preflight, --apply, or --revoke.");
+    if (explicitMode) throw new Error("Choose exactly one of --plan, --status, --mutation-preflight, --write-authorization-preflight, --apply, or --revoke.");
     options.mode = mode;
     explicitMode = true;
   };
@@ -31,6 +31,7 @@ export function parseArgs(argv) {
     else if (arg === "--apply") setMode("apply");
     else if (arg === "--status") setMode("status");
     else if (arg === "--mutation-preflight") setMode("mutation-preflight");
+    else if (arg === "--write-authorization-preflight") setMode("write-authorization-preflight");
     else if (arg === "--revoke") setMode("revoke");
     else if (arg === "--output") options.output = path.resolve(argv[++i]);
     else if (arg === "--approved-plan") options.approvedPlan = path.resolve(argv[++i]);
@@ -165,6 +166,20 @@ export function parseWorkerVersionsJson(stdout) {
   // verification below binds to Wrangler's acknowledged version id rather
   // than relying on that ordering.
   return { latestVersionId: versionIds[0], versionIds };
+}
+
+export function parseD1WriteAuthorizationPreflightJson(stdout) {
+  const value = strictJson(stdout, "D1 write-authorization preflight");
+  if (!Array.isArray(value) || value.length !== 1) throw new Error("Wrangler D1 write-authorization preflight returned an invalid result set.");
+  const result = value[0];
+  const meta = result?.meta;
+  if (!result || typeof result !== "object" || Array.isArray(result) || result.success !== true || !meta || typeof meta !== "object" || Array.isArray(meta)) {
+    throw new Error("Wrangler D1 write-authorization preflight returned an invalid result.");
+  }
+  if (meta.changes !== 0 || meta.rows_written !== 0 || meta.changed_db !== false) {
+    throw new Error("Wrangler D1 write-authorization preflight did not prove a zero-effect statement.");
+  }
+  return { changes: 0, rowsWritten: 0, changedDb: false };
 }
 
 export function parseDeploymentStatusJson(stdout) {
@@ -305,6 +320,7 @@ export function d1Execute(registry, databaseName, statement, runMutation = runWr
 }
 
 const d1MutationPreflightSql = "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1";
+const d1WriteAuthorizationPreflightSql = "UPDATE service_auth_activation_runs SET id = id WHERE 0 = 1";
 
 /**
  * Validates the isolated Wrangler OAuth path with fixed, read-only SQL before
@@ -315,6 +331,17 @@ export function assertD1MutationPreflight(registry, activation, runMutation = ru
   const target = activationD1Target(registry, activation);
   runMutation(["--cwd", webWorkerDirectory, "d1", "execute", target.databaseName, "--remote", "--command", d1MutationPreflightSql, "--json"], registry, { operation: "D1 OAuth read preflight" });
   return { result: "WRANGLER_OAUTH_D1_READ_READY", environment: "staging", databaseName: target.databaseName };
+}
+
+/**
+ * Exercises D1's write-authorized query path with a fixed false-predicate
+ * UPDATE. The command must report that no row or database change occurred.
+ */
+export function assertD1WriteAuthorizationPreflight(registry, activation, runMutation = runWranglerMutation) {
+  const target = activationD1Target(registry, activation);
+  const stdout = runMutation(["--cwd", webWorkerDirectory, "d1", "execute", target.databaseName, "--remote", "--command", d1WriteAuthorizationPreflightSql, "--json"], registry, { captureStdout: true, operation: "D1 zero-effect write-authorization preflight" });
+  const proof = parseD1WriteAuthorizationPreflightJson(stdout);
+  return { result: "WRANGLER_OAUTH_D1_WRITE_READY", environment: "staging", databaseName: target.databaseName, ...proof };
 }
 
 const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
@@ -531,7 +558,7 @@ export function applyActivation({
   output,
   releaseAttemptId = createReleaseAttemptId(),
   generateCredentials = generateActivationCredentials,
-  preflightD1Mutation = assertD1MutationPreflight,
+  preflightD1Mutation = assertD1WriteAuthorizationPreflight,
   stageSecrets = stageWebSecrets,
   captureMetadata = captureWorkerMetadata,
   captureStagedMetadata,
@@ -658,7 +685,7 @@ function writeSafeJson(output, value) {
   return safe;
 }
 
-function usage() { return "Usage: npm run services:activate -- --environment staging --activation <approved activation json> [--plan|--status|--mutation-preflight|--apply|--revoke]. Plan, status, and mutation-preflight are read-only."; }
+function usage() { return "Usage: npm run services:activate -- --environment staging --activation <approved activation json> [--plan|--status|--mutation-preflight|--write-authorization-preflight|--apply|--revoke]. Plan, status, and mutation-preflight are read-only; write-authorization-preflight executes one verified zero-effect UPDATE."; }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
@@ -688,6 +715,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         console.log(JSON.stringify(status, null, 2));
       } else if (options.mode === "mutation-preflight") {
         console.log(JSON.stringify(writeSafeJson(options.output, assertD1MutationPreflight(registry, activation)), null, 2));
+      } else if (options.mode === "write-authorization-preflight") {
+        const preflight = assertD1WriteAuthorizationPreflight(registry, activation);
+        const migrationsAfter = await d1Migrations(registry, activation, d1Client);
+        const statusAfter = await readActivationStatus(registry, activation, statusPlan, d1Client);
+        if (JSON.stringify(migrationsAfter) !== JSON.stringify(observedMigrations) || !sameStatusObservation(statusAfter, d1ActivationStatus)) {
+          throw new Error("D1 write-authorization preflight did not preserve the structured staging state.");
+        }
+        console.log(JSON.stringify(writeSafeJson(options.output, { ...preflight, migrationStateUnchanged: true, canonicalActivationStateUnchanged: true }), null, 2));
       } else {
         if (!options.approvedPlan || !options.output) throw new Error(`${options.mode === "revoke" ? "Revoke" : "Apply"} requires --approved-plan and redacted --output receipt paths.`);
         const approvedPlan = readJson(options.approvedPlan);
