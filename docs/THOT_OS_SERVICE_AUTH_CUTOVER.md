@@ -72,7 +72,9 @@ results—never bearer values or hashes.
 
 `--status` is a separate read-only diagnostic: it reports the same structured
 D1 state together with Worker version, deployment, and secret-name metadata.
-It does not create a version or change traffic. `--revoke` is not an alias for
+Worker secret metadata is read through `versions view --json` for the newest
+listed version, not the unstable `versions secret list --latest-version`
+command. It does not create a version or change traffic. `--revoke` is not an alias for
 plan or apply: it requires a plan showing the current activation run and a
 separate `REVOKE:<activation-id>:<plan-sha-prefix>` confirmation derived from
 that exact plan, plus an output receipt path.

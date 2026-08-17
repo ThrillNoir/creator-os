@@ -139,7 +139,11 @@ export function parseWorkerVersionsJson(stdout) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Wrangler versions metadata contained an invalid version.");
     return { id: nonEmptyMetadataString(entry.id, "version id") };
   });
-  return { latestVersionId: versions.at(-1).id };
+  // Wrangler's versions API returns the most recent version first. Do not use
+  // `versions secret list --latest-version`: Wrangler 4.120 crashes while
+  // resolving bindings for the current staging version. `versions view` is a
+  // separate read-only API path with a stable JSON representation.
+  return { latestVersionId: versions[0].id };
 }
 
 export function parseDeploymentStatusJson(stdout) {
@@ -157,17 +161,20 @@ export function parseDeploymentStatusJson(stdout) {
   return { versions };
 }
 
-export function parseLatestSecretMetadata(stdout) {
-  const lines = String(stdout).trim().split("\n");
-  const header = /^-- Version ([a-z0-9-]+) \((\d+(?:\.\d+)?)%\) secrets --$/i.exec(lines.shift() ?? "");
-  if (!header) throw new Error("Wrangler latest-version secret metadata had an unexpected header.");
-  const secretNames = lines.map((line) => {
-    const match = /^Secret Name: ([A-Z][A-Z0-9_]*)$/.exec(line);
-    if (!match) throw new Error("Wrangler latest-version secret metadata had unexpected content.");
-    return match[1];
+export function parseWorkerVersionSecretMetadataJson(stdout, expectedVersionId) {
+  const value = strictJson(stdout, "version view");
+  if (!value || typeof value !== "object" || Array.isArray(value) || nonEmptyMetadataString(value.id, "version id") !== expectedVersionId) {
+    throw new Error("Wrangler version-view metadata did not match the latest Worker version.");
+  }
+  const bindings = value.resources?.bindings;
+  if (!Array.isArray(bindings)) throw new Error("Wrangler version-view metadata did not contain Worker bindings.");
+  const secretNames = bindings.filter((binding) => binding && typeof binding === "object" && !Array.isArray(binding) && binding.type === "secret_text").map((binding) => {
+    const name = nonEmptyMetadataString(binding.name, "secret name");
+    if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error("Wrangler version-view metadata contained an invalid secret name.");
+    return name;
   });
   if (new Set(secretNames).size !== secretNames.length) throw new Error("Wrangler latest-version secret metadata contained duplicate names.");
-  return { versionId: header[1], trafficPercentage: Number(header[2]), secretNames: secretNames.sort() };
+  return { versionId: expectedVersionId, secretNames: secretNames.sort() };
 }
 
 /**
@@ -179,8 +186,9 @@ export function captureWorkerMetadata(registry, runMetadataRead = runWranglerMet
   if (typeof config !== "string" || config.trim() === "") throw new Error("Staging Worker metadata requires the reviewed Wrangler config.");
   const versions = parseWorkerVersionsJson(runMetadataRead(["versions", "list", "--json", "--config", config], registry));
   const deployment = parseDeploymentStatusJson(runMetadataRead(["deployments", "status", "--json", "--config", config], registry));
-  const latestSecretVersion = parseLatestSecretMetadata(runMetadataRead(["versions", "secret", "list", "--latest-version", "--config", config], registry));
-  if (latestSecretVersion.versionId !== versions.latestVersionId) throw new Error("Wrangler latest secret metadata did not match the latest unpublished version.");
+  const versionMetadata = parseWorkerVersionSecretMetadataJson(runMetadataRead(["versions", "view", versions.latestVersionId, "--json", "--config", config], registry), versions.latestVersionId);
+  const trafficPercentage = deployment.versions.find((entry) => entry.versionId === versions.latestVersionId)?.percentage ?? 0;
+  const latestSecretVersion = { ...versionMetadata, trafficPercentage };
   return { latestVersionId: versions.latestVersionId, deployment, latestSecretVersion };
 }
 

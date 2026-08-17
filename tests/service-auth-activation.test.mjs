@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, canonicalActivationRecords, captureWorkerMetadata, classifyActivationStatus, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, canonicalActivationRecords, captureWorkerMetadata, classifyActivationStatus, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -134,15 +134,15 @@ test("Worker metadata is strictly parsed and proves secret staging did not route
     const command = args.slice(0, 3).join(" ");
     if (command === "versions list --json") return JSON.stringify([{ id: "previous-unpublished-version" }]);
     if (command === "deployments status --json") return JSON.stringify({ versions: [{ version_id: "published-version", percentage: 100 }] });
-    if (command === "versions secret list") return "-- Version previous-unpublished-version (0%) secrets --\n";
+    if (command === "versions view previous-unpublished-version") return JSON.stringify({ id: "previous-unpublished-version", resources: { bindings: [] } });
     throw new Error(`unexpected command: ${args.join(" ")}`);
   };
   const before = captureWorkerMetadata(registry, runner);
   const after = captureWorkerMetadata(registry, (args) => {
     const command = args.slice(0, 3).join(" ");
-    if (command === "versions list --json") return JSON.stringify([{ id: "previous-unpublished-version" }, { id: "unpublished-secret-version" }]);
+    if (command === "versions list --json") return JSON.stringify([{ id: "unpublished-secret-version" }, { id: "previous-unpublished-version" }]);
     if (command === "deployments status --json") return JSON.stringify({ versions: [{ version_id: "published-version", percentage: 100 }] });
-    if (command === "versions secret list") return `-- Version unpublished-secret-version (0%) secrets --\n${plan.principals.map((principal) => `Secret Name: ${principal.secretName}`).join("\n")}`;
+    if (command === "versions view unpublished-secret-version") return JSON.stringify({ id: "unpublished-secret-version", resources: { bindings: plan.principals.map((principal) => ({ type: "secret_text", name: principal.secretName })) } });
     throw new Error(`unexpected command: ${args.join(" ")}`);
   });
   const comparison = compareWorkerMetadata(before, after, plan.principals.map((principal) => principal.secretName));
@@ -150,6 +150,9 @@ test("Worker metadata is strictly parsed and proves secret staging did not route
   assert.equal(comparison.afterSecretVersionTrafficPercentage, 0);
   assert.equal(comparison.addedSecretNames.length, 4);
   assert.throws(() => compareWorkerMetadata(before, { ...after, deployment: { versions: [{ versionId: "unpublished-secret-version", percentage: 100 }] } }, plan.principals.map((principal) => principal.secretName)), /deployment|traffic/i);
+  assert.equal(parseWorkerVersionsJson(JSON.stringify([{ id: "newest" }, { id: "older" }])).latestVersionId, "newest");
+  assert.deepEqual(parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "newest", resources: { bindings: [{ type: "secret_text", name: "SAFE_SECRET" }, { type: "plain_text", name: "SAFE_VAR" }] } }), "newest"), { versionId: "newest", secretNames: ["SAFE_SECRET"] });
+  assert.throws(() => parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "wrong", resources: { bindings: [] } }), "newest"), /did not match/i);
   assert.doesNotMatch(JSON.stringify(comparison), /value|Bearer|token_hash/i);
 });
 
