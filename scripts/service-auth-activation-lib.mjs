@@ -84,7 +84,11 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
       auditSteps: ["PLANNED", "SECRET_STAGED", "D1_ACTIVE", "VERIFIED", "ACTIVE"],
       legacyAuthenticationRemoved: false,
     },
-    rollback: ["Do not route traffic to the staged web version if D1 activation fails.", "If verification fails after traffic change, roll Workers back before revoking canonical credentials.", "Record ROLLBACK_REQUIRED/REVOKED as append-only activation steps; do not delete audit history."],
+    rollback: {
+      canonicalD1: "The activation executor can idempotently revoke only its deterministic canonical principals, credentials, and grants; it never deletes audit history or touches legacy authentication.",
+      stagedWorkerSecrets: "Secret staging creates an un-routed Worker version only. Do not route it if activation fails or the D1 outcome is uncertain.",
+      cutover: "If a later verification fails after a separately approved traffic change, roll Workers back before revoking canonical credentials.",
+    },
   };
   plan.planSha256 = planDigest(plan);
   plan.confirmation = activationConfirmation(plan.activationId, plan.planSha256);
@@ -102,7 +106,7 @@ export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, bac
 
 export function redactActivationReceipt(receipt) {
   const visit = (value, key = "") => {
-    if (/^(token|bearer|credential|tokenHash|credentialHash|secret)$/i.test(key)) throw new Error("Activation receipt contains prohibited credential material.");
+    if (/^(token|bearer|credential|credentials|tokenHash|credentialHash|secret|secrets|secretValue|credentialValue)$/i.test(key)) throw new Error("Activation receipt contains prohibited credential material.");
     if (Array.isArray(value)) value.forEach((entry) => visit(entry));
     else if (value && typeof value === "object") Object.entries(value).forEach(([childKey, childValue]) => visit(childValue, childKey));
   };
