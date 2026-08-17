@@ -5,6 +5,9 @@ import Database from "better-sqlite3";
 import { migrationState, validateTargetAuthority, verifyExpectedMigrations } from "./reconciliation-lib.mjs";
 import { assertExactMigrationHistory, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateReleaseExportPlan } from "../bounded-d1-migrations-lib.mjs";
 import { projectRoot } from "../deployment-preflight.mjs";
+import { readD1ReadTokenFromKeychain } from "../service-auth-activate.mjs";
+
+const cloudflareEnvironmentOverride = /^(?:CLOUDFLARE_|CF_|WRANGLER_)/;
 
 function usage() {
   return "Usage: node scripts/migration/export-target.mjs --environment staging --output <absolute local .sql path> [--approved-plan <absolute bounded-plan.json>]";
@@ -28,6 +31,17 @@ function readApprovedPlan(planPath) {
   } catch {
     throw new Error("Approved bounded migration plan must be exactly one valid JSON document.");
   }
+}
+
+/**
+ * A D1 export is read-only, but it still needs an authenticated Wrangler
+ * process. Read the scoped credential directly from Keychain, discard any
+ * inherited Cloudflare/Wrangler overrides, and expose it only to that child.
+ */
+export function readOnlyD1ExportEnvironment({ accountId, baseEnvironment = process.env, readToken = readD1ReadTokenFromKeychain } = {}) {
+  if (typeof accountId !== "string" || accountId === "") throw new Error("A staging account ID is required for the read-only D1 export.");
+  const environment = Object.fromEntries(Object.entries(baseEnvironment).filter(([key]) => !cloudflareEnvironmentOverride.test(key)));
+  return { ...environment, CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: readToken() };
 }
 
 function receiptFor({ target, plan, preMigrationState, sqlPath, parsePath }) {
@@ -62,7 +76,12 @@ export function exportTarget({ environment, output, approvedPlan }) {
   mkdirSync(path.dirname(sqlPath), { recursive: true });
   const wrangler = path.join(projectRoot, "cloudflare/thot-os-next/node_modules/.bin/wrangler");
   try {
-    execFileSync(wrangler, ["--cwd", path.join(projectRoot, "cloudflare/thot-os-next"), "d1", "export", target.databaseName, "--remote", "--skip-confirmation", "--output", sqlPath], { cwd: projectRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync(wrangler, ["--cwd", path.join(projectRoot, "cloudflare/thot-os-next"), "d1", "export", target.databaseName, "--remote", "--skip-confirmation", "--output", sqlPath], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      env: readOnlyD1ExportEnvironment({ accountId: target.accountId }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   } catch {
     throw new Error("Read-only staging D1 export failed; no SQL output is trusted.");
   }
