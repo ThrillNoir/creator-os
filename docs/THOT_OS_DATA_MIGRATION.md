@@ -22,7 +22,7 @@ flowchart LR
 
 1. **No generic copying.** The tool reads only the versioned domain contracts in `config/migration/domain-contracts.json`.
 2. **No implicit source.** It requires absolute snapshot paths, rejects symlinks and live `.creator-os` paths, verifies SQLite integrity, and hashes the source before and after the run.
-3. **No implicit target.** It accepts only `staging`, verifies the deployment registry and canonical Wrangler D1 name/ID/account, and requires a local parse snapshot whose migration state exactly matches the declared remote `0001`–`0027` baseline. Local `0028_migration_ledger.sql` is deliberately pending and is not silently treated as deployed.
+3. **No implicit target.** It accepts only `staging`, verifies the deployment registry and canonical Wrangler D1 name/ID/account, and requires a local parse snapshot whose migration state exactly matches the declared remote `0001`–`0027` baseline. This is historical Phase 1C.6 reconciliation evidence: it is not a generic bounded-release backup rule. Local `0028_migration_ledger.sql` was deliberately pending for that historical run and was not silently treated as deployed.
 4. **No production path.** Any other environment, including production, fails before opening a database.
 5. **No apply path.** `--apply` fails with `Migration apply is disabled by the Phase 1C.6 safety contract.`
 6. **No secret migration.** OAuth material, API keys, refresh tokens, session cookies, and device/bridge bearers are excluded by contract.

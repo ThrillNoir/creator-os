@@ -234,7 +234,7 @@ export function validateTargetAuthority({ environment, registry = readDeployment
   if (!target?.provisioned || !registryD1?.id || !binding || binding.database_id !== registryD1.id || config.account_id !== target.accountId) {
     fail("Staging D1 registry/configuration identity mismatch.");
   }
-  return { environment, databaseName: remoteD1Name, databaseId: registryD1.id, registryHash: sha256(stableJson(registry)) };
+  return { environment, accountId: target.accountId, databaseName: remoteD1Name, databaseId: registryD1.id, registryHash: sha256(stableJson(registry)) };
 }
 
 export function migrationState(db) {

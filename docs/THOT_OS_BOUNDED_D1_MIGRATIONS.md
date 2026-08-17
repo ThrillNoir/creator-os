@@ -33,7 +33,7 @@ history, and post-mutation reconciliation.
 - Apply requires a clean tree at the reviewed Git identity, unchanged plan
   digest and explicit `bounded:<digest-prefix>` confirmation, matching current
   structured D1 history/source files, and a fresh checksum-validated read-only
-  export receipt from `npm run migration:export-target`.
+  export receipt bound to that exact reviewed plan.
 - Repository migration files are never moved, hidden, copied into the
   configured directory, or altered. The temporary mutation file is deleted
   after its command returns.
@@ -88,6 +88,54 @@ and raw bytes for exports and file artefacts. Backup validation requires a
 nonempty export, matching raw-byte checksum, current timestamp, staging target
 identity, and exact pre-migration history.
 
+## Plan-bound export baseline
+
+An export is valid for a bounded release only when three independent evidence
+sources agree on the **whole ordered migration history**:
+
+```text
+reviewed plan preMigrationState
+          =
+fresh structured D1 migration history
+          =
+export receipt target.migrations
+```
+
+The plan is the authorization input: the exporter does not derive an expected
+baseline from the export itself. The receipt records the plan digest and the
+canonical-JSON digest of its pre-state, and the executor rejects it for any
+other plan. Before mutation, the executor rebuilds the plan using the
+structured D1 client, so remote drift also rejects.
+
+Every history must be an ordered, contiguous sequence of valid migration
+filenames. A matching final filename is insufficient: gaps, duplicates,
+reordering, renamed files, unexpected earlier files, and additional later
+files all fail closed. Raw-byte export SHA-256, target environment/account/D1
+name/UUID, and freshness checks remain independent mandatory gates.
+
+Use a plan-bound export for a bounded release:
+
+```sh
+node scripts/migration/export-target.mjs \
+  --environment staging \
+  --approved-plan /absolute/safe-location/phase2a-expand.plan.json \
+  --output /absolute/safe-location/phase2a-expand-before.sql
+```
+
+The no-plan form remains only for the historical Phase 1C.6 local
+reconciliation contract. Its fixed `0001`–`0027` evidence is not a generic
+release invariant and it cannot satisfy bounded-release backup validation.
+
+### Evidence roles
+
+- **Historical release evidence** records what a prior run observed and remains
+  immutable documentation; it never overrides D1.
+- **Current remote truth** is the fresh structured D1 identity and history read
+  made immediately before an apply gate.
+- **Reviewed release pre-state** is the exact plan history authorized for the
+  release. It is the only expected baseline against which a new export is
+  compared.
+
 ## Current Phase 2A baseline and next reviewed range
 
 The historical 2026-08-16 release submitted `0028_migration_ledger.sql` and
@@ -111,6 +159,10 @@ npm run d1:migrations:plan -- \
 The plan must show `0029`–`0031` selected, `0028` in its exact pre-state, and
 `0032_service_auth_compatibility.sql` in `excludedPending`. It is intentionally
 not executed by local development or this implementation task.
+
+For that later approved release, the fresh export must use the reviewed plan
+path above and show exact agreement on `0001`–`0028`; it must not reuse an
+earlier export or receipt.
 
 `0032` remains a separately reviewed compatibility release. The staging-gateway
 drift is recorded as deferred work: it is not changed or deployed by this

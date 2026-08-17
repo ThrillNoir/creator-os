@@ -170,7 +170,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const regeneratedOptions = { environment: approved.value.environment, from: approved.value.requestedRange?.from, through: approved.value.requestedRange?.through, releaseId: approved.value.releaseId };
       const { authority, d1Client, inventoryDirectory, plan: currentPlan } = await makePlan(regeneratedOptions);
       const backupInput = json(options.backupReceipt, "Backup receipt");
-      const backup = validateBackup({ receipt: backupInput.value, receiptPath: backupInput.path, target: approved.value.target, expectedMigrationState: approved.value.preMigrationState, maxAgeMinutes: authority.policy.backupMaxAgeMinutes });
+      const backup = validateBackup({ receipt: backupInput.value, receiptPath: backupInput.path, plan: approved.value, target: approved.value.target, maxAgeMinutes: authority.policy.backupMaxAgeMinutes });
       assertApplyGates({ plan: approved.value, currentPlan, remoteApplied: currentPlan.preMigrationState, git: gitIdentity(), clean: gitClean(), backup, confirmation: options.confirmation });
       const receipt = await executeBoundedPlan({
         plan: approved.value,

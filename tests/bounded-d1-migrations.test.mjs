@@ -4,7 +4,7 @@ import { appendFileSync, mkdtempSync, readFileSync, readdirSync, truncateSync, w
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashBytes, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, migrationSql, planDigest, validateBackup } from "../scripts/bounded-d1-migrations-lib.mjs";
+import { assertApplyGates, assertExactMigrationHistory, buildBoundedPlan, executeBoundedPlan, hashBytes, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, migrationSql, planDigest, validateBackup, validateReleaseExportPlan } from "../scripts/bounded-d1-migrations-lib.mjs";
 
 const registry = {
   environments: {
@@ -15,9 +15,9 @@ const registry = {
 const policy = { allowedEnvironments: ["staging"], backupMaxAgeMinutes: 60 };
 const git = { sha: "a".repeat(40), branch: "audit/test", clean: true };
 
-function fixture() {
+function fixture(limit = 32) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "bounded-d1-test-"));
-  for (let number = 1; number <= 32; number += 1) writeFileSync(path.join(directory, `${String(number).padStart(4, "0")}_fixture.sql`), `-- ${number}\nCREATE TABLE IF NOT EXISTS fixture_${number} (id INTEGER);\n`);
+  for (let number = 1; number <= limit; number += 1) writeFileSync(path.join(directory, `${String(number).padStart(4, "0")}_fixture.sql`), `-- ${number}\nCREATE TABLE IF NOT EXISTS fixture_${number} (id INTEGER);\n`);
   return { directory, inventory: inventoryFromDirectory(directory, readdirSync) };
 }
 function planFor(inventory, remoteApplied = inventory.slice(0, 27).map((entry) => entry.name)) {
@@ -25,6 +25,10 @@ function planFor(inventory, remoteApplied = inventory.slice(0, 27).map((entry) =
 }
 function currentStagingPlan(inventory) {
   return buildBoundedPlan({ environment: "staging", releaseId: "phase2a-expand-resume", from: "0029", through: "0031", inventory, remoteApplied: inventory.slice(0, 28).map((entry) => entry.name), registry, policy, git });
+}
+function planForPreState(inventory, count) {
+  const next = String(count + 1).padStart(4, "0");
+  return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
 test("current canonical 0028 baseline selects only 0029 through 0031 and explicitly excludes 0032", () => {
@@ -38,6 +42,18 @@ test("current canonical 0028 baseline selects only 0029 through 0031 and explici
   assert.equal(plan.confirmation, `bounded:${plan.planSha256.slice(0, 16)}`);
   const changed = structuredClone(plan); changed.requestedRange.through = "0030_fixture.sql";
   assert.notEqual(planDigest(changed), plan.planSha256);
+});
+
+test("plan-bound export evidence accepts the canonical 0028 pre-state and future 0031/0032 baselines", () => {
+  const { inventory } = fixture(33);
+  for (const plan of [currentStagingPlan(inventory), planForPreState(inventory, 31), planForPreState(inventory, 32)]) {
+    const reviewed = validateReleaseExportPlan({ plan, target: plan.target, inventory });
+    assert.deepEqual(reviewed.preMigrationState, plan.preMigrationState);
+    const { receiptPath, receipt } = backupFixture(plan);
+    const backup = validateBackup({ receipt, receiptPath, plan, target: plan.target, maxAgeMinutes: 60 });
+    assert.equal(backup.planSha256, plan.planSha256);
+    assertApplyGates({ plan, currentPlan: plan, remoteApplied: plan.preMigrationState, git, clean: true, backup, confirmation: plan.confirmation });
+  }
 });
 
 test("planner fails closed for production, reversed ranges, and non-prefix state", () => {
@@ -203,7 +219,7 @@ test("apply gates reject changed plans, dirty identity, and a changed migration 
   const { directory, inventory } = fixture();
   const plan = planFor(inventory);
   const current = structuredClone(plan);
-  const backup = { receiptHash: "b".repeat(64) };
+  const backup = { receiptHash: "b".repeat(64), planSha256: plan.planSha256 };
   assertApplyGates({ plan, currentPlan: current, remoteApplied: plan.preMigrationState, git, clean: true, backup, confirmation: plan.confirmation });
   assert.throws(() => assertApplyGates({ plan, currentPlan: current, remoteApplied: plan.preMigrationState, git, clean: false, backup, confirmation: plan.confirmation }), /clean Git/);
   assert.throws(() => assertApplyGates({ plan, currentPlan: current, remoteApplied: plan.preMigrationState, git, clean: true, backup, confirmation: "bounded:wrong" }), /confirmation/);
@@ -211,19 +227,24 @@ test("apply gates reject changed plans, dirty identity, and a changed migration 
   assert.throws(() => migrationSql({ directory, migration: plan.execution[0] }), /digest changed/);
 });
 
-function backupFixture(bytes = Buffer.from("-- export\n")) {
+function backupFixture(plan, bytes = Buffer.from("-- export\n"), migrations = plan?.preMigrationState) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "bounded-backup-test-"));
   const exportPath = path.join(directory, "staging.sql");
   writeFileSync(exportPath, bytes);
   const receiptPath = `${exportPath}.receipt.json`;
-  const receipt = { mode: "READ ONLY REMOTE EXPORT", target: { environment: "staging", databaseName: "thot-os-staging", databaseId: "db-id", migrations: ["0001_fixture.sql"] }, sqlChecksum: hashFileBytes(exportPath), exportedAt: new Date().toISOString() };
+  const target = plan
+    ? { environment: plan.target.environment, accountId: plan.target.accountId, databaseName: plan.target.databaseName, databaseId: plan.target.databaseId, migrations }
+    : { environment: "staging", accountId: "account", databaseName: "thot-os-staging", databaseId: "db-id", migrations: ["0001_fixture.sql"] };
+  const receipt = plan
+    ? { schemaVersion: 2, mode: "READ ONLY REMOTE EXPORT", target, planSha256: plan.planSha256, preMigrationStateSha256: hashCanonicalJson(plan.preMigrationState), sqlChecksum: hashFileBytes(exportPath), exportedAt: new Date().toISOString() }
+    : { mode: "READ ONLY REMOTE EXPORT", target, sqlChecksum: hashFileBytes(exportPath), exportedAt: new Date().toISOString() };
   writeFileSync(receiptPath, JSON.stringify(receipt));
   return { exportPath, receiptPath, receipt };
 }
 
 test("raw-byte backup hashes agree with an independent SHA-256 implementation", () => {
   const bytes = Buffer.from([0x00, 0x61, 0x0d, 0x0a, 0xff, 0x80, 0x0a]);
-  const { exportPath } = backupFixture(bytes);
+  const { exportPath } = backupFixture(null, bytes);
   const standard = createHash("sha256").update(readFileSync(exportPath)).digest("hex");
   assert.equal(hashBytes(bytes), standard);
   assert.equal(hashFileBytes(exportPath), standard);
@@ -243,29 +264,65 @@ test("raw-byte hashing preserves text, line endings, nulls, invalid UTF-8, high 
 });
 
 test("backup evidence is raw-byte checksum matched, fresh, and target-scoped", () => {
-  const { receiptPath, receipt } = backupFixture(Buffer.from("line one\r\nline two\n\u0000\xff", "binary"));
-  const options = { receiptPath, target: receipt.target, expectedMigrationState: receipt.target.migrations, maxAgeMinutes: 60 };
+  const { inventory } = fixture();
+  const plan = currentStagingPlan(inventory);
+  const { receiptPath, receipt } = backupFixture(plan, Buffer.from("line one\r\nline two\n\u0000\xff", "binary"));
+  const options = { receiptPath, plan, target: plan.target, maxAgeMinutes: 60 };
   assert.equal(validateBackup({ receipt, ...options }).sqlChecksum, receipt.sqlChecksum);
   assert.throws(() => validateBackup({ receipt: { ...receipt, exportedAt: "2000-01-01T00:00:00.000Z" }, ...options }), /stale/);
   assert.throws(() => validateBackup({ receipt: { ...receipt, target: { ...receipt.target, databaseId: "wrong-db" } }, ...options }), /does not match/);
   assert.throws(() => validateBackup({ receipt: { ...receipt, target: { ...receipt.target, databaseName: "wrong-name" } }, ...options }), /does not match/);
   assert.throws(() => validateBackup({ receipt: { ...receipt, target: { ...receipt.target, environment: "production" } }, ...options }), /does not match/);
-  assert.throws(() => validateBackup({ receipt: { ...receipt, target: { ...receipt.target, migrations: ["0002_wrong.sql"] } }, ...options }), /does not match/);
+  assert.throws(() => validateBackup({ receipt: { ...receipt, target: { ...receipt.target, accountId: "wrong-account" } }, ...options }), /does not match/);
+  assert.throws(() => validateBackup({ receipt: { ...receipt, target: { ...receipt.target, migrations: plan.preMigrationState.slice(0, -1) } }, ...options }), /migration history/);
+  assert.throws(() => validateBackup({ receipt: { ...receipt, planSha256: "a".repeat(64) }, ...options }), /approved bounded migration plan/);
+  assert.throws(() => validateBackup({ receipt: { ...receipt, preMigrationStateSha256: "a".repeat(64) }, ...options }), /approved bounded migration plan/);
   for (const checksum of ["not-a-checksum", "a".repeat(63), "a".repeat(65), ` ${"a".repeat(64)}`, null]) assert.throws(() => validateBackup({ receipt: { ...receipt, sqlChecksum: checksum }, ...options }), /does not match/);
   assert.throws(() => validateBackup({ receipt: { ...receipt, exportedAt: new Date(Date.now() + 60_000).toISOString() }, ...options }), /stale or invalid/);
 });
 
+test("release backup evidence rejects stale and future exports, remote drift, and plan drift", () => {
+  const { inventory } = fixture();
+  const plan = currentStagingPlan(inventory);
+  const options = { plan, target: plan.target, maxAgeMinutes: 60 };
+  const stale = backupFixture(plan, Buffer.from("stale"), plan.preMigrationState.slice(0, -1));
+  assert.throws(() => validateBackup({ receipt: stale.receipt, receiptPath: stale.receiptPath, ...options }), /migration history/);
+  const future = backupFixture(plan, Buffer.from("future"), [...plan.preMigrationState, plan.execution[0].name]);
+  assert.throws(() => validateBackup({ receipt: future.receipt, receiptPath: future.receiptPath, ...options }), /migration history/);
+  const valid = backupFixture(plan);
+  const backup = validateBackup({ receipt: valid.receipt, receiptPath: valid.receiptPath, ...options });
+  assert.throws(() => assertApplyGates({ plan, currentPlan: plan, remoteApplied: [...plan.preMigrationState, plan.execution[0].name], git, clean: true, backup, confirmation: plan.confirmation }), /Structured D1 migration history/);
+  const replacementPlan = buildBoundedPlan({ environment: "staging", releaseId: "replacement-plan", from: "0030", through: "0031", inventory, remoteApplied: [...plan.preMigrationState, plan.execution[0].name], registry, policy, git });
+  assert.throws(() => validateBackup({ receipt: valid.receipt, receiptPath: valid.receiptPath, plan: replacementPlan, target: replacementPlan.target, maxAgeMinutes: 60 }), /approved bounded migration plan/);
+});
+
+test("migration history comparison fails closed for every adversarial non-exact state", () => {
+  const { inventory } = fixture();
+  const expected = currentStagingPlan(inventory).preMigrationState;
+  const reordered = [...expected]; [reordered[0], reordered[1]] = [reordered[1], reordered[0]];
+  const duplicate = [...expected]; duplicate.splice(10, 0, expected[10]);
+  const missing = expected.filter((_, index) => index !== 10);
+  const sameNumberDifferentFilename = [...expected]; sameNumberDifferentFilename[27] = "0028_other_fixture.sql";
+  const malformedNumber = [...expected]; malformedNumber[27] = "028_fixture.sql";
+  const unexpectedAdditional = [...expected, "0029_unexpected_fixture.sql"];
+  for (const history of [[], duplicate, missing, reordered, sameNumberDifferentFilename, malformedNumber, unexpectedAdditional]) {
+    assert.throws(() => assertExactMigrationHistory(history, expected), /migration|Migration/i);
+  }
+});
+
 test("backup validation rejects every byte-level tamper and empty exports", () => {
+  const { inventory } = fixture();
+  const plan = currentStagingPlan(inventory);
   for (const mutation of [
     (file) => { const bytes = readFileSync(file); bytes[0] ^= 0x01; writeFileSync(file, bytes); },
     (file) => truncateSync(file, 1),
     (file) => appendFileSync(file, Buffer.from([0xaa])),
     (file) => writeFileSync(file, Buffer.from("replacement export")),
   ]) {
-    const { exportPath, receiptPath, receipt } = backupFixture(Buffer.from([0x00, 0xff, 0x0a, 0x80, 0x42]));
+    const { exportPath, receiptPath, receipt } = backupFixture(plan, Buffer.from([0x00, 0xff, 0x0a, 0x80, 0x42]));
     mutation(exportPath);
-    assert.throws(() => validateBackup({ receipt, receiptPath, target: receipt.target, expectedMigrationState: receipt.target.migrations, maxAgeMinutes: 60 }), /checksum/);
+    assert.throws(() => validateBackup({ receipt, receiptPath, plan, target: plan.target, maxAgeMinutes: 60 }), /checksum/);
   }
-  const empty = backupFixture(Buffer.alloc(0));
-  assert.throws(() => validateBackup({ receipt: empty.receipt, receiptPath: empty.receiptPath, target: empty.receipt.target, expectedMigrationState: empty.receipt.target.migrations, maxAgeMinutes: 60 }), /missing or its checksum/);
+  const empty = backupFixture(plan, Buffer.alloc(0));
+  assert.throws(() => validateBackup({ receipt: empty.receipt, receiptPath: empty.receiptPath, plan, target: plan.target, maxAgeMinutes: 60 }), /missing or its checksum/);
 });

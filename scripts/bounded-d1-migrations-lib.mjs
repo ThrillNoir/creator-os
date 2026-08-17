@@ -50,6 +50,7 @@ export function assertInventory(migrations) {
     if (seen.has(migration.number)) throw new Error(`Duplicate migration number ${String(migration.number).padStart(4, "0")}.`);
     seen.add(migration.number);
   }
+  if (migrations.length > 0 && migrations[0].number !== 1) throw new Error("Migration inventory must begin at 0001.");
   for (let index = 1; index < migrations.length; index += 1) {
     if (migrations[index].number !== migrations[index - 1].number + 1) throw new Error(`Migration gap between ${migrations[index - 1].name} and ${migrations[index].name}.`);
   }
@@ -71,6 +72,31 @@ export function inventoryFromDirectory(directory, readdir) {
 }
 
 function exact(left, right) { return stableJson(left) === stableJson(right); }
+
+function canonicalHistory(history, label) {
+  if (!Array.isArray(history)) throw new Error(`${label} must be an ordered migration array.`);
+  const seen = new Set();
+  return history.map((name, index) => {
+    if (typeof name !== "string" || !migrationPattern.test(name)) throw new Error(`${label} contains an invalid migration filename.`);
+    const number = Number(name.slice(0, 4));
+    if (seen.has(number)) throw new Error(`${label} contains a duplicate migration number.`);
+    if (number !== index + 1) throw new Error(`${label} must be contiguous and ordered from 0001.`);
+    seen.add(number);
+    return name;
+  });
+}
+
+/**
+ * Canonical D1 history is an ordered, contiguous filename sequence. Comparing
+ * the whole sequence—not just its final number—rejects gaps, duplicate names,
+ * renamed files, and unexpected earlier migrations.
+ */
+export function assertExactMigrationHistory(observed, expected, label = "Migration history") {
+  const reviewed = canonicalHistory(expected, `Reviewed ${label}`);
+  const actual = canonicalHistory(observed, label);
+  if (!exact(actual, reviewed)) throw new Error(`${label} does not exactly match the reviewed migration history.`);
+  return actual;
+}
 
 export function targetFor({ environment, registry, policy }) {
   if (environment !== "staging" || !policy.allowedEnvironments?.includes(environment)) throw new Error("Bounded D1 migration execution is restricted to the explicit staging allow-list.");
@@ -94,7 +120,11 @@ export function buildBoundedPlan({ environment, from, through, inventory, remote
   const end = inventory.findIndex((migration) => migration.number === throughNumber);
   if (start === -1 || end === -1) throw new Error("Requested migration boundary does not exist in the repository inventory.");
   const expectedPreState = inventory.slice(0, start).map((migration) => migration.name);
-  if (!exact(remoteApplied, expectedPreState)) throw new Error("Remote migration state does not exactly match the requested range start; create a new reviewed plan.");
+  try {
+    assertExactMigrationHistory(remoteApplied, expectedPreState, "Structured D1 migration history");
+  } catch {
+    throw new Error("Remote migration state does not exactly match the requested range start; create a new reviewed plan.");
+  }
   const selected = inventory.slice(start, end + 1);
   const excludedPending = inventory.slice(end + 1).map(({ number, name, sha256: digest }) => ({ number, name, sha256: digest }));
   const plan = {
@@ -116,22 +146,52 @@ export function buildBoundedPlan({ environment, from, through, inventory, remote
   return plan;
 }
 
-export function validateBackup({ receipt, receiptPath, target, expectedMigrationState, maxAgeMinutes, now = new Date() }) {
+/**
+ * Validate the immutable release expectations embedded in an approved bounded
+ * plan before allowing an export to become backup evidence. This is local-only
+ * validation; the apply path separately rebuilds the plan with structured D1
+ * state immediately before any mutation.
+ */
+export function validateReleaseExportPlan({ plan, target, inventory }) {
+  if (plan?.schemaVersion !== 2 || plan.mode !== "PLAN" || plan.environment !== "staging" || planDigest(plan) !== plan.planSha256) throw new Error("Approved bounded migration plan digest is invalid.");
+  if (!target || ["environment", "accountId", "databaseName", "databaseId"].some((field) => plan.target?.[field] !== target[field])) throw new Error("Approved bounded migration plan does not match the staging D1 identity.");
+  assertInventory(inventory);
+  const from = migrationNumber(plan.requestedRange?.from);
+  const through = migrationNumber(plan.requestedRange?.through);
+  const start = inventory.findIndex((migration) => migration.number === from);
+  const end = inventory.findIndex((migration) => migration.number === through);
+  if (start === -1 || end === -1 || start > end) throw new Error("Approved bounded migration plan has invalid range boundaries.");
+  const expectedPreState = inventory.slice(0, start).map((migration) => migration.name);
+  const expectedExecution = inventory.slice(start, end + 1).map(({ number, name, sha256: digest }) => ({ number, name, sha256: digest }));
+  const expectedExcluded = inventory.slice(end + 1).map(({ number, name, sha256: digest }) => ({ number, name, sha256: digest }));
+  assertExactMigrationHistory(plan.preMigrationState, expectedPreState, "Reviewed plan pre-migration history");
+  if (plan.requestedRange.from !== expectedExecution[0].name || plan.requestedRange.through !== expectedExecution.at(-1).name || !exact(plan.execution, expectedExecution) || !exact(plan.excludedPending, expectedExcluded) || !exact(plan.postMigrationState, [...expectedPreState, ...expectedExecution.map((migration) => migration.name)])) {
+    throw new Error("Approved bounded migration plan does not match the reviewed repository migration inventory.");
+  }
+  return { preMigrationState: expectedPreState, planSha256: plan.planSha256 };
+}
+
+export function validateBackup({ receipt, receiptPath, plan, target, maxAgeMinutes, now = new Date() }) {
   if (!receiptPath || !path.isAbsolute(receiptPath) || !existsSync(receiptPath)) throw new Error("A readable absolute backup receipt is required.");
+  if (plan?.mode !== "PLAN" || plan.environment !== "staging" || planDigest(plan) !== plan.planSha256 || !target || ["environment", "accountId", "databaseName", "databaseId"].some((field) => plan.target?.[field] !== target[field])) throw new Error("Backup validation requires the exact approved bounded migration plan.");
+  const expectedMigrationState = assertExactMigrationHistory(plan.preMigrationState, plan.preMigrationState, "Reviewed plan pre-migration history");
   const backup = receipt?.target;
-  if (receipt?.mode !== "READ ONLY REMOTE EXPORT" || !backup || backup.environment !== target.environment || backup.databaseName !== target.databaseName || backup.databaseId !== target.databaseId || !exact(backup.migrations, expectedMigrationState) || !/^[a-f0-9]{64}$/i.test(receipt.sqlChecksum ?? "")) throw new Error("Backup receipt does not match the bounded migration target.");
+  const preStateSha256 = hashCanonicalJson(expectedMigrationState);
+  if (receipt?.schemaVersion !== 2 || receipt?.mode !== "READ ONLY REMOTE EXPORT" || !backup || backup.environment !== target.environment || backup.accountId !== target.accountId || backup.databaseName !== target.databaseName || backup.databaseId !== target.databaseId || receipt.planSha256 !== plan.planSha256 || receipt.preMigrationStateSha256 !== preStateSha256 || !/^[a-f0-9]{64}$/i.test(receipt.sqlChecksum ?? "")) throw new Error("Backup receipt does not match the approved bounded migration plan and target.");
+  assertExactMigrationHistory(backup.migrations, expectedMigrationState, "Export receipt migration history");
   const exportedAt = new Date(receipt.exportedAt);
   if (Number.isNaN(exportedAt.valueOf()) || now.valueOf() - exportedAt.valueOf() > maxAgeMinutes * 60_000 || exportedAt > now) throw new Error("Backup receipt is stale or invalid.");
   const exportPath = receiptPath.replace(/\.receipt\.json$/, "");
   if (!existsSync(exportPath) || statSync(exportPath).size === 0 || hashFileBytes(exportPath) !== receipt.sqlChecksum) throw new Error("Backup export is missing or its checksum does not match the receipt.");
-  return { receiptPath, exportedAt: exportedAt.toISOString(), sqlChecksum: receipt.sqlChecksum, receiptHash: hashCanonicalJson(receipt) };
+  return { receiptPath, exportedAt: exportedAt.toISOString(), sqlChecksum: receipt.sqlChecksum, planSha256: plan.planSha256, receiptHash: hashCanonicalJson(receipt) };
 }
 
 export function assertApplyGates({ plan, currentPlan, remoteApplied, git, clean, backup, confirmation }) {
   if (plan?.mode !== "PLAN" || plan?.environment !== "staging" || planDigest(plan) !== plan.planSha256) throw new Error("Approved bounded migration plan digest is invalid.");
   if (confirmation !== plan.confirmation) throw new Error("Apply requires the exact bounded plan confirmation string.");
   if (!clean || plan.git?.clean !== true || !git || plan.git?.sha !== git.sha || plan.git?.branch !== git.branch) throw new Error("Apply requires the exact clean Git identity used for the reviewed plan.");
-  if (!backup?.receiptHash) throw new Error("Apply requires validated backup evidence.");
+  if (!backup?.receiptHash || backup.planSha256 !== plan.planSha256) throw new Error("Apply requires backup evidence bound to the exact approved plan.");
+  assertExactMigrationHistory(remoteApplied, plan.preMigrationState, "Structured D1 migration history");
   if (!exact(plan.execution, currentPlan.execution) || !exact(plan.preMigrationState, remoteApplied) || !exact(plan.target, currentPlan.target)) throw new Error("Migration inventory, target, or remote state drifted since planning.");
   return true;
 }
