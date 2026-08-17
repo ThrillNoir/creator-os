@@ -19,7 +19,7 @@ export function parseArgs(argv) {
   const options = { mode: "plan" };
   let explicitMode = false;
   const setMode = (mode) => {
-    if (explicitMode) throw new Error("Choose exactly one of --plan, --status, --apply, or --revoke.");
+    if (explicitMode) throw new Error("Choose exactly one of --plan, --status, --mutation-preflight, --apply, or --revoke.");
     options.mode = mode;
     explicitMode = true;
   };
@@ -30,6 +30,7 @@ export function parseArgs(argv) {
     else if (arg === "--plan") setMode("plan");
     else if (arg === "--apply") setMode("apply");
     else if (arg === "--status") setMode("status");
+    else if (arg === "--mutation-preflight") setMode("mutation-preflight");
     else if (arg === "--revoke") setMode("revoke");
     else if (arg === "--output") options.output = path.resolve(argv[++i]);
     else if (arg === "--approved-plan") options.approvedPlan = path.resolve(argv[++i]);
@@ -87,7 +88,15 @@ export function mutationWranglerEnvironment({ baseEnvironment = process.env, acc
  * deliberately not inherited by the terminal; callers surface only redacted,
  * action-level outcomes.
  */
-export function runWranglerMutation(args, registry, { input, captureStdout = false, execFileSyncImpl = execFileSync } = {}) {
+export function classifyWranglerMutationFailure(error) {
+  const diagnostic = [error?.code, error?.signal, error?.stderr].filter((value) => value != null).map(String).join("\n");
+  if (/not logged in|oauth|authentication|authorization|permission|\b401\b|\b403\b/i.test(diagnostic)) return "OAUTH_AUTHORIZATION_FAILED";
+  if (/timeout|timed out|etimedout|econnreset|enotfound|network/i.test(diagnostic)) return "TRANSPORT_FAILED";
+  if (/d1|database|sqlite|sql/i.test(diagnostic)) return "D1_COMMAND_REJECTED";
+  return "UNKNOWN_MUTATION_FAILURE";
+}
+
+export function runWranglerMutation(args, registry, { input, captureStdout = false, operation = "mutation", execFileSyncImpl = execFileSync } = {}) {
   try {
     const stdout = execFileSyncImpl(wrangler, args, {
       cwd: root,
@@ -97,8 +106,9 @@ export function runWranglerMutation(args, registry, { input, captureStdout = fal
       stdio: ["pipe", captureStdout ? "pipe" : "ignore", "pipe"],
     });
     return captureStdout ? String(stdout) : "";
-  } catch {
-    throw new Error("Wrangler staging mutation failed through the approved OAuth/Keychain path.");
+  } catch (error) {
+    const failure = classifyWranglerMutationFailure(error);
+    throw new Error(`Wrangler staging ${operation} failed through the approved OAuth/Keychain path (${failure}).`);
   }
 }
 
@@ -282,7 +292,20 @@ function activationD1Target(registry, activation) {
 }
 
 export function d1Execute(registry, databaseName, statement, runMutation = runWranglerMutation) {
-  return runMutation(["--cwd", webWorkerDirectory, "d1", "execute", databaseName, "--remote", "--command", statement, "--json"], registry);
+  return runMutation(["--cwd", webWorkerDirectory, "d1", "execute", databaseName, "--remote", "--command", statement, "--json"], registry, { operation: "D1 activation" });
+}
+
+const d1MutationPreflightSql = "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1";
+
+/**
+ * Validates the isolated Wrangler OAuth path with fixed, read-only SQL before
+ * credentials are generated or any Worker/D1 mutation is attempted. Its
+ * output is discarded and failures carry only a redacted category.
+ */
+export function assertD1MutationPreflight(registry, activation, runMutation = runWranglerMutation) {
+  const target = activationD1Target(registry, activation);
+  runMutation(["--cwd", webWorkerDirectory, "d1", "execute", target.databaseName, "--remote", "--command", d1MutationPreflightSql, "--json"], registry, { operation: "D1 OAuth read preflight" });
+  return { result: "WRANGLER_OAUTH_D1_READ_READY", environment: "staging", databaseName: target.databaseName };
 }
 
 const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
@@ -499,6 +522,7 @@ export function applyActivation({
   output,
   releaseAttemptId = createReleaseAttemptId(),
   generateCredentials = generateActivationCredentials,
+  preflightD1Mutation = assertD1MutationPreflight,
   stageSecrets = stageWebSecrets,
   captureMetadata = captureWorkerMetadata,
   captureStagedMetadata,
@@ -511,6 +535,7 @@ export function applyActivation({
   let secretsMayBeStaged = false;
   let d1MayHaveBeenAttempted = false;
   try {
+    preflightD1Mutation(registry, activation);
     const workerMetadataBefore = captureMetadata(registry);
     credentials = generateCredentials(plan);
     secretsMayBeStaged = true;
@@ -621,7 +646,7 @@ function writeSafeJson(output, value) {
   return safe;
 }
 
-function usage() { return "Usage: npm run services:activate -- --environment staging --activation <approved activation json> [--plan|--status|--apply|--revoke]. Plan is the default; plan and status are read-only."; }
+function usage() { return "Usage: npm run services:activate -- --environment staging --activation <approved activation json> [--plan|--status|--mutation-preflight|--apply|--revoke]. Plan, status, and mutation-preflight are read-only."; }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
@@ -649,6 +674,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           workerMetadata: captureWorkerMetadata(registry),
         });
         console.log(JSON.stringify(status, null, 2));
+      } else if (options.mode === "mutation-preflight") {
+        console.log(JSON.stringify(writeSafeJson(options.output, assertD1MutationPreflight(registry, activation)), null, 2));
       } else {
         if (!options.approvedPlan || !options.output) throw new Error(`${options.mode === "revoke" ? "Revoke" : "Apply"} requires --approved-plan and redacted --output receipt paths.`);
         const approvedPlan = readJson(options.approvedPlan);

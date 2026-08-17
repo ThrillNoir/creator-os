@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, assertD1MutationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -172,6 +172,25 @@ test("structured D1 activation status reads only safe state and makes a satisfie
   assert.equal(withActivationStatus(plan, { state: "CONFLICT", activationRunPresent: true, canonicalRecordsPresent: true, counts: status.counts }).blockingPrecondition, "ACTIVATION_STATE_CONFLICT");
 });
 
+test("Wrangler OAuth/D1 mutation preflight is fixed, read-only, isolated, and redacted on failure", async () => {
+  const [activation, , registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const calls = [];
+  const result = assertD1MutationPreflight(registry, activation, (args, target, options) => calls.push({ args, target, options }));
+  assert.deepEqual(result, { result: "WRANGLER_OAUTH_D1_READ_READY", environment: "staging", databaseName: activation.expected.databaseName });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(0, 5), ["--cwd", path.join(root, "cloudflare/thot-os-next"), "d1", "execute", activation.expected.databaseName]);
+  assert.equal(calls[0].args.includes("--remote"), true);
+  assert.equal(calls[0].args.includes("--json"), true);
+  assert.equal(calls[0].args.at(calls[0].args.indexOf("--command") + 1), "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1");
+  assert.doesNotMatch(JSON.stringify(calls[0]), /token_hash|INSERT|UPDATE|DELETE|BEGIN|COMMIT/i);
+  assert.equal(classifyWranglerMutationFailure({ stderr: "OAuth authorization failed Bearer secret-value" }), "OAUTH_AUTHORIZATION_FAILED");
+  assert.equal(classifyWranglerMutationFailure({ stderr: "ETIMEDOUT while connecting" }), "TRANSPORT_FAILED");
+  assert.equal(classifyWranglerMutationFailure({ stderr: "D1 database rejected command" }), "D1_COMMAND_REJECTED");
+  assert.equal(classifyWranglerMutationFailure({ stderr: "unclassified secret-value" }), "UNKNOWN_MUTATION_FAILURE");
+  const source = await readFile(path.join(root, "scripts/service-auth-activate.mjs"), "utf8");
+  assert.doesNotMatch(source, /console\.(log|error)\([^\n]*(stderr|diagnostic)/);
+});
+
 test("Worker metadata is strictly parsed and proves secret staging did not route traffic", async () => {
   const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
   const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
@@ -218,6 +237,7 @@ test("activation records a fresh receipt-only attempt id and verified no-routing
     output: "/non-persistent/test-activation-receipt.json",
     releaseAttemptId: "sa-release-00000000-0000-4000-8000-000000000001",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `successful-test-secret-${index}`.padEnd(48, "x")])),
+    preflightD1Mutation: () => {},
     captureMetadata: metadataSequence(plan),
     stageSecrets: () => stagedSecretResult(plan),
     executeD1: (_target, _database, statement) => d1Statements.push(statement),
@@ -229,6 +249,33 @@ test("activation records a fresh receipt-only attempt id and verified no-routing
   assert.equal(receipt.workerSecretMetadata.stagedSecretVersionTrafficPercentage, 0);
   assert.equal(d1Statements.length, 1);
   assert.doesNotMatch(JSON.stringify(receipts), /successful-test-secret|token_hash|Bearer/i);
+});
+
+test("OAuth/D1 preflight failure stops before credential generation, secret staging, or D1 mutation", async () => {
+  const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
+  const receipts = [];
+  let credentialCalls = 0;
+  let stageCalls = 0;
+  let d1Calls = 0;
+  assert.throws(() => applyActivation({
+    plan,
+    activation,
+    registry,
+    backupReceipt: { sha256: "b".repeat(64), environment: "staging", databaseId: activation.expected.databaseId },
+    output: "/non-persistent/test-preflight-receipt.json",
+    preflightD1Mutation: () => { throw new Error("Wrangler staging D1 OAuth read preflight failed through the approved OAuth/Keychain path (OAUTH_AUTHORIZATION_FAILED)."); },
+    generateCredentials: () => { credentialCalls += 1; return {}; },
+    stageSecrets: () => { stageCalls += 1; return stagedSecretResult(plan); },
+    executeD1: () => { d1Calls += 1; },
+    writeReceipt: (_output, receipt) => receipts.push(receipt),
+  }), /before canonical D1 credentials/i);
+  assert.equal(credentialCalls, 0);
+  assert.equal(stageCalls, 0);
+  assert.equal(d1Calls, 0);
+  assert.equal(receipts.at(-1).result, "FAILED");
+  assert.deepEqual(receipts.at(-1).stagedSecretNames, []);
+  assert.doesNotMatch(JSON.stringify(receipts), /OAUTH_AUTHORIZATION_FAILED|secret-value|Bearer/i);
 });
 
 test("confirmed explicit recovery uses only deterministic revoke SQL and verifies REVOKED state", async () => {
@@ -262,6 +309,7 @@ test("activation CLI has explicit plan/apply modes and receipts reject secret ma
   assert.equal(parseArgs(["--environment", "staging"]).mode, "plan");
   assert.equal(parseArgs(["--environment", "staging", "--apply"]).mode, "apply");
   assert.equal(parseArgs(["--environment", "staging", "--status"]).mode, "status");
+  assert.equal(parseArgs(["--environment", "staging", "--mutation-preflight"]).mode, "mutation-preflight");
   assert.equal(parseArgs(["--environment", "staging", "--revoke"]).mode, "revoke");
   assert.throws(() => parseArgs(["--environment", "staging", "--apply", "--revoke"]), /exactly one/i);
   assert.throws(() => redactActivationReceipt({ secret: "not allowed" }), /prohibited/i);
@@ -379,6 +427,7 @@ test("secret-stage failure does not attempt canonical D1 activation", async () =
     registry,
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `stage-failure-test-secret-${index}`.padEnd(48, "x")])),
+    preflightD1Mutation: () => {},
     captureMetadata: metadataSequence(plan),
     stageSecrets: () => { throw new Error("simulated secret stage failure"); },
     executeD1: () => { d1Calls += 1; },
@@ -404,6 +453,7 @@ test("uncertain D1 activation is neutralised by deterministic canonical revocati
     registry,
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => ({ ...credentials }),
+    preflightD1Mutation: () => {},
     captureMetadata: metadataSequence(plan),
     stageSecrets: () => stagedSecretResult(plan),
     executeD1: (_target, _databaseName, statement) => {
@@ -438,6 +488,7 @@ test("receipt-write failure after D1 activation also revokes the canonical crede
     registry,
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `post-d1-test-secret-${index}`.padEnd(48, "x")])),
+    preflightD1Mutation: () => {},
     captureMetadata: metadataSequence(plan),
     stageSecrets: () => stagedSecretResult(plan),
     executeD1: (_target, _databaseName, statement) => d1Statements.push(statement),
@@ -464,6 +515,7 @@ test("failed automatic revocation fail-closes as rollback-required without revea
     registry,
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `rollback-required-test-secret-${index}`.padEnd(48, "x")])),
+    preflightD1Mutation: () => {},
     captureMetadata: metadataSequence(plan),
     stageSecrets: () => stagedSecretResult(plan),
     executeD1: () => {
