@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, canonicalActivationRecords, captureWorkerMetadata, classifyActivationStatus, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, compareWorkerMetadata, d1Migrations, mutationWranglerEnvironment, parseArgs, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -13,20 +13,31 @@ const baseline = Array.from({ length: 27 }, (_, index) => `${String(index + 1).p
 
 function workerMetadataFor(plan, { staged = false } = {}) {
   const deployment = { versions: [{ versionId: "published-version", percentage: 100 }] };
+  const versionId = staged ? "unpublished-secret-version" : "previous-unpublished-version";
+  const versionMetadata = {
+    versionId,
+    trafficPercentage: 0,
+    secretNames: staged ? plan.principals.map((principal) => principal.secretName).sort() : [],
+  };
   return {
-    latestVersionId: staged ? "unpublished-secret-version" : "previous-unpublished-version",
+    latestVersionId: versionId,
+    versionIds: staged ? [versionId, "previous-unpublished-version"] : [versionId],
     deployment,
-    latestSecretVersion: {
-      versionId: staged ? "unpublished-secret-version" : "previous-unpublished-version",
-      trafficPercentage: 0,
-      secretNames: staged ? plan.principals.map((principal) => principal.secretName).sort() : [],
-    },
+    latestSecretVersion: versionMetadata,
+    ...(staged ? { stagedVersionId: versionId, stagedSecretVersion: versionMetadata } : {}),
   };
 }
 
 function metadataSequence(plan) {
   const snapshots = [workerMetadataFor(plan), workerMetadataFor(plan, { staged: true })];
   return () => snapshots.shift() ?? snapshots.at(-1);
+}
+
+function stagedSecretResult(plan) {
+  return {
+    secretNames: plan.principals.map((principal) => principal.secretName),
+    stagedVersionId: "unpublished-secret-version",
+  };
 }
 
 function validBackupReceipt(plan, registry) {
@@ -172,19 +183,23 @@ test("Worker metadata is strictly parsed and proves secret staging did not route
     throw new Error(`unexpected command: ${args.join(" ")}`);
   };
   const before = captureWorkerMetadata(registry, runner);
-  const after = captureWorkerMetadata(registry, (args) => {
+  const after = captureStagedWorkerMetadata(before, registry, "unpublished-secret-version", (args) => {
     const command = args.slice(0, 3).join(" ");
-    if (command === "versions list --json") return JSON.stringify([{ id: "unpublished-secret-version" }, { id: "previous-unpublished-version" }]);
+    // Deliberately place the existing version first: staged-version proof must
+    // use Wrangler's acknowledgement, never implicit list ordering.
+    if (command === "versions list --json") return JSON.stringify([{ id: "previous-unpublished-version" }, { id: "unpublished-secret-version" }]);
     if (command === "deployments status --json") return JSON.stringify({ versions: [{ version_id: "published-version", percentage: 100 }] });
     if (command === "versions view unpublished-secret-version") return JSON.stringify({ id: "unpublished-secret-version", resources: { bindings: plan.principals.map((principal) => ({ type: "secret_text", name: principal.secretName })) } });
     throw new Error(`unexpected command: ${args.join(" ")}`);
   });
   const comparison = compareWorkerMetadata(before, after, plan.principals.map((principal) => principal.secretName));
   assert.equal(comparison.deploymentUnchanged, true);
-  assert.equal(comparison.afterSecretVersionTrafficPercentage, 0);
+  assert.equal(comparison.stagedSecretVersionTrafficPercentage, 0);
+  assert.equal(comparison.stagedVersionId, "unpublished-secret-version");
   assert.equal(comparison.addedSecretNames.length, 4);
   assert.throws(() => compareWorkerMetadata(before, { ...after, deployment: { versions: [{ versionId: "unpublished-secret-version", percentage: 100 }] } }, plan.principals.map((principal) => principal.secretName)), /deployment|traffic/i);
-  assert.equal(parseWorkerVersionsJson(JSON.stringify([{ id: "newest" }, { id: "older" }])).latestVersionId, "newest");
+  assert.throws(() => captureStagedWorkerMetadata(before, registry, "missing-version", runner), /absent|acknowledged/i);
+  assert.deepEqual(parseWorkerVersionsJson(JSON.stringify([{ id: "newest" }, { id: "older" }])), { latestVersionId: "newest", versionIds: ["newest", "older"] });
   assert.deepEqual(parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "newest", resources: { bindings: [{ type: "secret_text", name: "SAFE_SECRET" }, { type: "plain_text", name: "SAFE_VAR" }] } }), "newest"), { versionId: "newest", secretNames: ["SAFE_SECRET"] });
   assert.throws(() => parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "wrong", resources: { bindings: [] } }), "newest"), /did not match/i);
   assert.doesNotMatch(JSON.stringify(comparison), /value|Bearer|token_hash/i);
@@ -204,14 +219,14 @@ test("activation records a fresh receipt-only attempt id and verified no-routing
     releaseAttemptId: "sa-release-00000000-0000-4000-8000-000000000001",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `successful-test-secret-${index}`.padEnd(48, "x")])),
     captureMetadata: metadataSequence(plan),
-    stageSecrets: () => {},
+    stageSecrets: () => stagedSecretResult(plan),
     executeD1: (_target, _database, statement) => d1Statements.push(statement),
     writeReceipt: (_output, value) => receipts.push(value),
   });
   assert.equal(receipt.result, "D1_ACTIVE");
   assert.equal(receipt.releaseAttemptId, "sa-release-00000000-0000-4000-8000-000000000001");
   assert.equal(receipt.workerSecretMetadata.deploymentUnchanged, true);
-  assert.equal(receipt.workerSecretMetadata.afterSecretVersionTrafficPercentage, 0);
+  assert.equal(receipt.workerSecretMetadata.stagedSecretVersionTrafficPercentage, 0);
   assert.equal(d1Statements.length, 1);
   assert.doesNotMatch(JSON.stringify(receipts), /successful-test-secret|token_hash|Bearer/i);
 });
@@ -316,6 +331,16 @@ test("activation mutations strip read credentials and use the Wrangler keychain 
   assert.equal(calls[0].options.env.CLOUDFLARE_API_TOKEN, undefined);
   assert.equal(calls[0].options.env.CLOUDFLARE_AUTH_USE_KEYRING, "true");
   assert.deepEqual(calls[0].options.stdio, ["pipe", "ignore", "pipe"]);
+  const captured = runWranglerMutation(["versions", "secret", "bulk"], registry, {
+    input: "memory-only-test-input",
+    captureStdout: true,
+    execFileSyncImpl: (_command, _args, options) => {
+      assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe"]);
+      assert.equal(options.env.CLOUDFLARE_API_TOKEN, undefined);
+      return "metadata-only acknowledgement";
+    },
+  });
+  assert.equal(captured, "metadata-only acknowledgement");
 });
 
 test("secret staging is an stdin-only bulk update with no secret file or command-line secret", async () => {
@@ -323,14 +348,21 @@ test("secret staging is an stdin-only bulk update with no secret file or command
   const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
   const credentials = Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `memory-only-test-secret-${index}`.padEnd(48, "x")]));
   const calls = [];
-  const secretNames = stageWebSecrets(plan, registry, credentials, (args, target, options) => calls.push({ args, target, options }));
+  const staged = stageWebSecrets(plan, registry, credentials, (args, target, options) => {
+    calls.push({ args, target, options });
+    return "✨ Success! Created version a1111111-1111-4111-8111-111111111111 with 4 secrets.\n";
+  });
+  const { secretNames } = staged;
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].args.slice(0, 3), ["versions", "secret", "bulk"]);
   assert.equal(calls[0].args.includes("--secrets-file"), false);
   assert.equal(calls[0].args.some((arg) => String(arg).includes("memory-only-test-secret")), false);
   assert.deepEqual(Object.keys(JSON.parse(calls[0].options.input)).sort(), secretNames.slice().sort());
   assert.match(calls[0].options.input, /memory-only-test-secret-0/);
+  assert.equal(calls[0].options.captureStdout, true);
+  assert.equal(staged.stagedVersionId, "a1111111-1111-4111-8111-111111111111");
   assert.doesNotMatch(String(calls[0].args), /memory-only-test-secret/);
+  assert.throws(() => stageWebSecrets(plan, registry, credentials, () => "unexpected output"), /verifiable version acknowledgement/i);
   const source = await readFile(path.join(root, "scripts/service-auth-activate.mjs"), "utf8");
   assert.doesNotMatch(source, /mkdtempSync|os\.tmpdir|web-secrets\.json|--secrets-file/);
 });
@@ -373,7 +405,7 @@ test("uncertain D1 activation is neutralised by deterministic canonical revocati
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => ({ ...credentials }),
     captureMetadata: metadataSequence(plan),
-    stageSecrets: () => {},
+    stageSecrets: () => stagedSecretResult(plan),
     executeD1: (_target, _databaseName, statement) => {
       d1Statements.push(statement);
       if (d1Statements.length === 1) throw new Error("simulated uncertain transport outcome");
@@ -407,7 +439,7 @@ test("receipt-write failure after D1 activation also revokes the canonical crede
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `post-d1-test-secret-${index}`.padEnd(48, "x")])),
     captureMetadata: metadataSequence(plan),
-    stageSecrets: () => {},
+    stageSecrets: () => stagedSecretResult(plan),
     executeD1: (_target, _databaseName, statement) => d1Statements.push(statement),
     writeReceipt: (_output, receipt) => {
       receiptWrites.push(receipt);
@@ -433,7 +465,7 @@ test("failed automatic revocation fail-closes as rollback-required without revea
     output: "/non-persistent/test-receipt.json",
     generateCredentials: () => Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `rollback-required-test-secret-${index}`.padEnd(48, "x")])),
     captureMetadata: metadataSequence(plan),
-    stageSecrets: () => {},
+    stageSecrets: () => stagedSecretResult(plan),
     executeD1: () => {
       d1Calls += 1;
       throw new Error("simulated mutation transport failure");

@@ -87,15 +87,16 @@ export function mutationWranglerEnvironment({ baseEnvironment = process.env, acc
  * deliberately not inherited by the terminal; callers surface only redacted,
  * action-level outcomes.
  */
-export function runWranglerMutation(args, registry, { input, execFileSyncImpl = execFileSync } = {}) {
+export function runWranglerMutation(args, registry, { input, captureStdout = false, execFileSyncImpl = execFileSync } = {}) {
   try {
-    return execFileSyncImpl(wrangler, args, {
+    const stdout = execFileSyncImpl(wrangler, args, {
       cwd: root,
       encoding: "utf8",
       env: mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }),
       input,
-      stdio: ["pipe", "ignore", "pipe"],
+      stdio: ["pipe", captureStdout ? "pipe" : "ignore", "pipe"],
     });
+    return captureStdout ? String(stdout) : "";
   } catch {
     throw new Error("Wrangler staging mutation failed through the approved OAuth/Keychain path.");
   }
@@ -139,11 +140,12 @@ export function parseWorkerVersionsJson(stdout) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Wrangler versions metadata contained an invalid version.");
     return { id: nonEmptyMetadataString(entry.id, "version id") };
   });
-  // Wrangler's versions API returns the most recent version first. Do not use
-  // `versions secret list --latest-version`: Wrangler 4.120 crashes while
-  // resolving bindings for the current staging version. `versions view` is a
-  // separate read-only API path with a stable JSON representation.
-  return { latestVersionId: versions[0].id };
+  const versionIds = versions.map((entry) => entry.id);
+  if (new Set(versionIds).size !== versionIds.length) throw new Error("Wrangler versions metadata contained duplicate version ids.");
+  // The command currently returns the most recent version first, but staging
+  // verification below binds to Wrangler's acknowledged version id rather
+  // than relying on that ordering.
+  return { latestVersionId: versionIds[0], versionIds };
 }
 
 export function parseDeploymentStatusJson(stdout) {
@@ -181,15 +183,50 @@ export function parseWorkerVersionSecretMetadataJson(stdout, expectedVersionId) 
  * Reads only Worker version, deployment, and secret-name metadata. No secret
  * value is requested and no output is passed through to the terminal.
  */
-export function captureWorkerMetadata(registry, runMetadataRead = runWranglerMetadataRead) {
+function workerMetadataConfig(registry) {
   const config = registry?.environments?.staging?.components?.web?.config;
   if (typeof config !== "string" || config.trim() === "") throw new Error("Staging Worker metadata requires the reviewed Wrangler config.");
+  return config;
+}
+
+function readWorkerVersionMetadata(registry, config, versionId, runMetadataRead) {
+  return parseWorkerVersionSecretMetadataJson(runMetadataRead(["versions", "view", versionId, "--json", "--config", config], registry), versionId);
+}
+
+function captureWorkerVersionState(registry, runMetadataRead) {
+  const config = workerMetadataConfig(registry);
   const versions = parseWorkerVersionsJson(runMetadataRead(["versions", "list", "--json", "--config", config], registry));
   const deployment = parseDeploymentStatusJson(runMetadataRead(["deployments", "status", "--json", "--config", config], registry));
-  const versionMetadata = parseWorkerVersionSecretMetadataJson(runMetadataRead(["versions", "view", versions.latestVersionId, "--json", "--config", config], registry), versions.latestVersionId);
+  return { config, versions, deployment };
+}
+
+export function captureWorkerMetadata(registry, runMetadataRead = runWranglerMetadataRead) {
+  const { config, versions, deployment } = captureWorkerVersionState(registry, runMetadataRead);
+  const versionMetadata = readWorkerVersionMetadata(registry, config, versions.latestVersionId, runMetadataRead);
   const trafficPercentage = deployment.versions.find((entry) => entry.versionId === versions.latestVersionId)?.percentage ?? 0;
   const latestSecretVersion = { ...versionMetadata, trafficPercentage };
-  return { latestVersionId: versions.latestVersionId, deployment, latestSecretVersion };
+  return { latestVersionId: versions.latestVersionId, versionIds: versions.versionIds, deployment, latestSecretVersion };
+}
+
+/**
+ * Verifies the exact unpublished version acknowledged by `versions secret
+ * bulk`. This deliberately does not infer the staged version from list order.
+ */
+export function captureStagedWorkerMetadata(before, registry, stagedVersionId, runMetadataRead = runWranglerMetadataRead) {
+  if (!before || !Array.isArray(before.versionIds)) throw new Error("Worker secret staging requires a complete baseline version inventory.");
+  const expectedVersionId = nonEmptyMetadataString(stagedVersionId, "staged version id");
+  if (before.versionIds.includes(expectedVersionId)) throw new Error("Wrangler acknowledged a Worker version that already existed before secret staging.");
+  const { config, versions, deployment } = captureWorkerVersionState(registry, runMetadataRead);
+  if (!versions.versionIds.includes(expectedVersionId)) throw new Error("Wrangler acknowledged Worker secret staging, but its version is absent from the verified version inventory.");
+  const versionMetadata = readWorkerVersionMetadata(registry, config, expectedVersionId, runMetadataRead);
+  const trafficPercentage = deployment.versions.find((entry) => entry.versionId === expectedVersionId)?.percentage ?? 0;
+  return {
+    latestVersionId: versions.latestVersionId,
+    versionIds: versions.versionIds,
+    deployment,
+    stagedVersionId: expectedVersionId,
+    stagedSecretVersion: { ...versionMetadata, trafficPercentage },
+  };
 }
 
 function equivalentDeployment(left, right) {
@@ -204,21 +241,25 @@ export function compareWorkerMetadata(before, after, expectedSecretNames) {
   if (!before || !after || !Array.isArray(expectedSecretNames) || !expectedSecretNames.every((name) => /^[A-Z][A-Z0-9_]*$/.test(name))) {
     throw new Error("Worker metadata comparison requires reviewed staging metadata and secret destinations.");
   }
-  if (before.latestVersionId === after.latestVersionId) throw new Error("Secret staging did not create a fresh Worker version.");
+  if (!Array.isArray(before.versionIds) || !Array.isArray(after.versionIds) || typeof after.stagedVersionId !== "string" || !after.stagedSecretVersion) {
+    throw new Error("Worker metadata comparison requires an exact staged-version inventory.");
+  }
+  if (before.versionIds.includes(after.stagedVersionId) || !after.versionIds.includes(after.stagedVersionId)) throw new Error("Secret staging did not create a verifiable fresh Worker version.");
   if (!equivalentDeployment(before.deployment, after.deployment)) throw new Error("Secret staging changed the Worker deployment or traffic allocation.");
-  if (after.latestSecretVersion.versionId !== after.latestVersionId || after.latestSecretVersion.trafficPercentage !== 0) {
+  if (after.stagedSecretVersion.versionId !== after.stagedVersionId || after.stagedSecretVersion.trafficPercentage !== 0) {
     throw new Error("Secret staging did not remain on an unpublished zero-traffic Worker version.");
   }
   const beforeNames = new Set(before.latestSecretVersion.secretNames);
-  const afterNames = new Set(after.latestSecretVersion.secretNames);
-  if (!expectedSecretNames.every((name) => afterNames.has(name))) throw new Error("Latest Worker secret metadata did not contain every approved secret destination.");
+  const afterNames = new Set(after.stagedSecretVersion.secretNames);
+  if (!expectedSecretNames.every((name) => afterNames.has(name))) throw new Error("Staged Worker secret metadata did not contain every approved secret destination.");
   return {
     deploymentUnchanged: true,
     beforeLatestVersionId: before.latestVersionId,
-    afterLatestVersionId: after.latestVersionId,
+    observedLatestVersionId: after.latestVersionId,
+    stagedVersionId: after.stagedVersionId,
     beforeSecretVersionId: before.latestSecretVersion.versionId,
-    afterSecretVersionId: after.latestSecretVersion.versionId,
-    afterSecretVersionTrafficPercentage: after.latestSecretVersion.trafficPercentage,
+    stagedSecretVersionId: after.stagedSecretVersion.versionId,
+    stagedSecretVersionTrafficPercentage: after.stagedSecretVersion.trafficPercentage,
     expectedSecretNames: [...expectedSecretNames].sort(),
     addedSecretNames: expectedSecretNames.filter((name) => !beforeNames.has(name)).sort(),
     existingSecretNames: expectedSecretNames.filter((name) => beforeNames.has(name)).sort(),
@@ -382,8 +423,11 @@ function secretPayload(plan, credentials) {
  */
 export function stageWebSecrets(plan, registry, credentials, runMutation = runWranglerMutation) {
   const input = JSON.stringify(secretPayload(plan, credentials));
-  runMutation(["versions", "secret", "bulk", "--config", registry.environments.staging.components.web.config], registry, { input });
-  return plan.principals.map((principal) => principal.secretName);
+  const stdout = runMutation(["versions", "secret", "bulk", "--config", registry.environments.staging.components.web.config], registry, { input, captureStdout: true });
+  const secretNames = plan.principals.map((principal) => principal.secretName);
+  const match = /^✨ Success! Created version ([a-f0-9-]+) with (\d+) secrets\.$/mi.exec(String(stdout));
+  if (!match || Number(match[2]) !== secretNames.length) throw new Error("Wrangler secret staging did not return a verifiable version acknowledgement.");
+  return { secretNames, stagedVersionId: match[1] };
 }
 
 export function activationSql({ plan, activation, credentials, backupReceipt }) {
@@ -457,6 +501,7 @@ export function applyActivation({
   generateCredentials = generateActivationCredentials,
   stageSecrets = stageWebSecrets,
   captureMetadata = captureWorkerMetadata,
+  captureStagedMetadata,
   compareMetadata = compareWorkerMetadata,
   executeD1 = d1Execute,
   writeReceipt = writeActivationReceipt,
@@ -469,9 +514,17 @@ export function applyActivation({
     const workerMetadataBefore = captureMetadata(registry);
     credentials = generateCredentials(plan);
     secretsMayBeStaged = true;
-    stageSecrets(plan, registry, credentials);
-    const workerMetadataAfter = captureMetadata(registry);
-    workerSecretMetadata = compareMetadata(workerMetadataBefore, workerMetadataAfter, plan.principals.map((entry) => entry.secretName));
+    const stagedSecrets = stageSecrets(plan, registry, credentials);
+    const expectedSecretNames = plan.principals.map((entry) => entry.secretName).sort();
+    if (!stagedSecrets || !Array.isArray(stagedSecrets.secretNames) || stagedSecrets.secretNames.slice().sort().join("\u0000") !== expectedSecretNames.join("\u0000")) {
+      throw new Error("Worker secret staging did not acknowledge every approved secret destination.");
+    }
+    const workerMetadataAfter = captureStagedMetadata
+      ? captureStagedMetadata(workerMetadataBefore, registry, stagedSecrets.stagedVersionId)
+      : captureMetadata === captureWorkerMetadata
+        ? captureStagedWorkerMetadata(workerMetadataBefore, registry, stagedSecrets.stagedVersionId)
+        : captureMetadata(registry);
+    workerSecretMetadata = compareMetadata(workerMetadataBefore, workerMetadataAfter, expectedSecretNames);
     d1MayHaveBeenAttempted = true;
     executeD1(registry, activation.expected.databaseName, activationSql({ plan, activation, credentials, backupReceipt }));
     const receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "D1_ACTIVE", principalCount: plan.principals.length, secretNames: plan.principals.map((entry) => entry.secretName), creatorGrantCount: plan.grants.length, d1CredentialHashesInstalled: plan.principals.length, secretValuesPersistedLocally: false, workerSecretMetadata, nextStep: "Deploy compatible receivers, route the staged Web version, then run protected no-op probes." });
