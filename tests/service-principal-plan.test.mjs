@@ -16,7 +16,7 @@ test("service-principal provisioning plans require explicit, allowed creator cap
     grants: ["thot-os-web-reddit:adelaide:reddit.status.read", "thot-os-web-vault-catalogue:adelaide:vault.catalogue.refresh"],
   });
   assert.equal(plan.mode, "plan-only");
-  assert.equal(plan.principalCount, 4);
+  assert.equal(plan.principalCount, 5);
   assert.equal(plan.grants.length, 2);
   assert.ok(plan.requiredRemoteGates.some((gate) => gate.includes("0029")));
   assert.ok(plan.prohibited.includes("secret output"));

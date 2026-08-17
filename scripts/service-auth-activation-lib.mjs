@@ -161,17 +161,22 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
   const { principals, grants } = validateActivation({ activation, contract, registry });
   const expandMigrations = activation.expected.expandMigrations;
   const compatibilityMigrations = activation.expected.compatibilityMigrations;
-  if (!Array.isArray(expandMigrations) || !expandMigrations.length || !Array.isArray(compatibilityMigrations) || !compatibilityMigrations.length) throw new Error("Activation requires explicit EXPAND and COMPATIBILITY migration contracts.");
+  const postCompatibilityMigrations = activation.expected.postCompatibilityMigrations ?? [];
+  if (!Array.isArray(expandMigrations) || !expandMigrations.length || !Array.isArray(compatibilityMigrations) || !compatibilityMigrations.length || !Array.isArray(postCompatibilityMigrations) || ![...expandMigrations, ...compatibilityMigrations, ...postCompatibilityMigrations].every((name) => typeof name === "string" && name.length > 0)) {
+    throw new Error("Activation requires explicit EXPAND, COMPATIBILITY, and post-COMPATIBILITY migration contracts.");
+  }
+  const postCompatibilityReady = postCompatibilityMigrations.length === 0 || (postCompatibilityMigrations.every((name) => observedMigrations.includes(name)) && observedMigrations.at(-1) === postCompatibilityMigrations.at(-1));
+  const recognisedTerminalMigrations = [expandMigrations.at(-1), compatibilityMigrations.at(-1), ...(postCompatibilityMigrations.length ? [postCompatibilityMigrations.at(-1)] : [])];
   const expandReady = expandMigrations.every((name) => observedMigrations.includes(name))
-    && [expandMigrations.at(-1), compatibilityMigrations.at(-1)].includes(observedMigrations.at(-1));
+    && recognisedTerminalMigrations.includes(observedMigrations.at(-1));
   const compatibilityReady = expandReady && compatibilityMigrations.every((name) => observedMigrations.includes(name))
-    && observedMigrations.at(-1) === compatibilityMigrations.at(-1);
+    && (observedMigrations.at(-1) === compatibilityMigrations.at(-1) || postCompatibilityReady);
   const remoteBaseline = observedMigrations.at(-1) === "0027_reddit_post_flairs.sql";
   const partialExpandIndex = expandMigrations.indexOf(observedMigrations.at(-1));
   const partialExpandReady = partialExpandIndex >= 0
     && expandMigrations.slice(0, partialExpandIndex + 1).every((name) => observedMigrations.includes(name))
-    && compatibilityMigrations.every((name) => !observedMigrations.includes(name));
-  if (!compatibilityReady && !expandReady && !partialExpandReady && !remoteBaseline) throw new Error("Remote migration state is outside the approved baseline, partial-EXPAND, EXPAND, and COMPATIBILITY boundaries.");
+    && [...compatibilityMigrations, ...postCompatibilityMigrations].every((name) => !observedMigrations.includes(name));
+  if (!compatibilityReady && !expandReady && !partialExpandReady && !remoteBaseline) throw new Error("Remote migration state is outside the approved baseline, partial-EXPAND, EXPAND, COMPATIBILITY, and post-COMPATIBILITY boundaries.");
   const plan = {
     schemaVersion: 1,
     mode: "plan",
@@ -183,6 +188,7 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
     partialExpandReady,
     partialExpandThrough: partialExpandReady ? expandMigrations[partialExpandIndex] : null,
     expandReady,
+    postCompatibilityReady,
     compatibilityReady,
     activationReady: compatibilityReady,
     blockingPrecondition: compatibilityReady ? null : expandReady ? "COMPATIBILITY_MIGRATION_0032_REQUIRED" : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED",
