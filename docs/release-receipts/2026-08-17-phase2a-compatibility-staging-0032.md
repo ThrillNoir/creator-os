@@ -73,7 +73,7 @@ The reviewed trigger representation is LF-normalized SQL, trimmed with one final
 - Legacy authentication removal: **NO**.
 - Production touched: **NO**.
 
-No automatic D1 rollback is appropriate: 0032 is canonically committed, exactly verified at the schema/data/integrity level, and remains the intended compatibility state. The protected temporary export/evidence directory contains raw staging data and will be moved recoverably to this Mac user's Trash after this receipt is committed; it is not committed.
+No automatic D1 rollback is appropriate: 0032 is canonically committed, exactly verified at the schema/data/integrity level, and remains the intended compatibility state. The protected temporary export/evidence directory containing raw staging data was moved recoverably to this Mac user's Trash after receipt capture; it is not committed.
 
 ## Required next action
 
