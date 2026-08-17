@@ -1,0 +1,40 @@
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "thot-os-public-links-control-staging",
+  "account_id": "3e7cfa6efb7a97825f1dc24515410c63",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "thot-os-staging",
+      "database_id": "174532e8-5ada-4e30-abba-1276b3540b3f",
+      "migrations_dir": "../thot-os-app/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "PUBLIC_LINKS"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "thot-os-public-profile-publish-staging",
+      "binding": "PUBLIC_PROFILE_PUBLISH",
+      "class_name": "PublicProfilePublishWorkflow"
+    },
+    {
+      "name": "thot-os-public-profile-withdraw-staging",
+      "binding": "PUBLIC_PROFILE_WITHDRAW",
+      "class_name": "PublicProfileWithdrawWorkflow"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  }
+}

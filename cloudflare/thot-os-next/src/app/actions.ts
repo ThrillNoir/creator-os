@@ -14,6 +14,79 @@ function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
 }
 
+type PublicProfileLinkInput = {
+  id: string;
+  label: string;
+  destinationUrl: string;
+  destinationHost: string;
+  sortOrder: number;
+};
+
+type PublicProfileVersionRow = {
+  id: string;
+  profile_id: string;
+  creator_id: string;
+  slug: string;
+  published_version_id: string | null;
+  version_number: number;
+  display_name: string;
+  headline: string;
+  bio: string;
+  content_checksum: string;
+  status: string;
+};
+
+const publicProfileSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const publicProfileId = /^[a-zA-Z0-9_-]{1,160}$/;
+
+function publicText(value: FormDataEntryValue | null, maximum: number, label: string, { required = false, collapseWhitespace = false }: { required?: boolean; collapseWhitespace?: boolean } = {}) {
+  const text = String(value ?? "").replace(/\r\n?/g, "\n");
+  const normalized = (collapseWhitespace ? text.replace(/\s+/g, " ") : text).trim();
+  if (required && !normalized) throw new Error(`Enter a ${label}.`);
+  if (normalized.length > maximum) throw new Error(`Enter a ${label} of up to ${maximum} characters.`);
+  return normalized;
+}
+
+function publicProfileSlugValue(value: FormDataEntryValue | null) {
+  const slug = String(value ?? "").trim().toLowerCase();
+  if (!publicProfileSlug.test(slug) || slug.length > 80) throw new Error("Use a public URL slug of lowercase letters, numbers and single hyphens.");
+  return slug;
+}
+
+function approvedPublicDestination(value: string) {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("Every public link needs a complete HTTPS destination."); }
+  if (url.protocol !== "https:" || url.username || url.password || !url.hostname) throw new Error("Every public link must be a credential-free HTTPS destination.");
+  return { destinationUrl: url.toString(), destinationHost: url.hostname.toLowerCase() };
+}
+
+function publicProfileLinks(formData: FormData) {
+  const labels = formData.getAll("linkLabel").map((value) => String(value).replace(/\s+/g, " ").trim());
+  const destinations = formData.getAll("linkDestination").map((value) => String(value).trim());
+  if (labels.length !== destinations.length || labels.length > 8) throw new Error("A public profile can contain up to eight links.");
+  const links = labels.flatMap((label, index): PublicProfileLinkInput[] => {
+    const destination = destinations[index];
+    if (!label && !destination) return [];
+    if (!label || !destination || label.length > 80) throw new Error("Every public link needs a label of up to 80 characters and an HTTPS destination.");
+    const approved = approvedPublicDestination(destination);
+    return [{ id: crypto.randomUUID(), label, ...approved, sortOrder: index }];
+  });
+  if (!links.length) throw new Error("Add at least one explicit HTTPS destination before saving this public profile.");
+  return links;
+}
+
+async function publicProfileChecksum(content: { displayName: string; headline: string; bio: string; links: Array<Pick<PublicProfileLinkInput, "label" | "destinationUrl" | "destinationHost" | "sortOrder">> }) {
+  const canonical = JSON.stringify({ ...content, links: content.links.map((link) => ({ label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder })) });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function submittedPublicProfileVersionId(formData: FormData) {
+  const id = String(formData.get("versionId") ?? "");
+  if (!publicProfileId.test(id)) throw new Error("The requested public profile version is invalid.");
+  return id;
+}
+
 function cleanFanslyHandle(value: FormDataEntryValue | null) {
   const handle = String(value ?? "").trim().replace(/^@+/, "").replace(/\s+/g, "");
   if (!/^[A-Za-z0-9._-]{2,80}$/.test(handle)) throw new Error("Enter the expected Fansly handle without spaces.");
@@ -928,4 +1001,122 @@ export async function sendFanslyReplyAction(formData: FormData) {
   ]);
   revalidatePath("/messages");
   redirect(`/messages?platform=fansly&thread=${encodeURIComponent(thread.id)}&saved=fansly_reply_queued`);
+}
+
+export async function savePublicProfileDraftAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const slug = publicProfileSlugValue(formData.get("slug"));
+  const displayName = publicText(formData.get("displayName"), 120, "display name", { required: true, collapseWhitespace: true });
+  const headline = publicText(formData.get("headline"), 280, "headline");
+  const bio = publicText(formData.get("bio"), 2000, "bio");
+  const links = publicProfileLinks(formData);
+  const checksum = await publicProfileChecksum({ displayName, headline, bio, links });
+  const { DB } = cloudflareEnv();
+  const [profile, draft, nextVersion] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id,slug,published_version_id FROM creator_public_profiles WHERE creator_id=@creator LIMIT 1")
+      .first<{ id: string; slug: string; published_version_id: string | null }>(),
+    creatorPrepare(DB, creatorId, `SELECT v.id,v.profile_id,v.creator_id,p.slug,p.published_version_id,v.version_number,v.display_name,v.headline,v.bio,v.content_checksum,v.status
+      FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+      WHERE v.creator_id=@creator AND v.status='draft' ORDER BY v.version_number DESC LIMIT 1`).first<PublicProfileVersionRow>(),
+    creatorPrepare(DB, creatorId, `SELECT COALESCE(MAX(v.version_number),0)+1 AS version_number
+      FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+      WHERE v.creator_id=@creator`).first<{ version_number: number }>(),
+  ]);
+  if (profile?.published_version_id && profile.slug !== slug) throw new Error("A published public URL slug is stable. Withdraw the current profile before changing it.");
+  const profileId = profile?.id ?? crypto.randomUUID();
+  const versionId = draft?.id ?? crypto.randomUUID();
+  const versionNumber = draft?.version_number ?? nextVersion?.version_number ?? 1;
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(profile ? profile.slug === slug ? [] : [creatorPrepare(DB, creatorId, "UPDATE creator_public_profiles SET slug=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND published_version_id IS NULL").bind(slug, profileId)] : [creatorPrepare(DB, creatorId, "INSERT INTO creator_public_profiles (id,creator_id,slug,created_by) VALUES (?,@creator,?,?)").bind(profileId, slug, identity.email)]),
+    ...(draft ? [
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
+        SET display_name=?,headline=?,bio=?,avatar_media_id=NULL,content_checksum=?
+        WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`)
+        .bind(displayName, headline, bio, checksum, versionId, profileId),
+    ] : [creatorPrepare(DB, creatorId, `INSERT INTO creator_public_profile_versions
+      (id,profile_id,creator_id,version_number,display_name,headline,bio,avatar_media_id,content_checksum,created_by)
+      VALUES (?,?,@creator,?,?,?, ?,NULL,?,?)`).bind(versionId, profileId, versionNumber, displayName, headline, bio, checksum, identity.email)]),
+    ...links.map((link) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_links
+      (id,creator_id,profile_version_id,label,destination_url,destination_host,sort_order)
+      VALUES (?,@creator,?,?,?,?,?)`).bind(link.id, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder)),
+    identityAuditStatement(DB, actor, draft ? "public_profile_draft_updated" : "public_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contentChecksum: checksum, publicSurface: true }),
+  ];
+  await DB.batch(statements);
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=draft_saved");
+}
+
+export async function approvePublicProfileVersionAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (formData.get("approvalConfirmed") !== "yes") throw new Error("Confirm that the public text and every destination are approved before continuing.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedPublicProfileVersionId(formData);
+  const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");
+  const { DB } = cloudflareEnv();
+  const version = await creatorPrepare(DB, creatorId, `SELECT v.id,v.profile_id,v.creator_id,p.slug,p.published_version_id,v.version_number,v.display_name,v.headline,v.bio,v.content_checksum,v.status
+    FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+    WHERE v.id=? AND v.creator_id=@creator AND v.status='draft'`).bind(versionId).first<PublicProfileVersionRow>();
+  if (!version) throw new Error("Only this creator’s current draft profile can be approved.");
+  const linkRows = await creatorPrepare(DB, creatorId, `SELECT label,destination_url,destination_host,sort_order
+    FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=? ORDER BY sort_order ASC`).bind(version.id)
+    .all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  if (!linkRows.results.length) throw new Error("A public profile needs at least one approved HTTPS destination.");
+  const links = linkRows.results.map((link) => {
+    const destination = approvedPublicDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes approval validation. Update the draft first.");
+    return { label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await publicProfileChecksum({ displayName: version.display_name, headline: version.headline, bio: version.bio, links });
+  if (checksum !== version.content_checksum) throw new Error("The profile content changed outside the approved draft workflow. Save the draft again before approving it.");
+  const approved = await creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
+    SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note=?
+    WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`).bind(identity.email, approvalNote, version.id, version.profile_id).run();
+  if (!approved.meta?.changes) throw new Error("This public profile draft is no longer available for approval.");
+  await identityAuditStatement(DB, humanAuditActor(identity), "public_profile_version_approved", version.id, { profileId: version.profile_id, versionNumber: version.version_number, contentChecksum: checksum, destinationCount: links.length, publicSurface: true }).run();
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=version_approved");
+}
+
+export async function publishPublicProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (formData.get("publishConfirmed") !== "yes") throw new Error("Confirm that this explicitly approved profile should be made public.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedPublicProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const version = await creatorPrepare(env.DB, creatorId, `SELECT v.id,v.profile_id,v.version_number
+    FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+    WHERE v.id=? AND v.creator_id=@creator AND v.status='approved'`).bind(versionId).first<{ id: string; profile_id: string; version_number: number }>();
+  if (!version) throw new Error("Only an explicitly approved profile version can be published.");
+  const response = await fetchInternalService(env, "public_links_control", "public.profile.publish", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/publish", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: version.profile_id, versionId: version.id }),
+  });
+  if (response.status !== 202) throw new Error(`Public publishing control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_publish_requested", version.id, { profileId: version.profile_id, versionNumber: version.version_number, publicSurface: true }).run();
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=publication_started");
+}
+
+export async function withdrawPublicProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (formData.get("withdrawConfirmed") !== "yes") throw new Error("Confirm that this public profile should be withdrawn.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedPublicProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const profile = await creatorPrepare(env.DB, creatorId, `SELECT id,published_version_id FROM creator_public_profiles
+    WHERE creator_id=@creator AND status='active' AND published_version_id=?`).bind(versionId).first<{ id: string; published_version_id: string }>();
+  if (!profile) throw new Error("This creator has no matching published profile to withdraw.");
+  const response = await fetchInternalService(env, "public_links_control", "public.profile.withdraw", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/withdraw", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: profile.id, versionId: profile.published_version_id }),
+  });
+  if (response.status !== 202) throw new Error(`Public withdrawal control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_withdraw_requested", profile.published_version_id, { profileId: profile.id, publicSurface: true }).run();
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=withdrawal_started");
 }

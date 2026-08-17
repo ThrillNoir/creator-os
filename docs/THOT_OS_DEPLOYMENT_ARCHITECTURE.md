@@ -20,6 +20,14 @@ flowchart LR
 
 The canonical remote application is `cloudflare/thot-os-next`. Cloudflare D1 is the authoritative operational database, and Cloudflare R2 is the authoritative remote object store. Local Node remains an explicitly bounded executor for browser, CLI, and local-machine capabilities. The root Next/SQLite application is not a future remote control plane: SQLite remains a protected migration source, sanitised fixture, and non-authoritative Local Node scratch store.
 
+The public creator-link surface is a separate, currently disabled Workers
+Static Assets component. It receives only an approved KV projection and writes
+aggregate click trends to Analytics Engine; it must never bind canonical D1,
+private R2, Dropbox, provider credentials, or the Access-protected admin
+application. Its paired private control Worker uses a Workflow to publish an
+approved profile version. See [the rebuild cutover](THOT_OS_REBUILD_CUTOVER.md)
+before provisioning either component.
+
 `config/deployments.json` is the machine-readable source of truth for component ownership. It contains names and identifiers only; it must never contain credential values.
 
 ## Environments

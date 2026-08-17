@@ -49,6 +49,16 @@
       "capabilities": [
         "vault.catalogue.refresh"
       ]
+    },
+    {
+      "id": "web-public-links",
+      "principalName": "thot-os-web-public-links",
+      "secretName": "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN",
+      "receiver": "public-links-control",
+      "capabilities": [
+        "public.profile.publish",
+        "public.profile.withdraw"
+      ]
     }
   ]
 }

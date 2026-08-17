@@ -108,6 +108,7 @@ The raw value named below is a **secret name only**. No secret value is stored i
 | OpenNext | Reddit Scheduler | `thot-os-web-reddit` | `INTERNAL_REDDIT_SCHEDULER_TOKEN` | One active row for the requested creator | `401` |
 | OpenNext | Telegram Bridge | `thot-os-web-telegram` | `INTERNAL_TELEGRAM_BRIDGE_TOKEN` | One active row for the requested creator | `401` |
 | OpenNext | Vault catalogue refresh | `thot-os-web-vault-catalogue` | `INTERNAL_VAULT_CATALOGUE_TOKEN` | One active row for the requested creator | `401` |
+| OpenNext | Public-links control | `thot-os-web-public-links` | `INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN` | One active row for the requested creator and route capability | `401` |
 
 The sender helper is `cloudflare/thot-os-next/src/lib/internal-service.ts`. The receiver helper is `cloudflare/shared/service-auth.ts` and validates, in order:
 
@@ -124,7 +125,7 @@ This replaces the Vault catalogue's old global receiver-side `CATALOGUE_SYNC_TOK
 
 Do not deploy this local change until all items are prepared for **staging** and independently reviewed:
 
-1. Generate four distinct high-entropy bearer values outside source control.
+1. Generate one distinct high-entropy bearer value for every approved receiver outside source control.
 2. Store each raw value only as its named canonical-web Worker secret above.
 3. Insert only its SHA-256 hash into `service_credentials`, with the exact matching `service_name`, active status, and a bounded expiry/rotation policy.
 4. Insert explicit `service_creator_grants` rows only for creators that require the service.
@@ -205,7 +206,7 @@ Existing canonical tests continue to cover creator portal isolation, QA human/se
 
 Do not start cleanup/refactoring until the following release-preparation work is approved:
 
-1. Provision and test the four staging service principals and grants, then perform a single reviewed staging deployment that updates both sender and receivers.
+1. Provision and test every approved staging service principal and grant, then perform a single reviewed staging deployment that updates both sender and receivers.
 2. Replace Instagram's shared Dropbox connected-account path with creator-owned connections before onboarding a second active creator.
 3. Make audit tables append-only and extend D1 provenance validation only after writer compatibility is fully mapped and tested.
 4. Redesign the device bridge around one-time activation and proof of possession; shorten bearer lifetime and add targeted revocation/forensic audit fields.

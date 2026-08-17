@@ -59,7 +59,7 @@ EXPAND schema with a safe stop after `0031`; `0032` is the separately approved
 COMPATIBILITY trigger change. Activation is forbidden before both boundaries
 have been verified.
 
-The intended current principals are named web-to-worker callers for Instagram scheduling, Reddit scheduling, Telegram bridge, and Vault catalogue work. Each credential must be independently provisioned, hashed before insertion into D1, explicitly granted to named creators, capability-scoped, auditable, revocable, and rotated without printing its secret.
+The intended current principals are named web-to-worker callers for Instagram scheduling, Reddit scheduling, Telegram bridge, Vault catalogue work, and public-links control. Each credential must be independently provisioned, hashed before insertion into D1, explicitly granted to named creators, capability-scoped, auditable, revocable, and rotated without printing its secret.
 
 The provisioning planner is local-only until an approved staging release. It validates an allowed service/capability/creator plan and emits a redacted receipt/command plan; it never reads or prints an existing Cloudflare secret. Staging secret provisioning is an operator approval gate because it creates credential material and must be coordinated atomically with sender and receiver Worker deployments.
 
@@ -74,7 +74,7 @@ The staging status can be `VERIFIED` only when all of these are true:
 3. D1 migration state exactly matches the released migration set;
 4. Access, membership filtering, creator switching, and cross-creator tampering checks pass;
 5. the protected health endpoint passes with correct metadata and bindings;
-6. four distinct service principals, their capability grants, and creator grants are provisioned and validated together; and
+6. every approved service principal, its capability grants, and creator grants are provisioned and validated together; and
 7. a protected smoke test and receipt succeed without provider posting.
 
 ## Gate A — local versus remote change plan
@@ -86,8 +86,8 @@ No remote mutation has been performed as part of this documentation update.
 | Add canonical onboarding, exception visibility, normalized integration health, protected health contract, and tests | Local | Adds only code plus additive schema migrations | Improves authorization visibility; no secret material | Yes: un-deployed code can be reverted | Local tests, build, Cloud migration replay |
 | Add D1 migration `0028` migration ledger | Remote staging | Additive audit tables only; no data migration | No credential access | Yes operationally: leave unused; do not drop | Fresh export, exact database identity, migration replay, release receipt |
 | Add service capability migration and canonical-control-plane migration | Remote staging | Additive tables and five quarantined exception metadata records | Enables later least-privilege grants; no secret values | Yes operationally: leave unused; do not drop | `0028` first, reviewed SQL, fresh export, deployment release set |
-| Deploy canonical OpenNext and four receiver Workers | Remote staging | Changes running code only | Replaces known old auth contract; must be atomic with principals | Roll back to prior Worker versions if smoke fails | Four principals/grants and their secrets are provisioned; deployment SHA receipt; protected health smoke |
-| Provision four Cloudflare secrets and D1 credential hashes/capability grants | Remote staging | Inserts revocable D1 credential/grant metadata | Material secret creation; least privilege must be demonstrated | Yes: revoke D1 credential/grant and delete/replace secret under incident procedure | Explicit operator approval, single-use secret input, approved plan, no secret output, deploy set ready |
+| Deploy canonical OpenNext and every approved receiver Worker | Remote staging | Changes running code only | Replaces known old auth contract; must be atomic with principals | Roll back to prior Worker versions if smoke fails | Every principal/grant and its secret is provisioned; deployment SHA receipt; protected health smoke |
+| Provision approved Cloudflare secrets and D1 credential hashes/capability grants | Remote staging | Inserts revocable D1 credential/grant metadata | Material secret creation; least privilege must be demonstrated | Yes: revoke D1 credential/grant and delete/replace secret under incident procedure | Explicit operator approval, single-use secret input, approved plan, no secret output, deploy set ready |
 | Create `thrill-noir` workspace | Remote staging | One creator, one admin membership, one receipt, one audit event; no history | Expands access only for the authenticated agency administrator | Safely repeatable; status can be suspended, no deletion required | Migrations released, fresh backup/export, identity precheck, onboarding receipt, post-write isolation test |
 
 At present the service-principal and deployment gates are not satisfied. Therefore the only permissible next remote action is preparation/review, not a forced deployment, secret provisioning, or creator write.

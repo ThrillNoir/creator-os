@@ -87,16 +87,13 @@ async function executeReddit<T>(env: Env, creatorId: string, connectedAccountId:
 
 async function getDropboxTemporaryLink(env: Env, post: DuePost) {
   const userId = `creator-os:${post.creator_id}:service:dropbox`;
-  const query = new URLSearchParams({ toolkit_slugs: "dropbox", user_ids: userId, statuses: "ACTIVE", limit: "10" });
-  const accounts = await jsonRequest<{ items?: Array<{ id?: string; user_id?: string; status?: string; toolkit?: { slug?: string } }> }>(
-    `${COMPOSIO_V31}/connected_accounts?${query}`, env.COMPOSIO_API_KEY,
-  );
-  const connection = accounts.items?.find((item) => item.id && item.user_id === userId && item.status === "ACTIVE" && item.toolkit?.slug === "dropbox");
-  if (!connection?.id) throw new Error("This creator’s Dropbox source is not connected.");
+  const connection = await env.DB.prepare("SELECT connected_account_id,status FROM provider_connections WHERE creator_id=? AND service='dropbox'")
+    .bind(post.creator_id).first<{ connected_account_id: string; status: string }>();
+  if (!connection || connection.status !== "active" || !connection.connected_account_id) throw new Error("This creator’s Dropbox source is not connected.");
   const path = `/${[post.dropbox_root, post.relative_path].map((part) => part.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/")}`;
   const response = await jsonRequest<{ successful?: boolean; data?: { link?: string }; error?: string | { message?: string } }>(
     `${COMPOSIO_V31}/tools/execute/DROPBOX_GET_TEMPORARY_LINK`, env.COMPOSIO_API_KEY,
-    { method: "POST", body: JSON.stringify({ connected_account_id: connection.id, user_id: userId, version: "latest", arguments: { path } }) },
+    { method: "POST", body: JSON.stringify({ connected_account_id: connection.connected_account_id, user_id: userId, version: "latest", arguments: { path } }) },
   );
   if (response.successful === false || !response.data?.link) throw new Error("Dropbox did not return the approved Reddit image.");
   return response.data.link;
@@ -107,7 +104,33 @@ async function markFailed(env: Env, post: DuePost, message: string, uncertain = 
   await env.DB.batch([
     env.DB.prepare("UPDATE social_posts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(safeMessage, post.id, post.creator_id),
     env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','publish_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: safeMessage, uncertain })),
+    env.DB.prepare(`UPDATE external_operation_receipts
+      SET status=CASE WHEN status='confirmed' THEN 'confirmed' ELSE ? END,verification_detail=?,updated_at=CURRENT_TIMESTAMP
+      WHERE operation_id=? AND creator_id=? AND provider='reddit'`)
+      .bind(uncertain ? "uncertain" : "failed", JSON.stringify({ error: safeMessage, uncertain }), `social-publish:reddit:${post.id}`, post.creator_id),
+    env.DB.prepare(`UPDATE operation_outbox SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP
+      WHERE id=? AND creator_id=? AND status<>'delivered'`)
+      .bind(safeMessage, `social-publish:reddit:${post.id}`, post.creator_id),
   ]);
+}
+
+async function beginRedditPublish(env: Env, post: DuePost) {
+  const operationId = `social-publish:reddit:${post.id}`;
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO operation_outbox
+      (id,creator_id,operation_type,idempotency_key,payload,status,attempts,next_attempt_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,'pending',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT(idempotency_key) DO UPDATE SET status=CASE WHEN operation_outbox.status='delivered' THEN 'delivered' ELSE 'pending' END,
+        attempts=operation_outbox.attempts+1,last_error=NULL,updated_at=CURRENT_TIMESTAMP`)
+      .bind(operationId, post.creator_id, "social_publish", operationId, JSON.stringify({ postId: post.id, platform: "reddit" })),
+    env.DB.prepare(`INSERT INTO external_operation_receipts
+      (id,creator_id,operation_id,provider,status,verification_detail,created_at,updated_at)
+      VALUES (?,?,?,'reddit','pending','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT(operation_id,provider) DO UPDATE SET status=CASE WHEN external_operation_receipts.status='confirmed' THEN 'confirmed' ELSE 'pending' END,
+        verification_detail='{}',updated_at=CURRENT_TIMESTAMP`)
+      .bind(`external-receipt:reddit:${post.id}`, post.creator_id, operationId),
+  ]);
+  return operationId;
 }
 
 async function publishPost(env: Env, post: DuePost) {
@@ -128,6 +151,7 @@ async function publishPost(env: Env, post: DuePost) {
   const image = await source.arrayBuffer();
   if (!image.byteLength || image.byteLength > MAX_REDDIT_IMAGE_BYTES) throw new Error("The approved Reddit image is empty or larger than 20 MB.");
   const mimeType = imageMimeType(post.basename, source.headers.get("content-type") || "");
+  const operationId = await beginRedditPublish(env, post);
   const leaseQuery = new URLSearchParams({ filepath: post.basename, mimetype: mimeType });
   const lease = parseMediaLease(await composioProxy<unknown>(env, connection.connected_account_id, `/api/media/asset.json?${leaseQuery}`, "POST"));
   const upload = new FormData();
@@ -179,13 +203,22 @@ async function publishPost(env: Env, post: DuePost) {
       console.error(JSON.stringify({ event: "reddit_first_comment_failed", postId: post.id, message: error instanceof Error ? error.message : "Unknown error" }));
     }
   }
-  await env.DB.batch([
+  const completion = [
     env.DB.prepare(`UPDATE social_posts SET status='published',external_post_id=?,external_url=?,published_at=CURRENT_TIMESTAMP,error=NULL,
       device_claimed_at=NULL,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='publishing'`)
       .bind(externalPostId, externalUrl, JSON.stringify({ method: "composio_reddit_api", nativeMedia: true, author: identity.name, community: post.community_name, flairId: post.reddit_flair_id, flairText: post.reddit_flair_text, firstCommentRequested: Boolean(post.caption.trim()), firstCommentRecorded: Boolean(commentReceipt) }), post.id, post.creator_id),
     env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='reddit'").bind(post.creator_id),
     env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','api_publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, externalUrl, community: post.community_name })),
-  ]);
+    env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='reddit'")
+      .bind(externalPostId, JSON.stringify({ externalPostId, externalUrl, community: post.community_name }), operationId, post.creator_id),
+    env.DB.prepare("UPDATE operation_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
+      .bind(operationId, post.creator_id),
+  ];
+  try {
+    await env.DB.batch(completion);
+  } catch (error) {
+    throw new OutcomeUncertainError(`Reddit returned ${externalPostId}, but THOT OS could not durably record the receipt: ${error instanceof Error ? error.message : "database failure"}.`);
+  }
   return { published: true, failed: false, queued: false };
 }
 

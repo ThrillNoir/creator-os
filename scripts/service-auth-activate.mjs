@@ -476,7 +476,7 @@ function secretPayload(plan, credentials) {
 }
 
 /**
- * Stage all four secrets in one un-routed Worker version. Wrangler 4 accepts a
+ * Stage all contract secrets in one un-routed Worker version. Wrangler 4 accepts a
  * missing bulk-file positional argument and parses the JSON from stdin, so no
  * secret file or command-line secret value is created.
  */

@@ -16,14 +16,16 @@
     { "binding": "REDDIT_SCHEDULER", "service": "thot-os-reddit-scheduler-staging" },
     { "binding": "INSTAGRAM_SCHEDULER", "service": "thot-os-instagram-scheduler-staging" },
     { "binding": "TELEGRAM_BRIDGE", "service": "thot-os-telegram-bridge-staging" },
-    { "binding": "VAULT_BRIDGE", "service": "thot-os-vault-bridge-staging" }
+    { "binding": "VAULT_BRIDGE", "service": "thot-os-vault-bridge-staging" },
+    { "binding": "PUBLIC_LINKS_CONTROL", "service": "thot-os-public-links-control-staging" }
   ],
   "secrets": {
     "required": [
       "INTERNAL_INSTAGRAM_SCHEDULER_TOKEN",
       "INTERNAL_REDDIT_SCHEDULER_TOKEN",
       "INTERNAL_TELEGRAM_BRIDGE_TOKEN",
-      "INTERNAL_VAULT_CATALOGUE_TOKEN"
+      "INTERNAL_VAULT_CATALOGUE_TOKEN",
+      "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN"
     ]
   },
   "vars": {

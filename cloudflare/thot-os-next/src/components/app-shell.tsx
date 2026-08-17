@@ -9,6 +9,7 @@ const agencyNavigation = [
   ["▦", "Content library", "/library"],
   ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
+  ["↗", "Public profile", "/public-profile"],
   ["✦", "Messages", "/messages"],
   ["$", "Money & health", "/money"],
   ["◇", "Creators", "/creators"],
@@ -19,6 +20,7 @@ const creatorNavigation = [
   ["▦", "Content library", "/library"],
   ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
+  ["↗", "Public profile", "/public-profile"],
   ["✦", "Messages", "/messages"],
   ["$", "Money & health", "/money"],
 ] as const;

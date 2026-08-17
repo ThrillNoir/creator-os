@@ -1,0 +1,30 @@
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "thot-os-public-links-staging",
+  "account_id": "3e7cfa6efb7a97825f1dc24515410c63",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./assets",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "PUBLIC_LINKS"
+    }
+  ],
+  "analytics_engine_datasets": [
+    {
+      "binding": "LINK_EVENTS"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  }
+}

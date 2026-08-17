@@ -29,6 +29,8 @@ type InstagramReplyDraft = {
   connection_status: string; write_enabled: number; outbound_validated: number; emergency_paused: number;
 };
 
+class OutcomeUncertainError extends Error {}
+
 const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
 
@@ -265,6 +267,17 @@ async function currentInstagramConnection(env: Env, creatorId: string) {
   return connection;
 }
 
+async function currentDropboxConnection(env: Env, creatorId: string) {
+  const connection = await env.DB.prepare(`SELECT connected_account_id,status
+    FROM provider_connections
+    WHERE creator_id=? AND service='dropbox'`).bind(creatorId)
+    .first<{ connected_account_id: string; status: string }>();
+  if (!connection || connection.status !== "active" || !connection.connected_account_id) {
+    throw new Error("This creator’s Dropbox source is not connected.");
+  }
+  return connection;
+}
+
 async function resolveInstagramRecipient(env: Env, creatorId: string, externalThreadId: string) {
   const connection = await currentInstagramConnection(env, creatorId);
   const payload = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_MESSAGES", connection.connected_account_id, `creator-os:${creatorId}:service:instagram`, {
@@ -407,7 +420,11 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
       (creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,media_id) DO UPDATE SET permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP`)
-      .bind(creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count))];
+      .bind(creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count)),
+    env.DB.prepare(`INSERT INTO instagram_media_metric_observations
+      (id,creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at,source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,'instagram_api')`)
+      .bind(crypto.randomUUID(), creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count))];
     if (permalink) mediaStatements.push(env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram' AND external_post_id=? AND (external_url IS NULL OR external_url='')").bind(permalink, creatorId, mediaId));
     await env.DB.batch(mediaStatements);
   }
@@ -573,16 +590,44 @@ async function markFailed(env: Env, post: DuePost, message: string, uncertain = 
   await env.DB.batch([
     env.DB.prepare("UPDATE social_posts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(safeMessage, post.id, post.creator_id),
     env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','publish_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: safeMessage, uncertain })),
+    env.DB.prepare(`UPDATE external_operation_receipts
+      SET status=CASE WHEN status='confirmed' THEN 'confirmed' ELSE ? END,verification_detail=?,updated_at=CURRENT_TIMESTAMP
+      WHERE operation_id=? AND creator_id=? AND provider='instagram'`)
+      .bind(uncertain ? "uncertain" : "failed", JSON.stringify({ error: safeMessage, uncertain }), `social-publish:instagram:${post.id}`, post.creator_id),
+    env.DB.prepare(`UPDATE operation_outbox SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP
+      WHERE id=? AND creator_id=? AND status<>'delivered'`)
+      .bind(safeMessage, `social-publish:instagram:${post.id}`, post.creator_id),
   ]);
+}
+
+async function beginInstagramPublish(env: Env, post: DuePost) {
+  const operationId = `social-publish:instagram:${post.id}`;
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO operation_outbox
+      (id,creator_id,operation_type,idempotency_key,payload,status,attempts,next_attempt_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,'pending',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT(idempotency_key) DO UPDATE SET status=CASE WHEN operation_outbox.status='delivered' THEN 'delivered' ELSE 'pending' END,
+        attempts=operation_outbox.attempts+1,last_error=NULL,updated_at=CURRENT_TIMESTAMP`)
+      .bind(operationId, post.creator_id, "social_publish", operationId, JSON.stringify({ postId: post.id, platform: "instagram" })),
+    env.DB.prepare(`INSERT INTO external_operation_receipts
+      (id,creator_id,operation_id,provider,status,verification_detail,created_at,updated_at)
+      VALUES (?,?,?,'instagram','pending','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT(operation_id,provider) DO UPDATE SET status=CASE WHEN external_operation_receipts.status='confirmed' THEN 'confirmed' ELSE 'pending' END,
+        verification_detail='{}',updated_at=CURRENT_TIMESTAMP`)
+      .bind(`external-receipt:instagram:${post.id}`, post.creator_id, operationId),
+  ]);
+  return operationId;
 }
 
 async function publishPost(env: Env, post: DuePost) {
   const connection = await currentInstagramConnection(env, post.creator_id);
+  const dropbox = await currentDropboxConnection(env, post.creator_id);
+  const operationId = await beginInstagramPublish(env, post);
   const instagramUserId = `creator-os:${post.creator_id}:service:instagram`;
   const kind = mediaType(post.extension);
   let containerId = post.provider_container_id;
   if (!containerId) {
-    const temporary = await executeTool<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", env.COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID, `creator-os:${post.creator_id}:service:dropbox`, {
+    const temporary = await executeTool<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", dropbox.connected_account_id, `creator-os:${post.creator_id}:service:dropbox`, {
       path: dropboxPath(post.dropbox_root, post.relative_path),
     });
     if (!temporary.link) throw new Error("Dropbox did not return a temporary media link.");
@@ -637,7 +682,17 @@ async function publishPost(env: Env, post: DuePost) {
     env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(post.creator_id),
   ];
   if (receiptWarning) statements.push(env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','receipt_enrichment_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: receiptWarning })));
-  await env.DB.batch(statements);
+  statements.push(
+    env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='instagram'")
+      .bind(externalPostId, JSON.stringify({ externalPostId, permalink, containerId, kind }), operationId, post.creator_id),
+    env.DB.prepare("UPDATE operation_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
+      .bind(operationId, post.creator_id),
+  );
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    throw new OutcomeUncertainError(`Instagram returned ${externalPostId}, but THOT OS could not durably record the receipt: ${error instanceof Error ? error.message : "database failure"}.`);
+  }
   return { published: true, failed: false };
 }
 
@@ -659,7 +714,7 @@ async function claimAndPublish(env: Env, post: DuePost) {
     const result = await publishPost(env, post);
     return { claimed: true, ...result };
   } catch (error) {
-    await markFailed(env, post, error instanceof Error ? error.message : "Instagram publishing failed.");
+    await markFailed(env, post, error instanceof Error ? error.message : "Instagram publishing failed.", error instanceof OutcomeUncertainError);
     return { claimed: true, published: false, failed: true };
   }
 }
@@ -814,9 +869,15 @@ async function authenticatedCreatorId(request: Request, env: Env, url: URL, capa
   return candidate;
 }
 
-async function syncAllCreators(env: Env) {
-  const creators = await env.DB.prepare("SELECT creator_id FROM provider_connections WHERE service='instagram' AND status='active'").all<{ creator_id: string }>();
-  return Promise.allSettled(creators.results.map((row) => syncInstagram(env, row.creator_id)));
+async function syncNextCreator(env: Env) {
+  const creator = await env.DB.prepare(`SELECT pc.creator_id
+    FROM provider_connections pc
+    LEFT JOIN instagram_sync_state state ON state.creator_id=pc.creator_id
+    WHERE pc.service='instagram' AND pc.status='active'
+    ORDER BY COALESCE(state.last_analytics_sync_at,'1970-01-01') ASC, pc.creator_id ASC
+    LIMIT 1`).first<{ creator_id: string }>();
+  if (!creator) return { skipped: true, reason: "no_active_creator" };
+  return syncInstagram(env, creator.creator_id);
 }
 
 export default {
@@ -848,6 +909,8 @@ export default {
     }
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.allSettled([processDue(env, "cron"), syncAllCreators(env)]));
+    // Bound each cron invocation.  Per-creator delivery/sync work can be
+    // moved behind a Queue/Workflow without changing this selection contract.
+    ctx.waitUntil(Promise.allSettled([processDue(env, "cron"), syncNextCreator(env)]));
   },
 } satisfies ExportedHandler<Env>;

@@ -41,12 +41,16 @@
           "thot-os-preview-staging",
           "thot-os-preview-dlq-staging"
         ],
+        "kv": ["thot-os-public-links-staging"],
+        "analytics": ["thot-os-public-link-events-staging"],
         "workers": {
           "web": "thot-os-staging",
           "instagram": "thot-os-instagram-scheduler-staging",
           "reddit": "thot-os-reddit-scheduler-staging",
           "telegram": "thot-os-telegram-bridge-staging",
           "vault": "thot-os-vault-bridge-staging",
+          "publicLinks": "thot-os-public-links-staging",
+          "publicLinksControl": "thot-os-public-links-control-staging",
           "legacyWorker": "thot-os-legacy-staging",
           "legacyGateway": "creator-os-staging-gateway"
         }
@@ -58,7 +62,7 @@
           "directory": "cloudflare/thot-os-next",
           "worker": "thot-os-staging",
           "deployable": true,
-          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN"],
+          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN", "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN"],
           "resources": {
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
@@ -68,7 +72,8 @@
               "REDDIT_SCHEDULER": "thot-os-reddit-scheduler-staging",
               "INSTAGRAM_SCHEDULER": "thot-os-instagram-scheduler-staging",
               "TELEGRAM_BRIDGE": "thot-os-telegram-bridge-staging",
-              "VAULT_BRIDGE": "thot-os-vault-bridge-staging"
+              "VAULT_BRIDGE": "thot-os-vault-bridge-staging",
+              "PUBLIC_LINKS_CONTROL": "thot-os-public-links-control-staging"
             }
           }
         },
@@ -78,7 +83,7 @@
           "directory": "cloudflare/instagram-scheduler",
           "worker": "thot-os-instagram-scheduler-staging",
           "deployable": true,
-          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID", "COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID"],
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID"],
           "resources": {
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-previews-staging"],
@@ -92,7 +97,7 @@
           "directory": "cloudflare/reddit-scheduler",
           "worker": "thot-os-reddit-scheduler-staging",
           "deployable": true,
-          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_REDDIT_AUTH_CONFIG_ID", "COMPOSIO_DROPBOX_CONNECTED_ACCOUNT_ID"],
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_REDDIT_AUTH_CONFIG_ID"],
           "resources": {
             "d1": ["thot-os-staging"],
             "r2": [],
@@ -125,6 +130,40 @@
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-previews-staging"],
             "queues": ["thot-os-preview-staging", "thot-os-preview-dlq-staging"],
+            "services": {}
+          }
+        },
+        "publicLinks": {
+          "service": "thot-os-public-links",
+          "config": "cloudflare/thot-os-public-links/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-links",
+          "worker": "thot-os-public-links-staging",
+          "deployable": false,
+          "retirement": "Provision the isolated public KV namespace, Analytics Engine dataset and approved custom domain before enabling. This Worker must never bind operational D1 or private R2.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": [],
+            "r2": [],
+            "queues": [],
+            "kv": ["thot-os-public-links-staging"],
+            "analytics": ["thot-os-public-link-events-staging"],
+            "services": {}
+          }
+        },
+        "publicLinksControl": {
+          "service": "thot-os-public-links-control",
+          "config": "cloudflare/thot-os-public-links-control/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-links-control",
+          "worker": "thot-os-public-links-control-staging",
+          "deployable": false,
+          "retirement": "Enable only with the public Worker after creator-scoped service grants, the isolated KV namespace and the publication Workflow have been verified.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": [],
+            "queues": [],
+            "kv": ["thot-os-public-links-staging"],
+            "analytics": [],
             "services": {}
           }
         },
@@ -171,12 +210,16 @@
         },
         "r2": ["thot-os-media-production", "thot-os-previews-production", "thot-os-creator-intake-production", "thot-os-creator-packages-production"],
         "queues": ["thot-os-intake-production", "thot-os-ai-jobs-production", "thot-os-preview-production", "thot-os-preview-dlq-production"],
+        "kv": ["thot-os-public-links-production"],
+        "analytics": ["thot-os-public-link-events-production"],
         "workers": {
           "web": "thot-os-web-production",
           "instagram": "thot-os-instagram-production",
           "reddit": "thot-os-reddit-production",
           "telegram": "thot-os-telegram-production",
           "vault": "thot-os-vault-production",
+          "publicLinks": "thot-os-public-links-production",
+          "publicLinksControl": "thot-os-public-links-control-production",
           "localNodeApi": "thot-os-local-node-api-production"
         }
       },

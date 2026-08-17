@@ -240,18 +240,55 @@ async function enqueueDropboxPreviews(env: Env, creatorId: string) {
     ORDER BY a.modified_at DESC`).bind(creatorId).all<PreviewAsset>();
   const queued = candidates.results;
   for (let offset = 0; offset < queued.length; offset += 80) {
-    await env.DB.batch(queued.slice(offset, offset + 80).map((asset) => env.DB.prepare(`INSERT INTO asset_preview_jobs
-      (id,creator_id,asset_id,source_revision,status,attempts,last_error,queued_at,started_at,completed_at,updated_at)
-      VALUES (?,?,?,?,'queued',0,NULL,CURRENT_TIMESTAMP,NULL,NULL,CURRENT_TIMESTAMP)
-      ON CONFLICT(creator_id,asset_id) DO UPDATE SET source_revision=excluded.source_revision,status='queued',attempts=0,
-        last_error=NULL,queued_at=CURRENT_TIMESTAMP,started_at=NULL,completed_at=NULL,updated_at=CURRENT_TIMESTAMP`)
-      .bind(`preview:${creatorId}:${asset.id}`, creatorId, asset.id, asset.dropbox_revision)));
+    const statements = queued.slice(offset, offset + 80).flatMap((asset) => {
+      const message = { creatorId, assetId: asset.id, sourceRevision: asset.dropbox_revision } satisfies PreviewQueueMessage;
+      const idempotencyKey = `preview-dispatch:${creatorId}:${asset.id}:${asset.dropbox_revision ?? "unversioned"}`;
+      return [
+        env.DB.prepare(`INSERT INTO asset_preview_jobs
+          (id,creator_id,asset_id,source_revision,status,attempts,last_error,queued_at,started_at,completed_at,updated_at)
+          VALUES (?,?,?,?,'queued',0,NULL,CURRENT_TIMESTAMP,NULL,NULL,CURRENT_TIMESTAMP)
+          ON CONFLICT(creator_id,asset_id) DO UPDATE SET source_revision=excluded.source_revision,status='queued',attempts=0,
+            last_error=NULL,queued_at=CURRENT_TIMESTAMP,started_at=NULL,completed_at=NULL,updated_at=CURRENT_TIMESTAMP`)
+          .bind(`preview:${creatorId}:${asset.id}`, creatorId, asset.id, asset.dropbox_revision),
+        env.DB.prepare(`INSERT INTO operation_outbox
+          (id,creator_id,operation_type,idempotency_key,payload,status,attempts,next_attempt_at,last_error,created_at,updated_at)
+          VALUES (?,?,?,?,?,'pending',0,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+          ON CONFLICT(idempotency_key) DO UPDATE SET payload=excluded.payload,status='pending',next_attempt_at=CURRENT_TIMESTAMP,
+            last_error=NULL,updated_at=CURRENT_TIMESTAMP`)
+          .bind(crypto.randomUUID(), creatorId, "preview_dispatch", idempotencyKey, JSON.stringify(message)),
+      ];
+    });
+    await env.DB.batch(statements);
   }
-  for (let offset = 0; offset < queued.length; offset += 100) {
-    await env.PREVIEW_QUEUE.sendBatch(queued.slice(offset, offset + 100).map((asset) => ({
-      body: { creatorId, assetId: asset.id, sourceRevision: asset.dropbox_revision } satisfies PreviewQueueMessage,
+  // Queue delivery is at-least-once.  The durable outbox is committed before a
+  // send attempt and is marked delivered only afterwards; replaying a message
+  // is safe because the preview consumer claims by creator, asset and revision.
+  const pending = await env.DB.prepare(`SELECT id,payload FROM operation_outbox
+    WHERE creator_id=? AND operation_type='preview_dispatch' AND status='pending'
+      AND unixepoch(next_attempt_at)<=unixepoch(CURRENT_TIMESTAMP)
+    ORDER BY created_at LIMIT 500`).bind(creatorId).all<{ id: string; payload: string }>();
+  for (let offset = 0; offset < pending.results.length; offset += 100) {
+    const batch = pending.results.slice(offset, offset + 100);
+    const valid = batch.flatMap((outbox) => {
+      try {
+        const message = JSON.parse(outbox.payload) as unknown;
+        return validPreviewMessage(message) ? [{ outboxId: outbox.id, message }] : [];
+      } catch {
+        return [];
+      }
+    });
+    const invalid = batch.filter((outbox) => !valid.some((item) => item.outboxId === outbox.id));
+    if (invalid.length) await env.DB.batch(invalid.map((outbox) => env.DB.prepare(`UPDATE operation_outbox
+      SET status='failed',last_error='Invalid preview outbox payload.',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='pending'`)
+      .bind(outbox.id, creatorId)));
+    if (!valid.length) continue;
+    await env.PREVIEW_QUEUE.sendBatch(valid.map(({ message }) => ({
+      body: message,
       contentType: "json" as const,
     })));
+    await env.DB.batch(valid.map(({ outboxId }) => env.DB.prepare(`UPDATE operation_outbox
+      SET status='delivered',attempts=attempts+1,delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
+      WHERE id=? AND creator_id=? AND status='pending'`).bind(outboxId, creatorId)));
   }
   const counts = await env.DB.prepare(`SELECT
       SUM(CASE WHEN a.preview_r2_key IS NOT NULL THEN 1 ELSE 0 END) AS ready,

@@ -143,7 +143,7 @@ export function validateActivation({ activation, contract, registry }) {
   const d1 = staging.resources?.d1?.[activation.expected?.databaseName];
   if (!d1 || d1.id !== activation.expected.databaseId) throw new Error("Activation D1 identity does not match the deployment registry.");
   const principals = new Map((contract?.principals ?? []).map((entry) => [entry.principalName, entry]));
-  if (principals.size !== 4 || new Set([...principals.values()].map((entry) => entry.secretName)).size !== 4) throw new Error("Exactly four distinct service principals and secret names are required.");
+  if (!principals.size || new Set([...principals.values()].map((entry) => entry.secretName)).size !== principals.size) throw new Error("Every service principal must have a distinct secret name.");
   const grants = [];
   for (const grant of activation.grants ?? []) {
     const principal = principals.get(grant.principalName);

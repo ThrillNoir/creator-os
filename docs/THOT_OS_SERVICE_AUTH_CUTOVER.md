@@ -9,15 +9,15 @@ same migration as new principal tables was an unsafe cutover.
 
 | Component | Observed staging authentication | Canonical authentication | Compatibility |
 | --- | --- | --- | --- |
-| OpenNext | Pre-canonical Worker; legacy secret inventory only | Holds four distinct outbound bearer secrets and sends capability header | Deploy only after expanded D1 and receiver compatibility are verified |
+| OpenNext | Pre-canonical Worker; legacy secret inventory only | Holds distinct outbound bearer secrets for each receiver and sends a capability header | Deploy only after expanded D1 and receiver compatibility are verified |
 | Instagram / Reddit / Telegram | Historical service-binding requests did not provide a canonical bearer | Exact named principal, SHA-256 credential, creator grant, and route capability | No bearerless fallback: it cannot prove caller identity |
 | Vault Bridge | Historical shared catalogue token | `thot-os-web-vault-catalogue` with `vault.catalogue.refresh` | Legacy Vault token remains untouched until contract |
 | Identity audit | `service_credentials` plus `service_creator_grants` | `service_principals`, credentials, and capability grants | Migration 0032 accepts either scoped branch; neither has global creator access |
 
 The canonical request chain is: OpenNext service binding → one Web-only bearer
 secret → receiver SHA-256 lookup → named active principal → active creator and
-capability grant → route action → scoped audit record. Each of the four
-principals is distinct. Receiver Workers do **not** receive copies of their
+capability grant → route action → scoped audit record. Each principal is
+distinct. Receiver Workers do **not** receive copies of their
 caller bearer: the Web Worker is the sole sender and is the correct secret
 target in this architecture.
 
@@ -101,7 +101,7 @@ that exact plan, plus an output receipt path.
 Cloudflare cannot transactionally combine D1 with Worker secret/version
 changes. The future release order is: fresh backup; additive migrations; plan;
 capture the latest Worker-version, secret-name, and deployment metadata; stage
-a compatible Web version containing the four secrets without traffic; require a
+a compatible Web version containing the approved receiver secrets without traffic; require a
 fresh zero-traffic version and unchanged deployment metadata; atomically
 activate D1 principals/hashes/grants; deploy compatible receivers; route Web
 traffic; protected no-op authorization probes; then record receipt. If D1

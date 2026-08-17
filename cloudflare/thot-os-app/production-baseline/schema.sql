@@ -1,0 +1,1742 @@
+-- THOT OS schema-only production baseline.
+-- Generated from the complete local D1 migration replay; it contains no creator, account, content, consent, credential, or operator seed data.
+-- Do not apply this file to an existing D1 database.  Use it only when provisioning a new production database under the cutover runbook.
+-- Source migration checksums:
+-- 0001_adelaide_library.sql 10b2a42251bcb8c4e0914ee14ae6e63a6e16bf92008dc19cde1e9e3fc6153dc6
+-- 0002_library_classification_events.sql b13c8181cf422c6f5e8dc9dccf2f6dae65cf507df5af4da9b6d872e1ef8a9b4c
+-- 0003_operations_foundation.sql 33d4628aeeb09ec42a9fce819a5f4281dd224b04b2f17d4bd3df42415d4af032
+-- 0004_reddit_scheduler.sql eb225557490c533f931368ef5060857487a0bd74e9a8e582d6cfda78f3e49acb
+-- 0005_reddit_queue_controls.sql 41231b2f9b38d9b4dffb15d189a0b18e9143722a9c137ad38716c76ccd191ce6
+-- 0006_instagram_operations.sql f9b059e208ab981dd3f3c0a1c3365ece38f59b6d7dfc82b2021525bb7b7501ee
+-- 0007_vault_bridge.sql 224d63a813197375a6d4e57c7497c44105ce6297d49cec0ba273e4140eae5a80
+-- 0008_reddit_native_bridge.sql 2beeb80a5e70986d029556d4d56afcd41eb8b1b452794c7975d113b30675ba9f
+-- 0009_unified_messages.sql 10cef6399ec21dfa2191811619daea50eb442b011f016509e56fff8d055e7753
+-- 0010_telegram_connector.sql 7a73e5e3899275436ff23f42d468f59f2f3c6b599142407adc63791d42095172
+-- 0011_instagram_completion.sql 1c79ff32ea4411819d2771911922e5895a8de35c33eab6cf6b697f77d5a3eda6
+-- 0012_instagram_replies.sql 577b6128640eb166d53992a34c72d6ebdb23a66459ac65a0f8935da9ff7d3e3e
+-- 0013_instagram_reply_window.sql 65eb6d054588c56b611a7a77e16f050a14a3a51e9fe11f3b1c24fe865b9a0a81
+-- 0014_instagram_message_subscription.sql b95bc3f0d2b49088f17f5d5541f3a5b94568a2b153b570285363a62c501f11e2
+-- 0015_message_attachments.sql 1c69135a902badeed4e6e21d63a1bf16c5d9dc1192064bb0812f260cded76d4f
+-- 0016_telegram_fansly_messages.sql 158229b1df56561dfa3c3b772136e5a800424388b4213a69f53ad1420cf42602
+-- 0017_reddit_community_events.sql 37fd370f245a448c2e5b7a6c8670bfdc111e32dd315112e3773f0815d50505f8
+-- 0018_creator_identity_profiles.sql f8e1bb1662e0fab8e5345983373f4d666ef12bc95fc26bb736c40684155de0fd
+-- 0019_actor_role_audit.sql 70ad156c2e894c3eb1fab47f89e8bb836986431741a4ffc8b6361240c6f5d7b7
+-- 0020_actor_role_contract.sql 8929cd24e814f8a858cc8d1fa4b01d61b593573e92d281dec86113edb74e3999
+-- 0021_creator_dropbox_source.sql e94306c2b4ca55c46303a7d53cd4f469d6f6410bb1a7f4df501f67553e991686
+-- 0022_asset_preview_queue.sql bff15521c327fc4fb44221b4f629ece31a3b5b1c9e87011c590e712dc24c5541
+-- 0023_fansly_account_invariant.sql 5d35c5507fa268bacc2bc5f22e3ea31c5d551a3f6f51bee3cd9b058ef624b3f3
+-- 0024_finance_foundation.sql 6d66ce06ad5289d14f2be92562a6583e60a4ddc7ab399c36cb0c3fc9160a209e
+-- 0025_reddit_composio_native_api.sql d20863e4bcc41afe013f2514f6a9f3da5ff50ada148a72d6c04bdfbf9b8400ab
+-- 0026_retire_reddit_browser_bridge.sql be24ab173b7310a81c5c8b58cd9404a0696f41c865c2d6b019b92db26fc77431
+-- 0027_reddit_post_flairs.sql 1a30baf6155f42433dcc343297d8566b10407ebc4253e766fa80163a6bcf72c2
+-- 0028_migration_ledger.sql efdc454682d7afac6e78b0e9dc75cb057aab7c4295a515b71211366d9e655fe9
+-- 0029_service_principal_capabilities.sql bc78ed7fe45da8f2f9365314c4f49c12ce94bc98242e75e6b1dc6ca68ea508e8
+-- 0030_canonical_control_plane.sql 5af26213782ae8b41d748f8cb8adbe0697cbd03f4256ef98fd810814bbd70fc8
+-- 0031_service_auth_activation_support.sql b588a4db5dbe1276fde28165a569f29f938dabee6c1d386aaa19da0f6ff02948
+-- 0032_service_auth_compatibility.sql 93ac4104a7acfb38e2ebba847fc296f5c170ec418b0e6e9b83e411361184161f
+-- 0033_tenant_integrity_and_quarantine.sql 067db9a9a789e64559639ba42d56b9a7589ad0e5761ac7cd2de71e9d8d9087a9
+-- 0034_public_profiles_and_approved_links.sql f6bc1eae648d729684cb862dffc2e9580f86f16509a1e21616e85c391bf00d8d
+-- 0035_delivery_outbox_and_metric_observations.sql 52b4cc45f47ff1c80933491cd5ae89a4872716566023e76511b60534e26d9767
+-- 0036_public_profile_authoring_guards.sql 62e7d2140b80b7ebeffc50f1cf2dbb5e62f0d9e8460e0ada731c264616d53df8
+
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE _cf_METADATA (
+        key INTEGER PRIMARY KEY,
+        value BLOB
+      );
+
+CREATE TABLE account_browser_profiles (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  assigned_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  verified_at TEXT,
+  PRIMARY KEY (creator_id, account_id),
+  UNIQUE (profile_id, platform),
+  FOREIGN KEY (profile_id, creator_id) REFERENCES browser_profiles(id, creator_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE asset_classification_events (
+  id TEXT PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, actor_role TEXT NOT NULL DEFAULT 'legacy'
+  CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service','legacy')));
+
+CREATE TABLE asset_classifications (
+  asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  safety TEXT CHECK(safety IN ('sfw','nsfw')),
+  is_teaser INTEGER NOT NULL DEFAULT 0 CHECK(is_teaser IN (0,1)),
+  is_multi INTEGER NOT NULL DEFAULT 0 CHECK(is_multi IN (0,1)),
+  teaser_for_asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE asset_destinations (
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  destination TEXT NOT NULL CHECK(destination IN ('instagram','facebook','tiktok','threads','x','reddit','subscription','ppv')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(asset_id, destination)
+);
+
+CREATE TABLE asset_paid_consent_attestations (
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  evidence_platform TEXT NOT NULL CHECK(evidence_platform IN ('onlyfans','fansly')),
+  confirmed_by TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  note TEXT NOT NULL DEFAULT '',
+  revoked_at TEXT,
+  PRIMARY KEY(asset_id, person_id)
+);
+
+CREATE TABLE asset_people (
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'creator_friend',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(asset_id, person_id)
+);
+
+CREATE TABLE asset_preview_jobs (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  source_revision TEXT,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK(status IN ('queued','processing','ready','failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+  last_error TEXT,
+  queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, asset_id)
+);
+
+CREATE TABLE assets (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  relative_path TEXT NOT NULL,
+  basename TEXT NOT NULL,
+  extension TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  modified_at TEXT NOT NULL,
+  filename_class TEXT NOT NULL,
+  repeated_basename INTEGER NOT NULL DEFAULT 0 CHECK(repeated_basename IN (0,1)),
+  source_available INTEGER NOT NULL DEFAULT 1 CHECK(source_available IN (0,1)),
+  creator_notes TEXT NOT NULL DEFAULT '',
+  safety_level TEXT NOT NULL DEFAULT 'unreviewed',
+  workflow_status TEXT NOT NULL DEFAULT 'available',
+  indexed_at TEXT NOT NULL,
+  dropbox_revision TEXT,
+  preview_r2_key TEXT,
+  media_r2_key TEXT,
+  UNIQUE(creator_id, relative_path)
+);
+
+CREATE TABLE bridge_credentials (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  profile_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked','expired')),
+  issued_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  expires_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (profile_id, creator_id) REFERENCES browser_profiles(id, creator_id) ON DELETE CASCADE
+);
+
+CREATE TABLE browser_profiles (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  created_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  installation_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'registered' CHECK(status IN ('registered','paired','revoked')),
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, label),
+  UNIQUE(id, creator_id)
+);
+
+CREATE TABLE creator_exceptions (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
+  domain TEXT NOT NULL,
+  code TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK(severity IN ('critical','high','medium','low')),
+  status TEXT NOT NULL CHECK(status IN ('open','resolved','accepted')),
+  summary TEXT NOT NULL,
+  evidence_ref TEXT NOT NULL,
+  remediation TEXT NOT NULL,
+  source TEXT NOT NULL,
+  first_observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TEXT,
+  UNIQUE(creator_id, source, code)
+);
+
+CREATE TABLE creator_finance_settings (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  agency_split_bps INTEGER NOT NULL DEFAULT 0 CHECK(agency_split_bps BETWEEN 0 AND 10000),
+  revenue_basis TEXT NOT NULL DEFAULT 'imported_net_earnings' CHECK(revenue_basis = 'imported_net_earnings'),
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_memberships (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  user_email TEXT NOT NULL COLLATE NOCASE REFERENCES users(email) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('agency_admin','operator','creator','viewer')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (creator_id, user_email)
+);
+
+CREATE TABLE creator_onboarding_receipts (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  creator_id TEXT NOT NULL UNIQUE REFERENCES creators(id) ON DELETE RESTRICT,
+  requested_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email) ON DELETE RESTRICT,
+  request_fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('completed')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_public_links (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  profile_version_id TEXT NOT NULL,
+  label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 80),
+  destination_url TEXT NOT NULL CHECK(destination_url LIKE 'https://%'),
+  destination_host TEXT NOT NULL CHECK(length(destination_host) BETWEEN 1 AND 253),
+  sort_order INTEGER NOT NULL CHECK(sort_order BETWEEN 0 AND 999),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(profile_version_id, sort_order),
+  UNIQUE(id, creator_id),
+  FOREIGN KEY(profile_version_id, creator_id)
+    REFERENCES creator_public_profile_versions(id, creator_id) ON DELETE CASCADE
+);
+
+CREATE TABLE creator_public_media (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL,
+  public_object_key TEXT NOT NULL UNIQUE,
+  alt_text TEXT NOT NULL DEFAULT '' CHECK(length(alt_text) <= 500),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','approved','revoked')),
+  approved_by TEXT COLLATE NOCASE REFERENCES users(email),
+  approved_at TEXT,
+  expires_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(id, creator_id),
+  FOREIGN KEY(asset_id, creator_id) REFERENCES assets(id, creator_id) ON DELETE RESTRICT,
+  CHECK((status='draft' AND approved_by IS NULL AND approved_at IS NULL) OR (status<>'draft' AND approved_by IS NOT NULL AND approved_at IS NOT NULL))
+);
+
+CREATE TABLE creator_public_profile_publications (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  profile_id TEXT NOT NULL REFERENCES creator_public_profiles(id) ON DELETE CASCADE,
+  version_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('published','rolled_back','failed')),
+  published_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  public_snapshot_key TEXT NOT NULL,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(profile_id, version_id, status),
+  FOREIGN KEY(version_id, creator_id) REFERENCES creator_public_profile_versions(id, creator_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE creator_public_profile_versions (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES creator_public_profiles(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  version_number INTEGER NOT NULL CHECK(version_number > 0),
+  display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 120),
+  headline TEXT NOT NULL DEFAULT '' CHECK(length(headline) <= 280),
+  bio TEXT NOT NULL DEFAULT '' CHECK(length(bio) <= 2000),
+  avatar_media_id TEXT,
+  content_checksum TEXT NOT NULL CHECK(length(content_checksum)=64),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','approved','published','superseded','revoked')),
+  approved_by TEXT COLLATE NOCASE REFERENCES users(email),
+  approved_at TEXT,
+  approval_note TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(profile_id, version_number),
+  UNIQUE(id, creator_id),
+  CHECK((status='draft' AND approved_by IS NULL AND approved_at IS NULL) OR (status<>'draft' AND approved_by IS NOT NULL AND approved_at IS NOT NULL))
+);
+
+CREATE TABLE creator_public_profiles (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL UNIQUE REFERENCES creators(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL UNIQUE CHECK(slug GLOB '[a-z0-9][a-z0-9-]*'),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','paused','retired')),
+  published_version_id TEXT,
+  created_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creators (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  initials TEXT NOT NULL,
+  accent TEXT NOT NULL DEFAULT '#6f4df6',
+  status TEXT NOT NULL DEFAULT 'active',
+  dropbox_root TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, dropbox_link TEXT);
+
+CREATE TABLE external_operation_receipts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  operation_id TEXT NOT NULL REFERENCES operation_outbox(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  provider_operation_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('pending','uncertain','confirmed','failed','cancelled')),
+  verification_detail TEXT NOT NULL DEFAULT '{}',
+  first_attempt_at TEXT,
+  verified_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(operation_id, provider)
+);
+
+CREATE TABLE finance_audit_events (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  actor_role TEXT NOT NULL CHECK(actor_role IN ('agency_admin','operator','creator')),
+  event_type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE finance_daily_metrics (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL CHECK(platform IN ('onlyfans','fansly','stripe')),
+  period_date TEXT NOT NULL CHECK(period_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  currency TEXT NOT NULL CHECK(length(currency) = 3),
+  gross_revenue_minor INTEGER,
+  refunds_minor INTEGER,
+  net_revenue_minor INTEGER NOT NULL,
+  subscribers INTEGER,
+  import_id TEXT NOT NULL REFERENCES finance_imports(id) ON DELETE RESTRICT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (creator_id, platform, period_date, currency)
+);
+
+CREATE TABLE finance_imports (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL CHECK(platform IN ('onlyfans','fansly','stripe')),
+  source_name TEXT NOT NULL,
+  content_hash TEXT NOT NULL CHECK(length(content_hash) = 64),
+  row_count INTEGER NOT NULL CHECK(row_count > 0 AND row_count <= 400),
+  imported_by TEXT NOT NULL,
+  imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, platform, content_hash)
+);
+
+CREATE TABLE "identity_audit_events" (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT REFERENCES creators(id) ON DELETE SET NULL,
+  actor_email TEXT NOT NULL COLLATE NOCASE,
+  actor_role TEXT NOT NULL DEFAULT 'legacy'
+    CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service','legacy')),
+  event_type TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE instagram_analytics_snapshots (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  reach INTEGER,
+  follower_count INTEGER,
+  accounts_engaged INTEGER,
+  total_interactions INTEGER,
+  profile_views INTEGER,
+  website_clicks INTEGER,
+  collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE instagram_media_metric_observations (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  media_id TEXT NOT NULL,
+  permalink TEXT,
+  media_type TEXT,
+  media_product_type TEXT,
+  published_at TEXT,
+  like_count INTEGER,
+  comments_count INTEGER,
+  view_count INTEGER,
+  saved_count INTEGER,
+  shares_count INTEGER,
+  collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  source TEXT NOT NULL DEFAULT 'instagram_api' CHECK(source IN ('instagram_api','creator_import')),
+  UNIQUE(creator_id, media_id, collected_at)
+);
+
+CREATE TABLE instagram_media_metrics (
+  creator_id TEXT NOT NULL,
+  media_id TEXT NOT NULL,
+  permalink TEXT,
+  media_type TEXT,
+  media_product_type TEXT,
+  published_at TEXT,
+  like_count INTEGER,
+  comments_count INTEGER,
+  view_count INTEGER,
+  saved_count INTEGER,
+  shares_count INTEGER,
+  collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (creator_id, media_id)
+);
+
+CREATE TABLE instagram_reply_drafts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  connection_id TEXT NOT NULL REFERENCES messaging_connections(id) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK(status IN ('draft','approved','sending','sent','failed','uncertain','cancelled')),
+  requested_by TEXT NOT NULL,
+  approved_by TEXT,
+  approved_at TEXT,
+  provider_message_id TEXT,
+  error TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE instagram_sync_state (
+  creator_id TEXT PRIMARY KEY,
+  connection_id TEXT NOT NULL,
+  last_messages_sync_at TEXT,
+  last_analytics_sync_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE message_attachments (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('shared_post','story','image','video','audio','file')),
+  external_url TEXT,
+  object_key TEXT,
+  mime_type TEXT,
+  status TEXT NOT NULL DEFAULT 'ready' CHECK(status IN ('ready','unavailable','failed')),
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
+  UNIQUE(creator_id,message_id,source_key)
+);
+
+CREATE TABLE message_threads (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  connection_id TEXT NOT NULL REFERENCES messaging_connections(id) ON DELETE CASCADE,
+  external_thread_id TEXT NOT NULL,
+  participant_name TEXT NOT NULL DEFAULT '',
+  participant_handle TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '',
+  unread_count INTEGER NOT NULL DEFAULT 0,
+  last_message_at TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, participant_external_id TEXT NOT NULL DEFAULT '',
+  UNIQUE(connection_id, external_thread_id)
+);
+
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
+  external_message_id TEXT,
+  direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+  sender_type TEXT NOT NULL DEFAULT 'unknown',
+  body TEXT NOT NULL,
+  sent_at TEXT,
+  delivery_status TEXT NOT NULL DEFAULT 'observed',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(thread_id, external_message_id)
+);
+
+CREATE TABLE messaging_audit_events (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  connection_id TEXT REFERENCES messaging_connections(id) ON DELETE SET NULL,
+  thread_id TEXT REFERENCES message_threads(id) ON DELETE SET NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, actor_role TEXT NOT NULL DEFAULT 'legacy'
+  CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service','legacy')));
+
+CREATE TABLE messaging_connections (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT REFERENCES operational_accounts(id) ON DELETE SET NULL,
+  platform TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  handle TEXT NOT NULL DEFAULT '',
+  mode TEXT NOT NULL DEFAULT 'observe' CHECK(mode IN ('observe','assist','operate')),
+  read_enabled INTEGER NOT NULL DEFAULT 0 CHECK(read_enabled IN (0,1)),
+  write_enabled INTEGER NOT NULL DEFAULT 0 CHECK(write_enabled IN (0,1)),
+  outbound_validated INTEGER NOT NULL DEFAULT 0 CHECK(outbound_validated IN (0,1)),
+  emergency_paused INTEGER NOT NULL DEFAULT 0 CHECK(emergency_paused IN (0,1)),
+  status TEXT NOT NULL DEFAULT 'not_connected',
+  last_synced_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, platform, display_name)
+);
+
+CREATE TABLE migration_ledger_events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES migration_ledger_runs(id) ON DELETE RESTRICT,
+  record_id TEXT REFERENCES migration_ledger_records(id) ON DELETE RESTRICT,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
+  event_type TEXT NOT NULL CHECK(event_type IN (
+    'RUN_CREATED',
+    'RECORD_PLANNED',
+    'RECORD_APPLIED',
+    'RECORD_SKIPPED',
+    'RECORD_REJECTED',
+    'VERIFICATION_PASSED',
+    'VERIFICATION_FAILED',
+    'KILL_SWITCH_BLOCKED'
+  )),
+  actor_identity TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE migration_ledger_records (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES migration_ledger_runs(id) ON DELETE RESTRICT,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
+  domain TEXT NOT NULL,
+  source_table TEXT NOT NULL,
+  source_record_ref TEXT NOT NULL,
+  source_record_checksum TEXT NOT NULL CHECK(length(source_record_checksum)=64),
+  target_table TEXT,
+  target_record_id TEXT,
+  target_before_checksum TEXT CHECK(target_before_checksum IS NULL OR length(target_before_checksum)=64),
+  target_after_checksum TEXT CHECK(target_after_checksum IS NULL OR length(target_after_checksum)=64),
+  operation TEXT NOT NULL CHECK(operation IN ('INSERT','SKIP','ARCHIVE','MANUAL_REVIEW','VERIFY')),
+  result TEXT NOT NULL CHECK(result IN ('PLANNED','APPLIED','SKIPPED','ARCHIVED','VERIFIED','FAILED','REJECTED')),
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(run_id, domain, source_table, source_record_ref)
+);
+
+CREATE TABLE migration_ledger_runs (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
+  environment TEXT NOT NULL CHECK(environment='staging'),
+  source_snapshot_label TEXT NOT NULL,
+  source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256)=64),
+  target_database_id TEXT NOT NULL,
+  target_snapshot_sha256 TEXT NOT NULL CHECK(length(target_snapshot_sha256)=64),
+  target_migration_state_sha256 TEXT NOT NULL CHECK(length(target_migration_state_sha256)=64),
+  manifest_sha256 TEXT NOT NULL CHECK(length(manifest_sha256)=64),
+  tool_git_sha TEXT NOT NULL,
+  approval_ref TEXT NOT NULL,
+  operator_identity TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, source_snapshot_sha256, manifest_sha256)
+);
+
+CREATE TABLE migration_runs (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  exported_at TEXT NOT NULL,
+  imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  detail TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE operation_outbox (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  operation_type TEXT NOT NULL CHECK(operation_type IN ('preview_dispatch','public_profile_publish','social_publish','message_send')),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatching','delivered','failed','cancelled')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+  next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_error TEXT,
+  delivered_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE operational_accounts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  label TEXT NOT NULL,
+  handle TEXT NOT NULL DEFAULT '',
+  connection_status TEXT NOT NULL CHECK(connection_status IN ('connected','needs_reconnection','needs_check','not_connected')),
+  publishing_mode TEXT NOT NULL CHECK(publishing_mode IN ('direct_api','scheduled_api','finish_on_device','local_bridge','not_configured')),
+  publishing_authority TEXT NOT NULL CHECK(publishing_authority IN ('confirmed','blocked','device_only','not_configured')),
+  warning_level TEXT NOT NULL DEFAULT 'none' CHECK(warning_level IN ('none','attention','blocked')),
+  warning_message TEXT NOT NULL DEFAULT '',
+  external_identity_confirmed_at TEXT,
+  last_checked_at TEXT,
+  last_success_at TEXT,
+  source_updated_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, platform, label)
+);
+
+CREATE TABLE people (
+  id INTEGER PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  display_name TEXT NOT NULL,
+  stage_name TEXT,
+  consent_status TEXT NOT NULL DEFAULT 'not_recorded',
+  tagging_preference TEXT NOT NULL DEFAULT 'ask_each_time',
+  private_notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE premium_message_drafts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  connection_id TEXT NOT NULL REFERENCES messaging_connections(id) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL CHECK(platform IN ('fansly','onlyfans')),
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','approved','claimed','sent','failed','cancelled')),
+  requested_by TEXT NOT NULL,
+  approved_by TEXT,
+  claimed_at TEXT,
+  completed_at TEXT,
+  error TEXT,
+  receipt TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE premium_thread_sync_state (
+  thread_id TEXT PRIMARY KEY REFERENCES message_threads(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','claimed','complete','failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_requested_at TEXT,
+  last_completed_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE provider_connection_attempts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  service TEXT NOT NULL,
+  state_hash TEXT NOT NULL UNIQUE,
+  connected_account_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('pending','completed','failed','expired')),
+  expires_at TEXT NOT NULL,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE provider_connections (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  service TEXT NOT NULL,
+  connected_account_id TEXT NOT NULL,
+  composio_user_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('active','expired','pending','failed')),
+  external_account_id TEXT,
+  display_name TEXT NOT NULL DEFAULT '',
+  last_error TEXT,
+  identity_confirmed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(creator_id, service)
+);
+
+CREATE TABLE public_link_conversion_receipts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  public_link_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  external_reference TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('verified','rejected')),
+  observed_at TEXT NOT NULL,
+  recorded_by TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(source, external_reference)
+);
+
+CREATE TABLE reddit_bridge_tokens (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked','expired')),
+  expires_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE reddit_communities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  rules_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  allows_nsfw INTEGER NOT NULL DEFAULT 0 CHECK(allows_nsfw IN (0,1)),
+  creator_verified INTEGER NOT NULL DEFAULT 0 CHECK(creator_verified IN (0,1)),
+  verification_required INTEGER NOT NULL DEFAULT 0 CHECK(verification_required IN (0,1)),
+  flair_required INTEGER NOT NULL DEFAULT 0 CHECK(flair_required IN (0,1)),
+  allowed_post_types TEXT NOT NULL DEFAULT 'image',
+  minimum_account_age_days INTEGER NOT NULL DEFAULT 0,
+  minimum_karma INTEGER NOT NULL DEFAULT 0,
+  cooldown_hours INTEGER NOT NULL DEFAULT 24,
+  title_guidance TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  last_verified_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, flairs_checked_at TEXT,
+  UNIQUE(creator_id, name)
+);
+
+CREATE TABLE reddit_community_events (
+  id TEXT PRIMARY KEY,
+  community_id INTEGER NOT NULL REFERENCES reddit_communities(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, actor_role TEXT NOT NULL DEFAULT 'legacy'
+  CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service','legacy')));
+
+CREATE TABLE reddit_community_flairs (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  community_id INTEGER NOT NULL REFERENCES reddit_communities(id) ON DELETE CASCADE,
+  flair_id TEXT NOT NULL,
+  flair_text TEXT NOT NULL,
+  text_editable INTEGER NOT NULL DEFAULT 0 CHECK(text_editable IN (0,1)),
+  active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+  fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (creator_id,community_id,flair_id)
+);
+
+CREATE TABLE scheduler_runs (
+  id TEXT PRIMARY KEY,
+  service TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT,
+  claimed_count INTEGER NOT NULL DEFAULT 0,
+  published_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+  error TEXT
+);
+
+CREATE TABLE service_auth_activation_runs (
+  id TEXT PRIMARY KEY,
+  environment TEXT NOT NULL CHECK(environment='staging'),
+  plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256)=64),
+  registry_sha256 TEXT NOT NULL CHECK(length(registry_sha256)=64),
+  backup_receipt_sha256 TEXT NOT NULL CHECK(length(backup_receipt_sha256)=64),
+  target_database_id TEXT NOT NULL,
+  target_migration_state_sha256 TEXT NOT NULL CHECK(length(target_migration_state_sha256)=64),
+  git_sha TEXT NOT NULL,
+  git_branch TEXT NOT NULL,
+  operator_identity TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(environment, plan_sha256)
+);
+
+CREATE TABLE service_auth_activation_steps (
+  id TEXT PRIMARY KEY,
+  activation_id TEXT NOT NULL REFERENCES service_auth_activation_runs(id) ON DELETE RESTRICT,
+  step TEXT NOT NULL CHECK(step IN ('PLANNED','SECRET_STAGED','D1_ACTIVE','VERIFIED','ACTIVE','FAILED','ROLLBACK_REQUIRED','REVOKED')),
+  principal_name TEXT,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE service_auth_telemetry (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT REFERENCES creators(id) ON DELETE RESTRICT,
+  principal_name TEXT,
+  auth_path TEXT NOT NULL CHECK(auth_path IN ('legacy','canonical')),
+  capability TEXT,
+  route TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK(outcome IN ('allowed','denied')),
+  detail TEXT NOT NULL DEFAULT '{}',
+  observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE service_creator_grants (
+  service_credential_id TEXT NOT NULL REFERENCES service_credentials(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TEXT,
+  PRIMARY KEY (service_credential_id, creator_id)
+);
+
+CREATE TABLE service_credentials (
+  id TEXT PRIMARY KEY,
+  service_name TEXT NOT NULL UNIQUE,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  expires_at TEXT,
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TEXT
+);
+
+CREATE TABLE service_principal_audit_events (
+  id TEXT PRIMARY KEY,
+  service_principal_id TEXT NOT NULL REFERENCES service_principals(id) ON DELETE RESTRICT,
+  credential_id TEXT REFERENCES service_principal_credentials(id) ON DELETE RESTRICT,
+  creator_id TEXT REFERENCES creators(id) ON DELETE RESTRICT,
+  event_type TEXT NOT NULL,
+  actor_identity TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE service_principal_creator_grants (
+  service_principal_id TEXT NOT NULL REFERENCES service_principals(id) ON DELETE RESTRICT,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
+  capability TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TEXT,
+  PRIMARY KEY (service_principal_id, creator_id, capability)
+);
+
+CREATE TABLE service_principal_credentials (
+  id TEXT PRIMARY KEY,
+  service_principal_id TEXT NOT NULL REFERENCES service_principals(id) ON DELETE RESTRICT,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  expires_at TEXT,
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TEXT
+);
+
+CREATE TABLE service_principals (
+  id TEXT PRIMARY KEY,
+  principal_name TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TEXT
+);
+
+CREATE TABLE social_post_events (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, actor_role TEXT NOT NULL DEFAULT 'legacy'
+  CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service','legacy')));
+
+CREATE TABLE social_posts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  account_id TEXT REFERENCES operational_accounts(id) ON DELETE SET NULL,
+  asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+  community_id INTEGER REFERENCES reddit_communities(id) ON DELETE SET NULL,
+  source_local_id TEXT,
+  title TEXT NOT NULL DEFAULT '',
+  caption TEXT NOT NULL DEFAULT '',
+  content_rating TEXT CHECK(content_rating IN ('sfw','nsfw')),
+  status TEXT NOT NULL CHECK(status IN ('draft','scheduled','publishing','published','failed','cancelled')),
+  scheduled_at TEXT,
+  approved_by TEXT,
+  approved_at TEXT,
+  published_at TEXT,
+  external_post_id TEXT,
+  external_url TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, attempt_count INTEGER NOT NULL DEFAULT 0, claimed_at TEXT, last_attempt_at TEXT, failure_reviewed_at TEXT, failure_reviewed_by TEXT, provider_container_id TEXT, provider_container_type TEXT, device_claimed_at TEXT, device_receipt TEXT NOT NULL DEFAULT '{}', reddit_flair_id TEXT, reddit_flair_text TEXT,
+  UNIQUE(creator_id, platform, source_local_id)
+);
+
+CREATE TABLE telegram_bot_state (
+  id TEXT PRIMARY KEY,
+  next_update_id INTEGER NOT NULL DEFAULT 0,
+  claimed_at TEXT,
+  last_polled_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE telegram_connector_state (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  connection_id TEXT NOT NULL REFERENCES messaging_connections(id) ON DELETE CASCADE,
+  chat_id TEXT NOT NULL,
+  telegram_user_id TEXT NOT NULL,
+  telegram_username TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  expected_bot_username TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_validation' CHECK(status IN ('pending_validation','connected','failed','revoked')),
+  next_update_id INTEGER NOT NULL DEFAULT 0,
+  identity_confirmed_at TEXT,
+  last_polled_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE telegram_poll_runs (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+  updates_seen INTEGER NOT NULL DEFAULT 0,
+  messages_imported INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT
+);
+
+CREATE TABLE telegram_send_log (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  connection_id TEXT REFERENCES messaging_connections(id) ON DELETE SET NULL,
+  message_text TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','sent','failed','cancelled')),
+  provider_message_id TEXT,
+  requested_by TEXT NOT NULL,
+  error TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, claimed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+
+CREATE TABLE tenant_integrity_exceptions (
+  id TEXT PRIMARY KEY,
+  table_name TEXT NOT NULL,
+  record_key TEXT NOT NULL,
+  creator_id TEXT,
+  related_creator_id TEXT,
+  reason TEXT NOT NULL,
+  detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TEXT,
+  resolution_note TEXT NOT NULL DEFAULT '',
+  UNIQUE(table_name, record_key, reason)
+);
+
+CREATE TABLE users (
+  email TEXT PRIMARY KEY COLLATE NOCASE,
+  display_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE vault_bridge_tokens (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL CHECK(platform='fansly'),
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked','expired')),
+  expires_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE vault_upload_events (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES vault_upload_jobs(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+, actor_role TEXT NOT NULL DEFAULT 'legacy'
+  CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service','legacy')));
+
+CREATE TABLE vault_upload_jobs (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL CHECK(platform IN ('fansly','myroomz')),
+  status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','claimed','staged','verified','failed','cancelled')),
+  approved_by TEXT NOT NULL,
+  approved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  claimed_at TEXT,
+  completed_at TEXT,
+  error TEXT,
+  receipt TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX asset_classification_events_creator_asset
+  ON asset_classification_events(creator_id,asset_id,created_at DESC);
+
+CREATE INDEX asset_classifications_creator_safety
+  ON asset_classifications(creator_id, safety, is_teaser, is_multi);
+
+CREATE INDEX asset_destinations_creator_destination
+  ON asset_destinations(creator_id, destination, asset_id);
+
+CREATE INDEX asset_people_creator_asset
+  ON asset_people(creator_id, asset_id);
+
+CREATE INDEX asset_preview_jobs_creator_status
+  ON asset_preview_jobs(creator_id, status, updated_at DESC);
+
+CREATE INDEX assets_creator_available_modified
+  ON assets(creator_id, source_available, modified_at DESC);
+
+CREATE UNIQUE INDEX assets_id_creator_pair
+  ON assets(id, creator_id);
+
+CREATE INDEX bridge_credentials_scope
+  ON bridge_credentials(creator_id, account_id, profile_id, platform, status, expires_at);
+
+CREATE INDEX creator_exceptions_open_scope
+  ON creator_exceptions(creator_id, status, severity, last_observed_at DESC);
+
+CREATE INDEX creator_memberships_user
+  ON creator_memberships(user_email, status, creator_id);
+
+CREATE INDEX creator_onboarding_receipts_creator_created
+  ON creator_onboarding_receipts(creator_id, created_at DESC);
+
+CREATE INDEX creator_public_links_version_order
+  ON creator_public_links(profile_version_id, sort_order);
+
+CREATE INDEX creator_public_profile_publications_creator_created
+  ON creator_public_profile_publications(creator_id, created_at DESC);
+
+CREATE INDEX creator_public_profile_versions_profile_status
+  ON creator_public_profile_versions(profile_id, status, version_number DESC);
+
+CREATE INDEX external_operation_receipts_reconcile
+  ON external_operation_receipts(provider, status, updated_at);
+
+CREATE INDEX finance_audit_creator_time
+  ON finance_audit_events(creator_id, created_at DESC);
+
+CREATE INDEX finance_daily_metrics_creator_period
+  ON finance_daily_metrics(creator_id, period_date DESC, platform, currency);
+
+CREATE INDEX finance_imports_creator_time
+  ON finance_imports(creator_id, imported_at DESC);
+
+CREATE INDEX identity_audit_creator_created
+  ON identity_audit_events(creator_id, created_at DESC);
+
+CREATE INDEX idx_instagram_analytics_creator_time
+  ON instagram_analytics_snapshots (creator_id, collected_at DESC);
+
+CREATE INDEX idx_message_attachments_message
+  ON message_attachments(creator_id,message_id,status);
+
+CREATE INDEX idx_reddit_community_events_community_created
+  ON reddit_community_events(community_id, created_at DESC);
+
+CREATE INDEX idx_reddit_community_events_creator_created
+  ON reddit_community_events(creator_id, created_at DESC);
+
+CREATE INDEX instagram_media_metric_observations_time
+  ON instagram_media_metric_observations(creator_id, media_id, collected_at DESC);
+
+CREATE INDEX instagram_reply_drafts_creator_thread_time
+  ON instagram_reply_drafts(creator_id, thread_id, created_at DESC);
+
+CREATE UNIQUE INDEX instagram_reply_drafts_one_active_body
+  ON instagram_reply_drafts(creator_id, thread_id, body)
+  WHERE status IN ('draft','approved','sending');
+
+CREATE INDEX message_threads_creator_activity
+  ON message_threads(creator_id, last_message_at DESC, updated_at DESC);
+
+CREATE INDEX messages_creator_thread_time
+  ON messages(creator_id, thread_id, sent_at, created_at);
+
+CREATE INDEX messaging_audit_creator_time
+  ON messaging_audit_events(creator_id, created_at DESC);
+
+CREATE INDEX messaging_connections_creator_platform
+  ON messaging_connections(creator_id, platform, status);
+
+CREATE INDEX migration_ledger_events_run_created
+  ON migration_ledger_events(run_id, created_at DESC);
+
+CREATE INDEX migration_ledger_records_creator_domain_created
+  ON migration_ledger_records(creator_id, domain, created_at DESC);
+
+CREATE INDEX migration_ledger_runs_creator_created
+  ON migration_ledger_runs(creator_id, created_at DESC);
+
+CREATE INDEX operation_outbox_creator_created
+  ON operation_outbox(creator_id, created_at DESC);
+
+CREATE INDEX operation_outbox_dispatch
+  ON operation_outbox(operation_type, status, next_attempt_at, created_at);
+
+CREATE INDEX operational_accounts_creator_platform
+  ON operational_accounts(creator_id, platform);
+
+CREATE UNIQUE INDEX operational_accounts_id_creator_pair
+  ON operational_accounts(id, creator_id);
+
+CREATE UNIQUE INDEX operational_accounts_one_fansly_per_creator
+  ON operational_accounts(creator_id)
+  WHERE platform='fansly';
+
+CREATE UNIQUE INDEX people_id_creator_pair
+  ON people(id, creator_id);
+
+CREATE INDEX premium_message_drafts_creator_thread
+  ON premium_message_drafts(creator_id,thread_id,created_at DESC);
+
+CREATE INDEX provider_connection_attempts_pending
+  ON provider_connection_attempts(creator_id, service, status, expires_at);
+
+CREATE INDEX reddit_bridge_tokens_lookup
+  ON reddit_bridge_tokens(token_hash,status,expires_at);
+
+CREATE UNIQUE INDEX reddit_communities_id_creator_pair
+  ON reddit_communities(id, creator_id);
+
+CREATE INDEX reddit_community_flairs_available
+  ON reddit_community_flairs(creator_id,community_id,active,flair_text);
+
+CREATE INDEX service_auth_activation_steps_run_created
+  ON service_auth_activation_steps(activation_id, created_at DESC);
+
+CREATE INDEX service_auth_telemetry_creator_observed
+  ON service_auth_telemetry(creator_id, observed_at DESC);
+
+CREATE INDEX service_auth_telemetry_path_observed
+  ON service_auth_telemetry(auth_path, observed_at DESC);
+
+CREATE INDEX service_creator_grants_creator
+  ON service_creator_grants(creator_id, status, service_credential_id);
+
+CREATE INDEX service_principal_audit_events_principal_created
+  ON service_principal_audit_events(service_principal_id, created_at DESC);
+
+CREATE INDEX service_principal_creator_grants_scope
+  ON service_principal_creator_grants(creator_id, capability, status, service_principal_id);
+
+CREATE INDEX service_principal_credentials_lookup
+  ON service_principal_credentials(service_principal_id, status, expires_at);
+
+CREATE INDEX social_post_events_creator_post
+  ON social_post_events(creator_id, post_id, created_at DESC);
+
+CREATE INDEX social_posts_creator_failure_review
+  ON social_posts(creator_id, platform, status, failure_reviewed_at);
+
+CREATE INDEX social_posts_creator_platform_status
+  ON social_posts(creator_id, platform, status, scheduled_at);
+
+CREATE UNIQUE INDEX social_posts_id_creator_pair
+  ON social_posts(id, creator_id);
+
+CREATE INDEX telegram_poll_runs_creator_time
+  ON telegram_poll_runs(creator_id, started_at DESC);
+
+CREATE INDEX telegram_send_log_creator_time
+  ON telegram_send_log(creator_id, created_at DESC);
+
+CREATE INDEX vault_bridge_tokens_lookup
+  ON vault_bridge_tokens(token_hash,status,expires_at);
+
+CREATE UNIQUE INDEX vault_upload_jobs_active_asset
+  ON vault_upload_jobs(creator_id,account_id,asset_id)
+  WHERE status IN ('approved','claimed','staged','verified');
+
+CREATE INDEX vault_upload_jobs_queue
+  ON vault_upload_jobs(creator_id,platform,status,created_at);
+
+CREATE TRIGGER asset_classification_actor_role_contract_insert
+BEFORE INSERT ON asset_classification_events
+WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER asset_classification_actor_role_contract_update
+BEFORE UPDATE ON asset_classification_events
+WHEN OLD.actor_role='legacy' OR NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER asset_classifications_asset_creator_insert
+BEFORE INSERT ON asset_classifications
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_classification_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_classifications_asset_creator_update
+BEFORE UPDATE OF asset_id, creator_id ON asset_classifications
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_classification_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_classifications_teaser_creator_insert
+BEFORE INSERT ON asset_classifications
+WHEN NEW.teaser_for_asset_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.teaser_for_asset_id AND a.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_classification_teaser_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_classifications_teaser_creator_update
+BEFORE UPDATE OF teaser_for_asset_id, creator_id ON asset_classifications
+WHEN NEW.teaser_for_asset_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.teaser_for_asset_id AND a.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_classification_teaser_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_destinations_asset_creator_insert
+BEFORE INSERT ON asset_destinations
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_destination_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_destinations_asset_creator_update
+BEFORE UPDATE OF asset_id, creator_id ON asset_destinations
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_destination_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_paid_consent_creator_insert
+BEFORE INSERT ON asset_paid_consent_attestations
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM people p WHERE p.id=NEW.person_id AND p.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_paid_consent_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_paid_consent_creator_update
+BEFORE UPDATE OF asset_id, person_id, creator_id ON asset_paid_consent_attestations
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM people p WHERE p.id=NEW.person_id AND p.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_paid_consent_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_people_creator_insert
+BEFORE INSERT ON asset_people
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM people p WHERE p.id=NEW.person_id AND p.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_person_creator_mismatch');
+END;
+
+CREATE TRIGGER asset_people_creator_update
+BEFORE UPDATE OF asset_id, person_id, creator_id ON asset_people
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM people p WHERE p.id=NEW.person_id AND p.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'asset_person_creator_mismatch');
+END;
+
+CREATE TRIGGER creator_memberships_creator_workspace_insert
+BEFORE INSERT ON creator_memberships
+WHEN NEW.status='active' AND NEW.role='creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND creator_id<>NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'creator_identity_must_be_single_workspace');
+END;
+
+CREATE TRIGGER creator_memberships_creator_workspace_update
+BEFORE UPDATE OF role,status ON creator_memberships
+WHEN NEW.status='active' AND NEW.role='creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND creator_id<>NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'creator_identity_must_be_single_workspace');
+END;
+
+CREATE TRIGGER creator_memberships_staff_class_insert
+BEFORE INSERT ON creator_memberships
+WHEN NEW.status='active' AND NEW.role<>'creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND role='creator'
+    AND creator_id<>NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'creator_identity_cannot_be_staff');
+END;
+
+CREATE TRIGGER creator_memberships_staff_class_update
+BEFORE UPDATE OF role,status ON creator_memberships
+WHEN NEW.status='active' AND NEW.role<>'creator' AND EXISTS (
+  SELECT 1 FROM creator_memberships
+  WHERE lower(user_email)=lower(NEW.user_email)
+    AND status='active'
+    AND role='creator'
+    AND creator_id<>NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'creator_identity_cannot_be_staff');
+END;
+
+CREATE TRIGGER creator_public_links_version_creator_insert
+BEFORE INSERT ON creator_public_links
+WHEN NOT EXISTS (SELECT 1 FROM creator_public_profile_versions v WHERE v.id=NEW.profile_version_id AND v.creator_id=NEW.creator_id AND v.status='draft')
+BEGIN
+  SELECT RAISE(ABORT, 'public_link_requires_draft_version_for_creator');
+END;
+
+CREATE TRIGGER creator_public_links_version_creator_update
+BEFORE UPDATE OF profile_version_id, creator_id, label, destination_url, destination_host, sort_order ON creator_public_links
+WHEN NOT EXISTS (SELECT 1 FROM creator_public_profile_versions v WHERE v.id=NEW.profile_version_id AND v.creator_id=NEW.creator_id AND v.status='draft')
+BEGIN
+  SELECT RAISE(ABORT, 'public_link_requires_draft_version_for_creator');
+END;
+
+CREATE TRIGGER creator_public_media_sfw_asset_insert
+BEFORE INSERT ON creator_public_media
+WHEN NOT EXISTS (SELECT 1 FROM assets a JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id
+                 WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id AND a.source_available=1 AND c.safety='sfw')
+BEGIN
+  SELECT RAISE(ABORT, 'public_media_requires_approved_sfw_asset');
+END;
+
+CREATE TRIGGER creator_public_media_sfw_asset_update
+BEFORE UPDATE OF asset_id, creator_id ON creator_public_media
+WHEN NOT EXISTS (SELECT 1 FROM assets a JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id
+                 WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id AND a.source_available=1 AND c.safety='sfw')
+BEGIN
+  SELECT RAISE(ABORT, 'public_media_requires_approved_sfw_asset');
+END;
+
+CREATE TRIGGER creator_public_profile_publication_creator_insert
+BEFORE INSERT ON creator_public_profile_publications
+WHEN NOT EXISTS (SELECT 1 FROM creator_public_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM creator_public_profile_versions v WHERE v.id=NEW.version_id AND v.profile_id=NEW.profile_id AND v.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_publication_creator_mismatch');
+END;
+
+CREATE TRIGGER creator_public_profile_published_version
+BEFORE UPDATE OF published_version_id, status ON creator_public_profiles
+WHEN NEW.published_version_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions v WHERE v.id=NEW.published_version_id AND v.profile_id=NEW.id AND v.creator_id=NEW.creator_id AND v.status IN ('approved','published'))
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_requires_approved_version');
+END;
+
+CREATE TRIGGER creator_public_profile_single_draft
+BEFORE INSERT ON creator_public_profile_versions
+WHEN NEW.status='draft'
+ AND EXISTS (
+   SELECT 1 FROM creator_public_profile_versions v
+   WHERE v.profile_id=NEW.profile_id AND v.creator_id=NEW.creator_id AND v.status='draft'
+ )
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_already_has_a_draft_version');
+END;
+
+CREATE TRIGGER creator_public_profile_slug_immutable_after_publication
+BEFORE UPDATE OF slug ON creator_public_profiles
+WHEN OLD.published_version_id IS NOT NULL AND NEW.slug<>OLD.slug
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_slug_is_immutable_after_publication');
+END;
+
+CREATE TRIGGER creator_public_profile_version_no_reopen
+BEFORE UPDATE OF status ON creator_public_profile_versions
+WHEN OLD.status<>'draft' AND NEW.status='draft'
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_version_cannot_return_to_draft');
+END;
+
+CREATE TRIGGER external_operation_receipt_creator_insert
+BEFORE INSERT ON external_operation_receipts
+WHEN NOT EXISTS (SELECT 1 FROM operation_outbox o WHERE o.id=NEW.operation_id AND o.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'external_operation_receipt_creator_mismatch');
+END;
+
+CREATE TRIGGER external_operation_receipt_creator_update
+BEFORE UPDATE OF operation_id, creator_id ON external_operation_receipts
+WHEN NOT EXISTS (SELECT 1 FROM operation_outbox o WHERE o.id=NEW.operation_id AND o.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'external_operation_receipt_creator_mismatch');
+END;
+
+CREATE TRIGGER identity_audit_actor_role_contract_insert
+BEFORE INSERT ON identity_audit_events
+WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER identity_audit_actor_role_contract_update
+BEFORE UPDATE ON identity_audit_events
+WHEN OLD.actor_role='legacy' OR NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER identity_audit_creator_required
+BEFORE INSERT ON identity_audit_events
+WHEN NEW.creator_id IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'audit_effective_creator_required');
+END;
+
+CREATE TRIGGER identity_audit_human_scope
+BEFORE INSERT ON identity_audit_events
+WHEN NEW.actor_role NOT IN ('service','legacy') AND NOT EXISTS (
+  SELECT 1 FROM creator_memberships m
+  JOIN users u ON lower(u.email)=lower(m.user_email)
+  WHERE m.creator_id=NEW.creator_id
+    AND lower(m.user_email)=lower(NEW.actor_email)
+    AND m.role=NEW.actor_role
+    AND m.status='active'
+    AND u.status='active'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'audit_human_actor_scope_invalid');
+END;
+
+CREATE TRIGGER identity_audit_service_scope
+BEFORE INSERT ON identity_audit_events
+WHEN NEW.actor_role='service'
+  AND NOT EXISTS (
+    SELECT 1 FROM service_credentials s
+    JOIN service_creator_grants g ON g.service_credential_id=s.id
+    WHERE lower(NEW.actor_email)=lower('service:' || s.service_name)
+      AND g.creator_id=NEW.creator_id
+      AND s.status='active'
+      AND g.status='active'
+      AND (s.expires_at IS NULL OR unixepoch(s.expires_at)>unixepoch(CURRENT_TIMESTAMP))
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM service_principal_credentials c
+    JOIN service_principals p ON p.id=c.service_principal_id
+    JOIN service_principal_creator_grants g ON g.service_principal_id=p.id
+    WHERE lower(NEW.actor_email)=lower('service:' || p.principal_name)
+      AND g.creator_id=NEW.creator_id
+      AND c.status='active'
+      AND p.status='active'
+      AND g.status='active'
+      AND (c.expires_at IS NULL OR unixepoch(c.expires_at)>unixepoch(CURRENT_TIMESTAMP))
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'audit_service_actor_scope_invalid');
+END;
+
+CREATE TRIGGER messaging_audit_actor_role_contract_insert
+BEFORE INSERT ON messaging_audit_events
+WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER messaging_audit_actor_role_contract_update
+BEFORE UPDATE ON messaging_audit_events
+WHEN OLD.actor_role='legacy' OR NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER migration_ledger_events_creator_scope
+BEFORE INSERT ON migration_ledger_events
+WHEN NOT EXISTS (
+  SELECT 1 FROM migration_ledger_runs run
+  WHERE run.id=NEW.run_id AND run.creator_id=NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_creator_scope');
+END;
+
+CREATE TRIGGER migration_ledger_events_immutable_delete
+BEFORE DELETE ON migration_ledger_events
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_append_only');
+END;
+
+CREATE TRIGGER migration_ledger_events_immutable_update
+BEFORE UPDATE ON migration_ledger_events
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_append_only');
+END;
+
+CREATE TRIGGER migration_ledger_events_record_scope
+BEFORE INSERT ON migration_ledger_events
+WHEN NEW.record_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM migration_ledger_records record
+  WHERE record.id=NEW.record_id AND record.run_id=NEW.run_id AND record.creator_id=NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_record_scope');
+END;
+
+CREATE TRIGGER migration_ledger_records_creator_scope
+BEFORE INSERT ON migration_ledger_records
+WHEN NOT EXISTS (
+  SELECT 1 FROM migration_ledger_runs run
+  WHERE run.id=NEW.run_id AND run.creator_id=NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_creator_scope');
+END;
+
+CREATE TRIGGER migration_ledger_records_immutable_delete
+BEFORE DELETE ON migration_ledger_records
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_append_only');
+END;
+
+CREATE TRIGGER migration_ledger_records_immutable_update
+BEFORE UPDATE ON migration_ledger_records
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_append_only');
+END;
+
+CREATE TRIGGER migration_ledger_runs_immutable_delete
+BEFORE DELETE ON migration_ledger_runs
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_append_only');
+END;
+
+CREATE TRIGGER migration_ledger_runs_immutable_update
+BEFORE UPDATE ON migration_ledger_runs
+BEGIN
+  SELECT RAISE(ABORT,'migration_ledger_append_only');
+END;
+
+CREATE TRIGGER public_profile_version_approval_transition
+BEFORE UPDATE OF status, approved_by, approved_at ON creator_public_profile_versions
+WHEN OLD.status='draft' AND NEW.status IN ('approved','published')
+ AND (NEW.approved_by IS NULL OR NEW.approved_at IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_version_requires_explicit_approval');
+END;
+
+CREATE TRIGGER public_profile_version_creator_insert
+BEFORE INSERT ON creator_public_profile_versions
+WHEN NOT EXISTS (SELECT 1 FROM creator_public_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_version_creator_mismatch');
+END;
+
+CREATE TRIGGER public_profile_version_creator_update
+BEFORE UPDATE OF profile_id, creator_id ON creator_public_profile_versions
+WHEN NOT EXISTS (SELECT 1 FROM creator_public_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_version_creator_mismatch');
+END;
+
+CREATE TRIGGER public_profile_version_immutable_after_approval
+BEFORE UPDATE OF display_name, headline, bio, avatar_media_id, content_checksum ON creator_public_profile_versions
+WHEN OLD.status<>'draft'
+BEGIN
+  SELECT RAISE(ABORT, 'public_profile_version_is_immutable');
+END;
+
+CREATE TRIGGER reddit_community_actor_role_contract_insert
+BEFORE INSERT ON reddit_community_events
+WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER reddit_community_actor_role_contract_update
+BEFORE UPDATE ON reddit_community_events
+WHEN OLD.actor_role='legacy' OR NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER reddit_community_flairs_creator_insert
+BEFORE INSERT ON reddit_community_flairs
+WHEN NOT EXISTS (
+  SELECT 1 FROM reddit_communities c
+  WHERE c.id=NEW.community_id AND c.creator_id=NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT,'reddit_flair_creator_scope');
+END;
+
+CREATE TRIGGER reddit_community_flairs_creator_update
+BEFORE UPDATE OF creator_id,community_id ON reddit_community_flairs
+WHEN NOT EXISTS (
+  SELECT 1 FROM reddit_communities c
+  WHERE c.id=NEW.community_id AND c.creator_id=NEW.creator_id
+)
+BEGIN
+  SELECT RAISE(ABORT,'reddit_flair_creator_scope');
+END;
+
+CREATE TRIGGER service_auth_activation_runs_append_only_delete
+BEFORE DELETE ON service_auth_activation_runs
+BEGIN
+  SELECT RAISE(ABORT,'service_auth_activation_runs_append_only');
+END;
+
+CREATE TRIGGER service_auth_activation_runs_append_only_update
+BEFORE UPDATE ON service_auth_activation_runs
+BEGIN
+  SELECT RAISE(ABORT,'service_auth_activation_runs_append_only');
+END;
+
+CREATE TRIGGER service_auth_activation_steps_append_only_delete
+BEFORE DELETE ON service_auth_activation_steps
+BEGIN
+  SELECT RAISE(ABORT,'service_auth_activation_steps_append_only');
+END;
+
+CREATE TRIGGER service_auth_activation_steps_append_only_update
+BEFORE UPDATE ON service_auth_activation_steps
+BEGIN
+  SELECT RAISE(ABORT,'service_auth_activation_steps_append_only');
+END;
+
+CREATE TRIGGER service_auth_telemetry_append_only_delete
+BEFORE DELETE ON service_auth_telemetry
+BEGIN
+  SELECT RAISE(ABORT,'service_auth_telemetry_append_only');
+END;
+
+CREATE TRIGGER service_auth_telemetry_append_only_update
+BEFORE UPDATE ON service_auth_telemetry
+BEGIN
+  SELECT RAISE(ABORT,'service_auth_telemetry_append_only');
+END;
+
+CREATE TRIGGER service_principal_audit_events_append_only_delete
+BEFORE DELETE ON service_principal_audit_events
+BEGIN
+  SELECT RAISE(ABORT,'service_principal_audit_events_append_only');
+END;
+
+CREATE TRIGGER service_principal_audit_events_append_only_update
+BEFORE UPDATE ON service_principal_audit_events
+BEGIN
+  SELECT RAISE(ABORT,'service_principal_audit_events_append_only');
+END;
+
+CREATE TRIGGER social_post_actor_role_contract_insert
+BEFORE INSERT ON social_post_events
+WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER social_post_actor_role_contract_update
+BEFORE UPDATE ON social_post_events
+WHEN OLD.actor_role='legacy' OR NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER social_post_events_creator_insert
+BEFORE INSERT ON social_post_events
+WHEN NOT EXISTS (SELECT 1 FROM social_posts sp WHERE sp.id=NEW.post_id AND sp.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'social_post_event_creator_mismatch');
+END;
+
+CREATE TRIGGER social_post_events_creator_update
+BEFORE UPDATE OF post_id, creator_id ON social_post_events
+WHEN NOT EXISTS (SELECT 1 FROM social_posts sp WHERE sp.id=NEW.post_id AND sp.creator_id=NEW.creator_id)
+BEGIN
+  SELECT RAISE(ABORT, 'social_post_event_creator_mismatch');
+END;
+
+CREATE TRIGGER social_posts_related_creator_insert
+BEFORE INSERT ON social_posts
+WHEN (NEW.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM operational_accounts oa WHERE oa.id=NEW.account_id AND oa.creator_id=NEW.creator_id))
+  OR (NEW.asset_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id))
+  OR (NEW.community_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM reddit_communities rc WHERE rc.id=NEW.community_id AND rc.creator_id=NEW.creator_id))
+BEGIN
+  SELECT RAISE(ABORT, 'social_post_creator_mismatch');
+END;
+
+CREATE TRIGGER social_posts_related_creator_update
+BEFORE UPDATE OF creator_id, account_id, asset_id, community_id ON social_posts
+WHEN (NEW.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM operational_accounts oa WHERE oa.id=NEW.account_id AND oa.creator_id=NEW.creator_id))
+  OR (NEW.asset_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id))
+  OR (NEW.community_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM reddit_communities rc WHERE rc.id=NEW.community_id AND rc.creator_id=NEW.creator_id))
+BEGIN
+  SELECT RAISE(ABORT, 'social_post_creator_mismatch');
+END;
+
+CREATE TRIGGER vault_upload_actor_role_contract_insert
+BEFORE INSERT ON vault_upload_events
+WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;
+
+CREATE TRIGGER vault_upload_actor_role_contract_update
+BEFORE UPDATE ON vault_upload_events
+WHEN OLD.actor_role='legacy' OR NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
+BEGIN
+  SELECT RAISE(ABORT, 'audit_actor_role_contract');
+END;

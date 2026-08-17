@@ -1,17 +1,19 @@
 import "server-only";
 
-export type InternalService = "instagram" | "reddit" | "telegram" | "vault_catalogue";
+export type InternalService = "instagram" | "reddit" | "telegram" | "vault_catalogue" | "public_links_control";
 export type InternalServiceCapability =
   | "instagram.status.read" | "instagram.connection.manage" | "instagram.publish.execute" | "instagram.sync.execute" | "instagram.messages.sync" | "instagram.messages.write"
   | "reddit.status.read" | "reddit.connection.manage" | "reddit.communities.read" | "reddit.publish.execute"
   | "telegram.status.read" | "telegram.connection.manage" | "telegram.messages.sync" | "telegram.messages.write"
-  | "vault.catalogue.refresh";
+  | "vault.catalogue.refresh"
+  | "public.profile.publish" | "public.profile.withdraw";
 
 const tokenKey: Record<InternalService, keyof CloudflareEnv> = {
   instagram: "INTERNAL_INSTAGRAM_SCHEDULER_TOKEN",
   reddit: "INTERNAL_REDDIT_SCHEDULER_TOKEN",
   telegram: "INTERNAL_TELEGRAM_BRIDGE_TOKEN",
   vault_catalogue: "INTERNAL_VAULT_CATALOGUE_TOKEN",
+  public_links_control: "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN",
 };
 
 /**
