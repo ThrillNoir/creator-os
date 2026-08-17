@@ -1,9 +1,9 @@
 # THOT OS rebuild cutover
 
-Status: Phase 2B staging release completed on 2026-08-17. Stage 3 Growth
-Insights is implemented locally and awaiting its staging worker rollout. No
-custom domain, real creator public profile, social post, social account, or
-Dropbox object was changed by this release.
+Status: Phase 2B staging release and the Stage 3 Growth Insights staging
+worker rollout were completed on 2026-08-17. No custom domain, real creator
+public profile, social post, social account, or Dropbox object was changed by
+this release.
 
 ## Staging execution record
 
@@ -22,6 +22,10 @@ Dropbox object was changed by this release.
   removed; no real creator route exists.
 - Deployment receipts are stored outside the repository at
   `/Users/thotos/THOT-OS-PHASE2A-RELEASES/staging-worker-rollout-2026-08-17/`.
+  The Stage 3 web rollout receipt is `stage3-growth-web.json`, for Worker
+  version `01508612-6dbd-4ff5-a30b-7d4c392c6bdc`. Its authenticated health
+  check remains pending a local Cloudflare Access session; an unauthenticated
+  request correctly received the Access gate rather than application data.
 
 ## What is now implemented locally
 
