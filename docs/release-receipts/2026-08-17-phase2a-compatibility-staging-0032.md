@@ -1,7 +1,7 @@
 # Phase 2A COMPATIBILITY — staging release receipt
 
 - Release ID: `phase2a-compatibility-staging-20260817-09260c0b-2462-4753-b18f-934ffa6b8b02`
-- Status: **COMPATIBILITY MIGRATION APPLIED — VERIFICATION INCOMPLETE**
+- Status: **PASS** — Phase 2A COMPATIBILITY staging release
 - Branch / HEAD at plan and submission: `audit/pre-cleanup-snapshot-2026-08-15` / `06971e7e0c7eb12d785f0614fe68e12dd5f11d54`
 - Target: THOT OS staging D1 `thot-os-staging` (`174532e8-5ada-4e30-abba-1276b3540b3f`) in account `3e7cfa6efb7a97825f1dc24515410c63`
 - Production touched: **NO**. The bounded policy permits `staging` only; production remains unprovisioned and non-deployable.
@@ -59,7 +59,7 @@ The reviewed trigger representation is LF-normalized SQL, trimmed with one final
 - Read-only `npm run services:activate -- --environment staging --plan` passed: EXPAND ready **YES**; COMPATIBILITY ready **YES**; activation technically ready **YES**. It would create 4 principals, 4 secrets, 4 credential hashes, and 15 creator capability grants if separately approved. `--apply` was not invoked and plan mode created nothing.
 - Read-only Cloudflare Worker identity: current script `thot-os-staging`, ID `e6520e8bf8324e50bd268181d453b816`. No Worker version/deployment action was run.
 - Cloudflare observability after the migration recorded a completed 200 response and no 4xx/5xx responses in the post-migration observation window.
-- **Authenticated route smoke is incomplete.** Fresh browser navigation was locally blocked by the browser client, and the shell has no authenticated Cloudflare Access session variable for the repository health checker. The unauthenticated health request correctly reached the Access boundary (HTTP 302), but this is not a substitute for authenticated health, library, messages, and operations checks.
+- Authenticated staging smoke: **PASS**. A Cloudflare Access session returned the protected health contract with `ok: true`, `runtime: nextjs-opennext`, and creator scope `adelaide` (health timestamp `2026-08-17T03:26:25.651Z`). The same session loaded `/library`, `/messages`, and `/operations` without an Access redirect; each rendered its expected workspace and reported zero console errors. This was read-only navigation only: no message, audit, creator, queue, or other application mutation was invoked.
 
 ## Explicit non-activation and recovery boundary
 
@@ -75,6 +75,6 @@ The reviewed trigger representation is LF-normalized SQL, trimmed with one final
 
 No automatic D1 rollback is appropriate: 0032 is canonically committed, exactly verified at the schema/data/integrity level, and remains the intended compatibility state. The protected temporary export/evidence directory containing raw staging data was moved recoverably to this Mac user's Trash after receipt capture; it is not committed.
 
-## Required next action
+## Next action
 
-Restore an authenticated, read-only staging Access smoke path and record successful health, library, messages, and operations checks against D1 at 0032. Until then, retain this status as **COMPATIBILITY MIGRATION APPLIED — VERIFICATION INCOMPLETE**. Do not execute ACTIVATE, create secrets, provision principals or grants, deploy Workers, change traffic, remove legacy authentication, or touch production.
+The Phase 2A COMPATIBILITY staging release is complete. Prepare a separately approved ACTIVATE staging release only when its own protected canonical-auth probes, rollback gates, and secret/traffic authority are in scope. Do not execute ACTIVATE, create secrets, provision principals or grants, deploy Workers, change traffic, remove legacy authentication, or touch production from this release.
