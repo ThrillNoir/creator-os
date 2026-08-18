@@ -5,8 +5,9 @@ Stage 3B was deployed to staging on 2026-08-18. No custom domain, real creator
 public profile, social post, social account, or Dropbox object was changed by
 this release. Stage 3B's first scheduled provider read failed safely because a
 legacy connection scope differed from the reconstructed scope; the scheduler
-now uses the recorded creator-scoped provider identifier and awaits its bounded
-retry.
+now uses the recorded creator-scoped provider identifier. Its bounded retry
+completed, recorded 15 official media observations, and retained the first
+failure as an audit receipt.
 
 ## Staging execution record
 
@@ -36,8 +37,9 @@ retry.
   `/Users/thotos/THOT-OS-PHASE2A-RELEASES/staging-worker-rollout-2026-08-18/`:
   `stage3b-0037-oauth-plan.json`, the checksum-bound staging export and
   `stage3b-0037-oauth-apply.receipt.json`, followed by `stage3b-web.json`,
-  `stage3b-public-links.json`, and `stage3b-instagram.json`. The current
-  scheduler repair is Worker version `9c4e46a6-8e99-40ab-8dfb-82475be89dd0`.
+  `stage3b-public-links.json`, `stage3b-instagram.json`, and
+  `stage3b-instagram-verified.json`. The current scheduler repair is Worker
+  version `9c4e46a6-8e99-40ab-8dfb-82475be89dd0`.
 
 ## What is now implemented locally
 
