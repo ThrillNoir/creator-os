@@ -1,9 +1,12 @@
 # THOT OS rebuild cutover
 
-Status: Phase 2B staging release and the Stage 3 Growth Insights staging
-worker rollout were completed on 2026-08-17. No custom domain, real creator
+Status: Phase 2B and Stage 3A staging releases were completed on 2026-08-17.
+Stage 3B was deployed to staging on 2026-08-18. No custom domain, real creator
 public profile, social post, social account, or Dropbox object was changed by
-this release.
+this release. Stage 3B's first scheduled provider read failed safely because a
+legacy connection scope differed from the reconstructed scope; the scheduler
+now uses the recorded creator-scoped provider identifier and awaits its bounded
+retry.
 
 ## Staging execution record
 
@@ -29,6 +32,12 @@ this release.
   `cc90b550-9142-45a3-b04d-d00244d2fb61`. The latter received authenticated
   browser verification without starting an OAuth flow or returning application
   data to an unauthenticated request.
+- Stage 3B receipts are stored in
+  `/Users/thotos/THOT-OS-PHASE2A-RELEASES/staging-worker-rollout-2026-08-18/`:
+  `stage3b-0037-oauth-plan.json`, the checksum-bound staging export and
+  `stage3b-0037-oauth-apply.receipt.json`, followed by `stage3b-web.json`,
+  `stage3b-public-links.json`, and `stage3b-instagram.json`. The current
+  scheduler repair is Worker version `9c4e46a6-8e99-40ab-8dfb-82475be89dd0`.
 
 ## What is now implemented locally
 
