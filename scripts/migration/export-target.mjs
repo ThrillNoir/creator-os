@@ -5,7 +5,6 @@ import Database from "better-sqlite3";
 import { migrationState, validateTargetAuthority, verifyExpectedMigrations } from "./reconciliation-lib.mjs";
 import { assertExactMigrationHistory, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateReleaseExportPlan } from "../bounded-d1-migrations-lib.mjs";
 import { projectRoot } from "../deployment-preflight.mjs";
-import { readD1ReadTokenFromKeychain } from "../service-auth-activate.mjs";
 
 const cloudflareEnvironmentOverride = /^(?:CLOUDFLARE_|CF_|WRANGLER_)/;
 
@@ -34,14 +33,16 @@ function readApprovedPlan(planPath) {
 }
 
 /**
- * A D1 export is read-only, but it still needs an authenticated Wrangler
- * process. Read the scoped credential directly from Keychain, discard any
- * inherited Cloudflare/Wrangler overrides, and expose it only to that child.
+ * D1 export is a read-only operation but Cloudflare implements it as a POST
+ * control-plane request. The separate D1-read credential is therefore useful
+ * for planning only; it cannot authorize the export endpoint. Use the
+ * already-approved Wrangler OAuth keyring for this exact command, strip every
+ * inherited Cloudflare override, and never inject a raw bearer into the child.
  */
-export function readOnlyD1ExportEnvironment({ accountId, baseEnvironment = process.env, readToken = readD1ReadTokenFromKeychain } = {}) {
+export function readOnlyD1ExportEnvironment({ accountId, baseEnvironment = process.env } = {}) {
   if (typeof accountId !== "string" || accountId === "") throw new Error("A staging account ID is required for the read-only D1 export.");
   const environment = Object.fromEntries(Object.entries(baseEnvironment).filter(([key]) => !cloudflareEnvironmentOverride.test(key)));
-  return { ...environment, CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: readToken() };
+  return { ...environment, CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_AUTH_USE_KEYRING: "true" };
 }
 
 function receiptFor({ target, plan, preMigrationState, sqlPath, parsePath }) {
