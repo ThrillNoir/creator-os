@@ -31,8 +31,21 @@ test("growth insights ignore imports and never replace incomplete official metri
   assert.equal(result.summary.officialMedia, 2);
   assert.equal(result.summary.completeMetricMedia, 1);
   assert.equal(result.summary.metricCoveragePercent, 50);
+  assert.deepEqual(result.summary.dataQuality, ["official", "incomplete"]);
   assert.match(result.recommendations.find((item) => item.id === "metric_coverage").summary, /excluded from the comparison/);
   assert.equal(result.recommendations.some((item) => item.id === "format_repeat"), false);
+});
+
+test("growth insights label stale and unavailable evidence without making it actionable", () => {
+  const unavailable = buildGrowthInsights({ observations: [], generatedAt: "2026-08-17T10:00:00.000Z" });
+  assert.deepEqual(unavailable.summary.dataQuality, ["unavailable"]);
+  const stale = buildGrowthInsights({
+    observations: [observation({ collected_at: "2026-07-01T10:00:00.000Z" })],
+    generatedAt: "2026-08-17T10:00:00.000Z",
+  });
+  assert.deepEqual(stale.summary.dataQuality, ["official", "stale"]);
+  assert.equal(stale.recommendations.some((item) => item.id === "refresh_official_data"), true);
+  assert.equal(stale.recommendations.every((item) => item.actionBoundary === "human_review_only"), true);
 });
 
 test("growth insight evidence exposes only HTTPS Instagram media permalinks", () => {

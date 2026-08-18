@@ -101,6 +101,15 @@ export default {
     if (segments.length === 1 && CREATOR_SLUG.test(segments[0])) {
       const snapshot = await loadSnapshot(env, segments[0]);
       if (!snapshot) return textResponse("Not found", 404);
+      if (request.method === "GET") {
+        try {
+          // A profile view is counted without storing a visitor ID, IP address,
+          // user agent, referrer, or any other visitor-level dimension.
+          env.LINK_EVENTS.writeDataPoint({ indexes: [snapshot.creator.slug], blobs: ["profile_view"], doubles: [1] });
+        } catch (error) {
+          console.warn(JSON.stringify({ event: "public_profile_analytics_write_failed", creatorSlug: snapshot.creator.slug, message: error instanceof Error ? error.message : "unknown" }));
+        }
+      }
       const body = renderProfile(snapshot);
       if (request.method === "HEAD") return new Response(null, { status: 200, headers: { ...securityHeaders(), "cache-control": "public, max-age=60" } });
       return new Response(body, { headers: { ...securityHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });

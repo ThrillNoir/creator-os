@@ -16,6 +16,10 @@ function confidenceLabel(value: InsightConfidence) {
   return value === "insufficient" ? "Insufficient evidence" : value[0].toUpperCase() + value.slice(1) + " confidence";
 }
 
+function qualityLabel(value: "official" | "incomplete" | "stale" | "unavailable") {
+  return value[0].toUpperCase() + value.slice(1);
+}
+
 export default async function GrowthPage() {
   const context = await requireCreatorContext();
   const insights = await getGrowthInsights(context.creator.creator_id);
@@ -26,6 +30,7 @@ export default async function GrowthPage() {
       <article><span>Complete metric sets</span><strong>{insights.summary.completeMetricMedia}</strong><small>Views plus likes, comments, saves and shares</small></article>
       <article><span>Metric coverage</span><strong>{insights.summary.metricCoveragePercent === null ? "—" : `${insights.summary.metricCoveragePercent}%`}</strong><small>Missing values are never converted to zero</small></article>
       <article><span>Evidence confidence</span><strong>{confidenceLabel(insights.summary.confidence)}</strong><small>Latest observation {date(insights.summary.latestObservedAt)}</small></article>
+      <article><span>Data quality</span><strong>{insights.summary.dataQuality.map(qualityLabel).join(" · ")}</strong><small>Official provider data stays distinct from incomplete or stale evidence</small></article>
     </section>
 
     <section className="panel growth-method">

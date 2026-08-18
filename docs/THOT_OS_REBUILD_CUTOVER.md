@@ -14,8 +14,8 @@ this release.
   Analytics Engine dataset are deployed. The public Worker binds only KV,
   Analytics Engine, and static assets; it has no D1 or private R2 binding.
 - Link analytics use the public creator slug as Analytics Engine's tenant index.
-  The click event contains no visitor identifier, private creator data, or
-  destination query-string telemetry.
+  Aggregate profile-view and link-click events contain no visitor identifier,
+  private creator data, or destination query-string telemetry.
 - A synthetic SFW profile using only `example.com` completed draft → explicit
   approval → publish Workflow → KV projection → public render → transparent
   click → withdrawal Workflow. The private D1 and KV synthetic rows were then
@@ -62,6 +62,15 @@ this release.
   approved version, and makes a public slug immutable after first publication.
   The public-control Worker also has a separate durable withdrawal Workflow:
   it removes the KV projection before marking the private profile paused.
+- `0037` records each creator-scoped Instagram analytics attempt in a separate
+  durable ledger. The analytics-only route and bounded cron selector do not
+  read Instagram messages, change account state, or publish. A single active
+  provider read is allowed per creator; abandoned attempts and failures are
+  retained and become eligible for retry after 15 minutes.
+- Public-link analytics now count aggregate profile views as well as approved
+  link clicks. Neither event contains visitor-level data, and neither is
+  attributed to Instagram content without a future explicit privacy-reviewed
+  contract.
 - The canonical internal-service contract adds a fifth, independently revocable
   principal (`thot-os-web-public-links`), granted only
   `public.profile.publish` and `public.profile.withdraw` for explicitly named
@@ -121,6 +130,10 @@ verified first. Their source remains frozen as migration/reference material.
 9. Obtain written content/destination compatibility confirmation for the
    selected public domain and social platforms. Then attach the custom domain,
    enable WAF/rate limits, deploy gradually, and run public smoke tests.
+10. Release `0037` before the analytics-only scheduler/web changes. Verify a
+    manual analytics refresh through authenticated staging when a human is
+    ready to request a provider read, then inspect the collection receipt and
+    metric observations. Do not refresh messages as part of that check.
 
 ## Acceptance evidence
 

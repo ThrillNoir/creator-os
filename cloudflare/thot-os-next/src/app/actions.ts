@@ -662,11 +662,10 @@ export async function startInstagramReconnectAction() {
 export async function refreshInstagramDataAction() {
   const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
-  const response = await fetchInternalService(env, "instagram", "instagram.sync.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const response = await fetchInternalService(env, "instagram", "instagram.sync.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/analytics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; errors?: string[]; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.errors?.join(" ") || result.error || "Instagram data could not be refreshed.");
   revalidatePath("/operations");
-  revalidatePath("/messages");
   redirect("/operations?platform=instagram&section=analytics&saved=refreshed");
 }
 

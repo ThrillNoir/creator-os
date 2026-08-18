@@ -7,6 +7,7 @@ The Stage 3 Growth Insights page is a private, creator-scoped read model. It hel
 - Latest observation for each Instagram media ID from `instagram_media_metric_observations`.
 - Only rows whose `source` is `instagram_api` are used. Creator imports and unknown sources are excluded from the comparison.
 - Each recommendation records the observation timestamp, metric sample, confidence, a recheck date, and the observed media permalink when the provider supplied one. That permalink is the source URL for the individual evidence item.
+- Every manual or scheduled analytics collection receives a creator-scoped receipt in `instagram_analytics_collection_runs`. Failed or abandoned reads are retried by the bounded cron selector after a 15-minute backoff; publishing runs and message syncs are separate ledgers.
 
 ## Metric definition and guardrails
 
@@ -21,3 +22,9 @@ Confidence is based on complete official media count: fewer than 6 is insufficie
 The page and `GET /api/growth/insights` endpoint are read-only. They do not like, comment, follow, message, create, schedule, approve, publish, or alter any public profile. A recommendation can only be considered by a human in the existing approval workflow.
 
 Link-in-bio clicks and verified downstream conversion receipts remain separate evidence streams. They are not attributed to an Instagram media item unless a future, explicit, privacy-reviewed attribution contract records that linkage.
+
+## Refresh and public-link collection
+
+The private **Refresh official analytics** control calls only the verified Instagram analytics endpoint. It does not inspect messages, alter the account, follow, like, comment, create content, schedule, approve, or publish. The one-minute scheduler selects at most one creator for analytics collection at a time; the normal six-hour freshness interval is retained unless a human explicitly requests a manual refresh.
+
+The isolated public link Worker records only aggregate `profile_view` and `link_click` event counts in Analytics Engine. The public creator slug is the tenant index. It intentionally records no visitor ID, IP address, user agent, referrer, or destination URL beyond the already-approved destination host. Analytics Engine data stays separate from Instagram evidence and from any future conversion attribution contract.

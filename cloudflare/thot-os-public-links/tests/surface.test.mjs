@@ -29,7 +29,9 @@ test("public profiles render an approved KV projection without exposing source m
   assert.match(body, /Adelaide &lt;safe&gt;/);
   assert.match(body, /Official &lt;site&gt;/);
   assert.doesNotMatch(body, /destinationUrl|publishedVersionId/);
-  assert.equal(events.length, 0);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].indexes, ["adelaide"]);
+  assert.deepEqual(events[0].blobs, ["profile_view"]);
   assert.match(response.headers.get("content-security-policy"), /default-src 'none'/);
 });
 

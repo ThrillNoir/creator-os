@@ -47,6 +47,7 @@ export type GrowthInsights = {
     metricCoveragePercent: number | null;
     latestObservedAt: string | null;
     confidence: InsightConfidence;
+    dataQuality: Array<"official" | "incomplete" | "stale" | "unavailable">;
   };
   recommendations: GrowthRecommendation[];
 };
@@ -166,6 +167,15 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
   const recheckAt = afterDays(latestObservedAt, RECHECK_AFTER_DAYS);
   const recommendations: GrowthRecommendation[] = [];
   const baseEvidence = evidence({ latest, officialMedia: official.length, completeMetricMedia: scored.length, sampleSize: scored.length });
+  const latestTimestamp = observationTime(latestObservedAt);
+  const generatedTimestamp = observationTime(generatedAt);
+  const dataQuality: GrowthInsights["summary"]["dataQuality"] = !official.length
+    ? ["unavailable"]
+    : [
+      "official",
+      ...(scored.length < official.length ? ["incomplete" as const] : []),
+      ...(latestTimestamp !== null && generatedTimestamp !== null && generatedTimestamp - latestTimestamp > STALE_AFTER_DAYS * 86_400_000 ? ["stale" as const] : []),
+    ];
 
   if (!official.length) {
     recommendations.push({
@@ -179,8 +189,6 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
       actionBoundary: "human_review_only",
     });
   } else {
-    const latestTimestamp = observationTime(latestObservedAt);
-    const generatedTimestamp = observationTime(generatedAt);
     if (latestTimestamp !== null && generatedTimestamp !== null && generatedTimestamp - latestTimestamp > STALE_AFTER_DAYS * 86_400_000) {
       recommendations.push({
         id: "refresh_official_data",
@@ -264,6 +272,7 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
       metricCoveragePercent: official.length ? Math.round((scored.length / official.length) * 100) : null,
       latestObservedAt,
       confidence,
+      dataQuality,
     },
     recommendations,
   };

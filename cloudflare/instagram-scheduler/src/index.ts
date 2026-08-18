@@ -267,6 +267,18 @@ async function currentInstagramConnection(env: Env, creatorId: string) {
   return connection;
 }
 
+// Analytics uses the verified Instagram account, not the messaging inbox.
+// Keeping this lookup separate means a metric refresh cannot require or touch
+// a message subscription or message connection.
+async function currentInstagramAnalyticsConnection(env: Env, creatorId: string) {
+  const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
+    FROM provider_connections pc JOIN operational_accounts oa ON oa.creator_id=pc.creator_id AND oa.platform='instagram'
+    WHERE pc.creator_id=? AND pc.service='instagram' ORDER BY oa.label LIMIT 1`)
+    .bind(creatorId).first<{ connected_account_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
+  if (!connection || connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
+  return connection;
+}
+
 async function currentDropboxConnection(env: Env, creatorId: string) {
   const connection = await env.DB.prepare(`SELECT connected_account_id,status
     FROM provider_connections
@@ -383,7 +395,7 @@ async function syncInstagramMessages(env: Env, creatorId: string, force = false)
 }
 
 async function syncInstagramAnalytics(env: Env, creatorId: string, force = false) {
-  const connection = await currentInstagramConnection(env, creatorId);
+  const connection = await currentInstagramAnalyticsConnection(env, creatorId);
   const state = await env.DB.prepare("SELECT last_analytics_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_analytics_sync_at: string | null }>();
   if (!force && state?.last_analytics_sync_at) {
     const last = new Date(`${state.last_analytics_sync_at.replace(" ", "T")}Z`).getTime();
@@ -443,8 +455,42 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
       console.warn(JSON.stringify({ event: "instagram_receipt_backfill_failed", postId: post.id, message: error instanceof Error ? error.message : "Lookup failed" }));
     }
   }
-  await env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_analytics_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_analytics_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.messaging_connection_id).run();
+  await env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_analytics_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_analytics_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.account_id).run();
   return { skipped: false, mediaCount: mediaItems.length };
+}
+
+type AnalyticsCollectionTrigger = "manual" | "cron";
+
+async function collectInstagramAnalytics(env: Env, creatorId: string, triggerType: AnalyticsCollectionTrigger, force = false) {
+  const runId = crypto.randomUUID();
+  const claim = await env.DB.prepare(`INSERT OR IGNORE INTO instagram_analytics_collection_runs
+    (id,creator_id,trigger_type,status,force_requested)
+    VALUES (?,?,?,'running',?)`).bind(runId, creatorId, triggerType, force ? 1 : 0).run();
+  if (!claim.meta.changes) {
+    console.log(JSON.stringify({ event: "instagram_analytics_collection_skipped", creatorId, triggerType, reason: "collection_in_progress" }));
+    return { ok: true, runId: null, status: "skipped", skipped: true, mediaCount: 0, reason: "collection_in_progress" };
+  }
+  try {
+    const result = await syncInstagramAnalytics(env, creatorId, force);
+    const status = result.skipped ? "skipped" : "completed";
+    await env.DB.prepare(`UPDATE instagram_analytics_collection_runs
+      SET status=?,media_count=?,completed_at=CURRENT_TIMESTAMP,error=NULL
+      WHERE id=? AND creator_id=? AND status='running'`)
+      .bind(status, result.mediaCount, runId, creatorId).run();
+    console.log(JSON.stringify({ event: "instagram_analytics_collection", runId, creatorId, triggerType, status, mediaCount: result.mediaCount }));
+    return { ok: true, runId, status, ...result };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Instagram analytics collection failed.";
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE instagram_analytics_collection_runs
+        SET status='failed',completed_at=CURRENT_TIMESTAMP,error=?
+        WHERE id=? AND creator_id=? AND status='running'`).bind(message.slice(0, 2000), runId, creatorId),
+      env.DB.prepare("UPDATE instagram_sync_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?")
+        .bind(message.slice(0, 2000), creatorId),
+    ]);
+    console.warn(JSON.stringify({ event: "instagram_analytics_collection_failed", runId, creatorId, triggerType, message }));
+    throw error;
+  }
 }
 
 async function syncInstagram(env: Env, creatorId: string, forceAnalytics = false) {
@@ -855,6 +901,10 @@ const routeCapabilities: Record<string, string> = {
   "POST /messages/instagram/send": "instagram.messages.write",
   "POST /messages/instagram/seen": "instagram.messages.write",
   "POST /sync": "instagram.sync.execute",
+  // The existing, creator-scoped data-sync grant permits this strictly
+  // narrower analytics-only receiver.  No new bearer or capability grant is
+  // introduced for a read-only route.
+  "POST /sync/analytics": "instagram.sync.execute",
   "POST /sync/messages": "instagram.messages.sync",
   "GET /status": "instagram.status.read",
 };
@@ -870,14 +920,27 @@ async function authenticatedCreatorId(request: Request, env: Env, url: URL, capa
 }
 
 async function syncNextCreator(env: Env) {
+  // A Worker can terminate before a promise finishes.  Record the abandoned
+  // attempt, then select a creator independently so the next cron can retry
+  // safely.  The short failure backoff avoids hammering a provider that is
+  // returning a persistent error.
+  await env.DB.prepare(`UPDATE instagram_analytics_collection_runs
+    SET status='failed',completed_at=CURRENT_TIMESTAMP,error='Collection attempt exceeded 15 minutes; eligible for retry.'
+    WHERE status='running' AND unixepoch(started_at) <= unixepoch(CURRENT_TIMESTAMP)-900`).run();
   const creator = await env.DB.prepare(`SELECT pc.creator_id
     FROM provider_connections pc
     LEFT JOIN instagram_sync_state state ON state.creator_id=pc.creator_id
     WHERE pc.service='instagram' AND pc.status='active'
+      AND (state.last_analytics_sync_at IS NULL OR unixepoch(state.last_analytics_sync_at)<=unixepoch(CURRENT_TIMESTAMP)-21600)
+      AND NOT EXISTS (
+        SELECT 1 FROM instagram_analytics_collection_runs failed
+        WHERE failed.creator_id=pc.creator_id AND failed.status='failed'
+          AND unixepoch(failed.started_at)>unixepoch(CURRENT_TIMESTAMP)-900
+      )
     ORDER BY COALESCE(state.last_analytics_sync_at,'1970-01-01') ASC, pc.creator_id ASC
     LIMIT 1`).first<{ creator_id: string }>();
   if (!creator) return { skipped: true, reason: "no_active_creator" };
-  return syncInstagram(env, creator.creator_id);
+  return collectInstagramAnalytics(env, creator.creator_id, "cron");
 }
 
 export default {
@@ -900,6 +963,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/messages/instagram/seen") return markInstagramThreadSeen(request, env);
       if (request.method === "POST" && url.pathname === "/run") return new Response("Not found", { status: 404 });
       if (request.method === "POST" && url.pathname === "/sync") return Response.json(await syncInstagram(env, await requestedCreatorId(request), true));
+      if (request.method === "POST" && url.pathname === "/sync/analytics") return Response.json(await collectInstagramAnalytics(env, await requestedCreatorId(request), "manual", true));
       if (request.method === "POST" && url.pathname === "/sync/messages") return Response.json(await syncInstagramMessagesOnly(env, await requestedCreatorId(request)));
       if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);
       return new Response("Not found", { status: 404 });

@@ -139,6 +139,15 @@ export interface InstagramSyncState {
   updated_at: string;
 }
 
+export interface InstagramAnalyticsCollectionRun {
+  status: "running" | "completed" | "skipped" | "failed";
+  trigger_type: "manual" | "cron";
+  media_count: number;
+  started_at: string;
+  completed_at: string | null;
+  error: string | null;
+}
+
 type EligibleCount = { destination: Destination; assets: number };
 type PostCount = { platform: OperationPlatform; upcoming: number; past: number };
 
@@ -198,12 +207,13 @@ export async function getInstagramSchedulerStatus(creatorId: string): Promise<Pl
 
 export async function getInstagramAnalytics(creatorId: string) {
   const { DB } = cloudflareEnv();
-  const [snapshot, media, syncState] = await Promise.all([
+  const [snapshot, media, syncState, collection] = await Promise.all([
     DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsSnapshot>(),
     DB.prepare("SELECT media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at FROM instagram_media_metrics WHERE creator_id=? ORDER BY COALESCE(published_at,collected_at) DESC LIMIT 50").bind(creatorId).all<InstagramMediaMetric>(),
     DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<InstagramSyncState>(),
+    DB.prepare("SELECT status,trigger_type,media_count,started_at,completed_at,error FROM instagram_analytics_collection_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsCollectionRun>(),
   ]);
-  return { snapshot, media: media.results, syncState };
+  return { snapshot, media: media.results, syncState, collection };
 }
 
 export async function getVaultOperations(creatorId: string) {
