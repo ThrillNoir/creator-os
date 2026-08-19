@@ -51,7 +51,11 @@ async function baselineSql() {
         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name<>'d1_migrations'
         ORDER BY CASE type WHEN 'table' THEN 1 WHEN 'index' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, name`).all();
       const migrationDigests = await Promise.all(names.map(async (name) => `${name} ${checksum(await readFile(path.join(migrationsRoot, name), "utf8"))}`));
-      return `-- THOT OS schema-only production baseline.\n-- Generated from the complete local D1 migration replay; it contains no creator, account, content, consent, credential, or operator seed data.\n-- Do not apply this file to an existing D1 database.  Use it only when provisioning a new production database under the cutover runbook.\n-- Source migration checksums:\n${migrationDigests.map((line) => `-- ${line}`).join("\n")}\n\nPRAGMA foreign_keys = ON;\n\n${rows.map((row) => `${row.sql};`).join("\n\n")}\n`;
+      const migrationLedger = [
+        "CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY, name TEXT, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);",
+        ...names.map((name, index) => `INSERT INTO d1_migrations (id, name) VALUES (${index + 1}, '${name.replaceAll("'", "''")}');`),
+      ].join("\n");
+      return `-- THOT OS schema-only production baseline.\n-- Generated from the complete local D1 migration replay; it contains no creator, account, content, consent, credential, or operator seed data.\n-- The d1_migrations rows are schema provenance only, so future migrations begin at the correct boundary.\n-- Do not apply this file to an existing D1 database.  Use it only when provisioning a new production database under the cutover runbook.\n-- Source migration checksums:\n${migrationDigests.map((line) => `-- ${line}`).join("\n")}\n\nPRAGMA foreign_keys = ON;\n\n${migrationLedger}\n\n${rows.map((row) => `${row.sql};`).join("\n\n")}\n`;
     } finally {
       database.close();
     }

@@ -1,5 +1,6 @@
 -- THOT OS schema-only production baseline.
 -- Generated from the complete local D1 migration replay; it contains no creator, account, content, consent, credential, or operator seed data.
+-- The d1_migrations rows are schema provenance only, so future migrations begin at the correct boundary.
 -- Do not apply this file to an existing D1 database.  Use it only when provisioning a new production database under the cutover runbook.
 -- Source migration checksums:
 -- 0001_adelaide_library.sql 10b2a42251bcb8c4e0914ee14ae6e63a6e16bf92008dc19cde1e9e3fc6153dc6
@@ -43,6 +44,47 @@
 -- 0039_production_environment_audit_contract.sql 132aca9a09b09bfb349bb4c5bcef7923e975a732f1eecdd3d018dbd45953ad9c
 
 PRAGMA foreign_keys = ON;
+
+CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY, name TEXT, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
+INSERT INTO d1_migrations (id, name) VALUES (1, '0001_adelaide_library.sql');
+INSERT INTO d1_migrations (id, name) VALUES (2, '0002_library_classification_events.sql');
+INSERT INTO d1_migrations (id, name) VALUES (3, '0003_operations_foundation.sql');
+INSERT INTO d1_migrations (id, name) VALUES (4, '0004_reddit_scheduler.sql');
+INSERT INTO d1_migrations (id, name) VALUES (5, '0005_reddit_queue_controls.sql');
+INSERT INTO d1_migrations (id, name) VALUES (6, '0006_instagram_operations.sql');
+INSERT INTO d1_migrations (id, name) VALUES (7, '0007_vault_bridge.sql');
+INSERT INTO d1_migrations (id, name) VALUES (8, '0008_reddit_native_bridge.sql');
+INSERT INTO d1_migrations (id, name) VALUES (9, '0009_unified_messages.sql');
+INSERT INTO d1_migrations (id, name) VALUES (10, '0010_telegram_connector.sql');
+INSERT INTO d1_migrations (id, name) VALUES (11, '0011_instagram_completion.sql');
+INSERT INTO d1_migrations (id, name) VALUES (12, '0012_instagram_replies.sql');
+INSERT INTO d1_migrations (id, name) VALUES (13, '0013_instagram_reply_window.sql');
+INSERT INTO d1_migrations (id, name) VALUES (14, '0014_instagram_message_subscription.sql');
+INSERT INTO d1_migrations (id, name) VALUES (15, '0015_message_attachments.sql');
+INSERT INTO d1_migrations (id, name) VALUES (16, '0016_telegram_fansly_messages.sql');
+INSERT INTO d1_migrations (id, name) VALUES (17, '0017_reddit_community_events.sql');
+INSERT INTO d1_migrations (id, name) VALUES (18, '0018_creator_identity_profiles.sql');
+INSERT INTO d1_migrations (id, name) VALUES (19, '0019_actor_role_audit.sql');
+INSERT INTO d1_migrations (id, name) VALUES (20, '0020_actor_role_contract.sql');
+INSERT INTO d1_migrations (id, name) VALUES (21, '0021_creator_dropbox_source.sql');
+INSERT INTO d1_migrations (id, name) VALUES (22, '0022_asset_preview_queue.sql');
+INSERT INTO d1_migrations (id, name) VALUES (23, '0023_fansly_account_invariant.sql');
+INSERT INTO d1_migrations (id, name) VALUES (24, '0024_finance_foundation.sql');
+INSERT INTO d1_migrations (id, name) VALUES (25, '0025_reddit_composio_native_api.sql');
+INSERT INTO d1_migrations (id, name) VALUES (26, '0026_retire_reddit_browser_bridge.sql');
+INSERT INTO d1_migrations (id, name) VALUES (27, '0027_reddit_post_flairs.sql');
+INSERT INTO d1_migrations (id, name) VALUES (28, '0028_migration_ledger.sql');
+INSERT INTO d1_migrations (id, name) VALUES (29, '0029_service_principal_capabilities.sql');
+INSERT INTO d1_migrations (id, name) VALUES (30, '0030_canonical_control_plane.sql');
+INSERT INTO d1_migrations (id, name) VALUES (31, '0031_service_auth_activation_support.sql');
+INSERT INTO d1_migrations (id, name) VALUES (32, '0032_service_auth_compatibility.sql');
+INSERT INTO d1_migrations (id, name) VALUES (33, '0033_tenant_integrity_and_quarantine.sql');
+INSERT INTO d1_migrations (id, name) VALUES (34, '0034_public_profiles_and_approved_links.sql');
+INSERT INTO d1_migrations (id, name) VALUES (35, '0035_delivery_outbox_and_metric_observations.sql');
+INSERT INTO d1_migrations (id, name) VALUES (36, '0036_public_profile_authoring_guards.sql');
+INSERT INTO d1_migrations (id, name) VALUES (37, '0037_instagram_analytics_collection_runs.sql');
+INSERT INTO d1_migrations (id, name) VALUES (38, '0038_instagram_analytics_metric_coverage.sql');
+INSERT INTO d1_migrations (id, name) VALUES (39, '0039_production_environment_audit_contract.sql');
 
 CREATE TABLE _cf_METADATA (
         key INTEGER PRIMARY KEY,
