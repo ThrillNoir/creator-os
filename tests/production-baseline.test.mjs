@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { targetFor } from "../scripts/bounded-d1-migrations-lib.mjs";
+import { readJsoncFile, runPreflight } from "../scripts/deployment-preflight.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const migrationsRoot = path.join(root, "cloudflare/thot-os-app/migrations");
@@ -39,4 +40,18 @@ test("a provisioned production foundation does not widen the staging-only migrat
     migrationsDir: "../thot-os-app/migrations",
   });
   assert.throws(() => targetFor({ environment: "production", registry, policy: { allowedEnvironments: ["staging"] } }), /explicit staging allow-list/);
+});
+
+test("production preflight accepts only the route-less public-links foundation", async () => {
+  const outcome = runPreflight({
+    environment: "production",
+    component: "publicLinks",
+    all: false,
+    requireClean: false,
+    json: true,
+    registry: path.join(root, "config/deployments.json"),
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.errors));
+  const config = readJsoncFile(path.join(root, "cloudflare/thot-os-public-links/wrangler.production.jsonc"));
+  assert.equal(config.workers_dev, false);
 });

@@ -60,6 +60,7 @@ function configResources(config) {
   return {
     d1: (config.d1_databases ?? []).map((binding) => ({ name: binding.database_name, id: binding.database_id, migrationsDir: binding.migrations_dir })),
     r2: (config.r2_buckets ?? []).map((binding) => binding.bucket_name),
+    analytics: (config.analytics_engine_datasets ?? []).map((binding) => binding.dataset),
     queues: [
       ...(config.queues?.producers ?? []).map((binding) => binding.queue),
       ...(config.queues?.consumers ?? []).map((binding) => binding.queue),
@@ -74,6 +75,7 @@ function resourceNames(environment) {
   return {
     d1: new Set(Object.keys(environment.resources?.d1 ?? {})),
     r2: new Set(environment.resources?.r2 ?? []),
+    analytics: new Set(environment.resources?.analytics ?? []),
     queues: new Set(environment.resources?.queues ?? []),
     workers: new Set(Object.values(environment.resources?.workers ?? {})),
   };
@@ -197,6 +199,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
     const checks = [
       ["D1", resources.d1.map((binding) => binding.name), currentResources.d1],
       ["R2", resources.r2, currentResources.r2],
+      ["Analytics Engine", resources.analytics, currentResources.analytics],
       ["Queue", resources.queues, currentResources.queues],
       ["service Worker", Object.values(resources.services), currentResources.workers],
     ];

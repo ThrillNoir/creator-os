@@ -202,9 +202,9 @@
     "production": {
       "kind": "cloudflare",
       "provisioned": true,
-      "deployable": false,
+      "deployable": true,
       "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
-      "description": "Stage 5 production foundations only. D1, private R2 and public-link KV are isolated from staging; no Worker, route, custom domain, secret, social job or creator profile is deployed.",
+      "description": "Stage 5 foundations only. The public-links Worker is route-less and contains no profile projection; D1, private R2, KV and Analytics Engine are isolated from staging. No custom domain, secret, social job or creator profile is deployed.",
       "resources": {
         "d1": {
           "thot-os-production": { "id": "4a353a1b-4a28-4d85-ab9a-776cbb59d3b2", "migrationsDir": "../thot-os-app/migrations" }
@@ -212,10 +212,30 @@
         "r2": ["thot-os-media-production", "thot-os-previews-production"],
         "queues": [],
         "kv": ["thot-os-public-links-production"],
-        "analytics": [],
-        "workers": {}
+        "analytics": ["thot-os-public-link-events-production"],
+        "workers": {
+          "publicLinks": "thot-os-public-links-production"
+        }
       },
-      "components": {}
+      "components": {
+        "publicLinks": {
+          "service": "thot-os-public-links",
+          "config": "cloudflare/thot-os-public-links/wrangler.production.jsonc",
+          "directory": "cloudflare/thot-os-public-links",
+          "worker": "thot-os-public-links-production",
+          "deployable": true,
+          "productionBoundary": "Route-less foundation only. The Worker has no D1 or private R2 binding, no custom domain and no creator profile projection. A public route requires a separately approved production launch release.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": [],
+            "r2": [],
+            "queues": [],
+            "kv": ["thot-os-public-links-production"],
+            "analytics": ["thot-os-public-link-events-production"],
+            "services": {}
+          }
+        }
+      }
     }
   }
 }
