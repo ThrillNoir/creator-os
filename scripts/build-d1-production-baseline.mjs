@@ -48,7 +48,7 @@ async function baselineSql() {
     const database = new Database(databasePath, { readonly: true });
     try {
       const rows = database.prepare(`SELECT type,name,sql FROM sqlite_master
-        WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name<>'d1_migrations'
+        WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name<>'d1_migrations'
         ORDER BY CASE type WHEN 'table' THEN 1 WHEN 'index' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, name`).all();
       const migrationDigests = await Promise.all(names.map(async (name) => `${name} ${checksum(await readFile(path.join(migrationsRoot, name), "utf8"))}`));
       const migrationLedger = [

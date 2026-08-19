@@ -86,11 +86,6 @@ INSERT INTO d1_migrations (id, name) VALUES (37, '0037_instagram_analytics_colle
 INSERT INTO d1_migrations (id, name) VALUES (38, '0038_instagram_analytics_metric_coverage.sql');
 INSERT INTO d1_migrations (id, name) VALUES (39, '0039_production_environment_audit_contract.sql');
 
-CREATE TABLE _cf_METADATA (
-        key INTEGER PRIMARY KEY,
-        value BLOB
-      );
-
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
   account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,

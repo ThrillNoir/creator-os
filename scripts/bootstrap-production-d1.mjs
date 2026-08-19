@@ -76,7 +76,7 @@ function parseExport(file) {
   const database = new Database(":memory:");
   try {
     database.exec(readFileSync(file, "utf8"));
-    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name);
+    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name").all().map((row) => row.name);
     return {
       tables,
       migrationRows: tables.includes("d1_migrations") ? database.prepare("SELECT id, name FROM d1_migrations ORDER BY id").all() : [],
