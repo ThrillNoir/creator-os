@@ -201,27 +201,19 @@
     },
     "production": {
       "kind": "cloudflare",
-      "provisioned": false,
+      "provisioned": true,
       "deployable": false,
-      "description": "Naming contract only. No production Cloudflare resource, account, credential, route or deployment exists.",
+      "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
+      "description": "Stage 5 production foundations only. D1, private R2 and public-link KV are isolated from staging; no Worker, route, custom domain, secret, social job or creator profile is deployed.",
       "resources": {
         "d1": {
-          "thot-os-production": { "id": null, "migrationsDir": "../thot-os-app/migrations" }
+          "thot-os-production": { "id": "4a353a1b-4a28-4d85-ab9a-776cbb59d3b2", "migrationsDir": "../thot-os-app/migrations" }
         },
-        "r2": ["thot-os-media-production", "thot-os-previews-production", "thot-os-creator-intake-production", "thot-os-creator-packages-production"],
-        "queues": ["thot-os-intake-production", "thot-os-ai-jobs-production", "thot-os-preview-production", "thot-os-preview-dlq-production"],
+        "r2": ["thot-os-media-production", "thot-os-previews-production"],
+        "queues": [],
         "kv": ["thot-os-public-links-production"],
-        "analytics": ["thot-os-public-link-events-production"],
-        "workers": {
-          "web": "thot-os-web-production",
-          "instagram": "thot-os-instagram-production",
-          "reddit": "thot-os-reddit-production",
-          "telegram": "thot-os-telegram-production",
-          "vault": "thot-os-vault-production",
-          "publicLinks": "thot-os-public-links-production",
-          "publicLinksControl": "thot-os-public-links-control-production",
-          "localNodeApi": "thot-os-local-node-api-production"
-        }
+        "analytics": [],
+        "workers": {}
       },
       "components": {}
     }

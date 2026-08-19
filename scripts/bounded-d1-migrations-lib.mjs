@@ -100,7 +100,6 @@ export function assertExactMigrationHistory(observed, expected, label = "Migrati
 
 export function targetFor({ environment, registry, policy }) {
   if (environment !== "staging" || !policy.allowedEnvironments?.includes(environment)) throw new Error("Bounded D1 migration execution is restricted to the explicit staging allow-list.");
-  if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for bounded staging migrations.");
   const target = registry?.environments?.staging;
   const entries = Object.entries(target?.resources?.d1 ?? {});
   if (!target?.provisioned || !target?.deployable || entries.length !== 1) throw new Error("Staging D1 target is ambiguous.");

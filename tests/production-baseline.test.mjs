@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
+import { targetFor } from "../scripts/bounded-d1-migrations-lib.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const migrationsRoot = path.join(root, "cloudflare/thot-os-app/migrations");
@@ -25,4 +26,17 @@ test("production baseline has no operational seed data and records complete D1 m
   } finally {
     db.close();
   }
+});
+
+test("a provisioned production foundation does not widen the staging-only migration executor", async () => {
+  const registry = JSON.parse(await readFile(path.join(root, "config/deployments.json"), "utf8"));
+  const target = targetFor({ environment: "staging", registry, policy: { allowedEnvironments: ["staging"] } });
+  assert.deepEqual(target, {
+    environment: "staging",
+    accountId: registry.environments.staging.accountId,
+    databaseName: "thot-os-staging",
+    databaseId: registry.environments.staging.resources.d1["thot-os-staging"].id,
+    migrationsDir: "../thot-os-app/migrations",
+  });
+  assert.throws(() => targetFor({ environment: "production", registry, policy: { allowedEnvironments: ["staging"] } }), /explicit staging allow-list/);
 });
