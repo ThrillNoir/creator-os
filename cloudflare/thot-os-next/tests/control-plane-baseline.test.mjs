@@ -46,3 +46,15 @@ test("canonical onboarding is agency-admin-only, idempotent and metadata-only", 
   assert.match(health, /SELECT name FROM d1_migrations/);
   assert.match(health, /bindings: \{ d1:/);
 });
+
+test("the agency overview turns live staging status into read-only navigation", async () => {
+  const page = await source("../src/app/page.tsx");
+  assert.match(page, /NEXT SAFE STEPS/);
+  assert.match(page, /They do not initiate a connection, refresh a provider, publish content or change Dropbox/);
+  assert.match(page, /href="\/accounts"/);
+  assert.match(page, /href="\/library"/);
+  assert.match(page, /href="\/operations"/);
+  assert.match(page, /href="\/growth"/);
+  assert.match(page, /href="\/creators"/);
+  assert.match(page, /failedDeliveries/);
+});
