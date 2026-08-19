@@ -1,8 +1,24 @@
 # Stage 4 production-readiness record
 
-Status: staging hardening in progress. Production is intentionally
-unprovisioned and no real creator route, custom domain, Dropbox object, social
-post, message, or account state is part of this stage.
+Status: staged on 2026-08-19; the first post-deploy scheduled metric-coverage
+receipt remains the final staging acceptance observation. Production is
+intentionally unprovisioned and no real creator route, custom domain, Dropbox
+object, social post, message, or account state is part of this stage.
+
+## Staging deployment evidence
+
+- `0038_instagram_analytics_metric_coverage.sql` is confirmed in
+  `thot-os-staging` through the bounded migration runner.
+- Instagram scheduler Worker version: `d5037e84-936f-4a9d-b477-607a29bd6803`.
+- Private Web Worker version: `78b9c6b6-c96a-4851-a19b-a3ca7192d7d3`.
+- The public, unauthenticated check is redirected by Cloudflare Access. The
+  release shell did not enter an email or login code, so authenticated visual
+  verification is intentionally pending a normal operator sign-in.
+- Aggregate D1 checks after deployment show zero new social posts, messages,
+  public-profile publications, analytics runs and analytics observations. The
+  updated scheduler therefore has not caused an unapproved provider read.
+- Bounded-plan, export, apply and deployment receipts are stored outside the
+  repository at `/Users/thotos/THOT-OS-PHASE2A-RELEASES/staging-worker-rollout-2026-08-19/`.
 
 ## Measurement coverage finding
 
