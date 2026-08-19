@@ -5,7 +5,7 @@ export type InternalServiceCapability =
   | "instagram.status.read" | "instagram.connection.manage" | "instagram.publish.execute" | "instagram.sync.execute" | "instagram.messages.sync" | "instagram.messages.write"
   | "reddit.status.read" | "reddit.connection.manage" | "reddit.communities.read" | "reddit.publish.execute"
   | "telegram.status.read" | "telegram.connection.manage" | "telegram.messages.sync" | "telegram.messages.write"
-  | "vault.catalogue.refresh"
+  | "vault.catalogue.refresh" | "vault.catalogue.connection.manage"
   | "public.profile.publish" | "public.profile.withdraw";
 
 const tokenKey: Record<InternalService, keyof CloudflareEnv> = {

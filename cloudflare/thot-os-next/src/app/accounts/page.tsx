@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, saveDropboxCatalogueSourceAction, startInstagramReconnectAction } from "@/app/actions";
+import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, saveDropboxCatalogueSourceAction, startDropboxReconnectAction, startInstagramReconnectAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
@@ -43,7 +43,7 @@ function instagramStatus(setup: InstagramSetup | null | undefined) {
   return "Connection required";
 }
 
-export default async function AccountsPage({ searchParams }: { searchParams: Promise<{ saved?: string }> }) {
+export default async function AccountsPage({ searchParams }: { searchParams: Promise<{ saved?: string; connectionError?: string }> }) {
   const [query, context] = await Promise.all([searchParams, requireCreatorContext()]);
   const creatorId = context.creator.creator_id;
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
@@ -69,8 +69,10 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     {query.saved === "fansly_profile_assigned" && <div className="success">Fansly Chrome profile assigned. Sign in natively, then confirm the visible identity.</div>}
     {query.saved === "fansly_identity_confirmed" && <div className="success">Fansly identity confirmed. You can now pair the assigned bridge and open the vault.</div>}
     {query.saved === "dropbox_source_saved" && <div className="success">Dropbox catalogue source saved. You can now refresh this creator&apos;s read-only catalogue from Content Library.</div>}
+    {query.saved === "dropbox_reconnected" && <div className="success">Dropbox authorization completed. Run Sync Dropbox to validate this creator&apos;s configured source and generate private previews.</div>}
+    {query.connectionError && <div className="connection-banner blocked"><div><strong>Dropbox connection needs attention</strong><span>{query.connectionError}</span></div></div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">DROPBOX</span><h2>Read-only catalogue source</h2><p>Record the Dropbox folder path used for catalogue reads and, if useful, the shared file or folder link for the team. THOT OS never edits, moves or deletes source media.</p></div><span>{dropbox?.dropbox_root ? "Source configured" : "Source required"}</span></div>
-      {canManageIdentity ? <form action={saveDropboxCatalogueSourceAction} className="inline-form dropbox-source-form"><label>Dropbox folder path<input name="dropboxRoot" required defaultValue={dropbox?.dropbox_root ?? ""} placeholder="/Creator OS/Creator name" autoComplete="off" /></label><label>Dropbox file or folder link <small>(reference only)</small><input name="dropboxLink" type="url" defaultValue={dropbox?.dropbox_link ?? ""} placeholder="https://www.dropbox.com/..." autoComplete="off" /></label><div className="section-divider"><span>The Dropbox link identifies the source for people; the folder path is used for the API catalogue read because a shared-link URL does not reliably include its Dropbox path.</span></div><button className="primary" type="submit">Save Dropbox source</button></form> : <div className="empty"><b>Dropbox source is not configured.</b><span>An agency administrator can add the creator&apos;s read-only Dropbox source.</span></div>}
+      {canManageIdentity ? <><form action={saveDropboxCatalogueSourceAction} className="inline-form dropbox-source-form"><label>Dropbox folder path<input name="dropboxRoot" required defaultValue={dropbox?.dropbox_root ?? ""} placeholder="/Creator OS/Creator name" autoComplete="off" /></label><label>Dropbox file or folder link <small>(reference only)</small><input name="dropboxLink" type="url" defaultValue={dropbox?.dropbox_link ?? ""} placeholder="https://www.dropbox.com/..." autoComplete="off" /></label><div className="section-divider"><span>The Dropbox link identifies the source for people; the folder path is used for the API catalogue read because a shared-link URL does not reliably include its Dropbox path.</span></div><button className="primary" type="submit">Save Dropbox source</button></form><div className="connection-steps"><section><span>1</span><div><h3>Reconnect the source account</h3><p>If the catalogue shows the wrong folder, open Dropbox&apos;s native sign-in and authorize the account that owns this creator&apos;s configured source. THOT OS never receives the password or edits the source files.</p><form action={startDropboxReconnectAction}><button className="secondary-action" type="submit">Reconnect Dropbox</button></form></div></section></div></> : <div className="empty"><b>Dropbox source is not configured.</b><span>An agency administrator can add the creator&apos;s read-only Dropbox source.</span></div>}
     </section>
     <section className="panel connection-setup">
       <div className="section-heading"><div><span className="eyebrow">INSTAGRAM</span><h2>Official Instagram connection</h2><p>Connect the creator&apos;s professional Instagram account through the approved provider. Connecting verifies the visible account identity; it does not create, schedule or publish content.</p></div><span>{instagramStatus(instagram)}</span></div>

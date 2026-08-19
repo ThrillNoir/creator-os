@@ -20,6 +20,7 @@ type PreviewQueueMessage = { creatorId: string; assetId: string; sourceRevision:
 type PreviewJobAsset = PreviewAsset & { dropbox_root: string; preview_r2_key: string | null; job_revision: string | null; job_status: string };
 
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
+const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
 const allowedOrigins = new Set(["https://fansly.com", "https://www.reddit.com", "https://reddit.com", "https://thot-os-staging.thot-os.workers.dev"]);
 
 function cors(request: Request) {
@@ -132,6 +133,38 @@ async function executeDropbox<T>(env: Env, creatorId: string, slug: string, args
   return executeDropboxForConnection<T>(env, await getDropboxConnection(env, creatorId), slug, args);
 }
 
+async function startDropboxReconnect(request: Request, env: Env) {
+  const input = await request.json().catch(() => null) as { creatorId?: unknown; callbackUrl?: unknown } | null;
+  const creatorId = typeof input?.creatorId === "string" ? input.creatorId.trim() : "";
+  const callbackUrl = typeof input?.callbackUrl === "string" ? input.callbackUrl.trim() : "";
+  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
+  let callback: URL;
+  try { callback = new URL(callbackUrl); } catch { return json(request, { ok: false, error: "invalid_callback" }, 400); }
+  if (callback.protocol !== "https:" || callback.username || callback.password) return json(request, { ok: false, error: "invalid_callback" }, 400);
+  let service;
+  try {
+    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue", "vault.catalogue.connection.manage");
+  } catch {
+    return json(request, { ok: false, error: "unauthorized" }, 401);
+  }
+  await internalServiceAuditStatement(env.DB, service, "/catalogue/dropbox/reconnect").run();
+  const connection = await getDropboxConnection(env, creatorId);
+  const response = await fetch(`${COMPOSIO_V3}/connected_accounts/${encodeURIComponent(connection.id)}/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
+    body: JSON.stringify({ redirect_url: callback.toString() }),
+  });
+  const payload = await response.json().catch(() => ({})) as { redirect_url?: unknown; error?: string | { message?: string } };
+  const redirectUrl = typeof payload.redirect_url === "string" ? payload.redirect_url : "";
+  let redirect: URL | null = null;
+  try { redirect = new URL(redirectUrl); } catch { /* validated below */ }
+  if (!response.ok || !redirect || redirect.protocol !== "https:" || redirect.username || redirect.password) {
+    const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
+    return json(request, { ok: false, error: message || "Dropbox reconnection could not be started." }, 502);
+  }
+  return json(request, { ok: true, redirectUrl: redirect.toString() });
+}
+
 async function executeReddit<T>(env: Env, creatorId: string, connectedAccountId: string, slug: string, args: Record<string, unknown>) {
   const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
     method: "POST",
@@ -209,6 +242,17 @@ async function refreshDropboxCatalogue(request: Request, env: Env) {
   const updates = files.map(({ entry, relativePath, basename, extension }) => env.DB.prepare(`INSERT INTO assets
     (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,repeated_basename,source_available,indexed_at,dropbox_revision)
     VALUES (?,?,?,?,?,?,?,?,0,1,?,?)
+    -- The tenant-integrity layer also enforces (id,creator_id). Reconcile that
+    -- stable Dropbox identity before the creator/path key so a move updates its row.
+    ON CONFLICT(id,creator_id) DO UPDATE SET relative_path=excluded.relative_path,basename=excluded.basename,extension=excluded.extension,bytes=excluded.bytes,
+      modified_at=excluded.modified_at,filename_class=excluded.filename_class,source_available=1,indexed_at=excluded.indexed_at,
+      preview_r2_key=CASE WHEN assets.dropbox_revision IS excluded.dropbox_revision THEN assets.preview_r2_key ELSE NULL END,
+      dropbox_revision=excluded.dropbox_revision
+    ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,basename=excluded.basename,extension=excluded.extension,bytes=excluded.bytes,
+      modified_at=excluded.modified_at,filename_class=excluded.filename_class,source_available=1,indexed_at=excluded.indexed_at,
+      preview_r2_key=CASE WHEN assets.dropbox_revision IS excluded.dropbox_revision THEN assets.preview_r2_key ELSE NULL END,
+      dropbox_revision=excluded.dropbox_revision
+      WHERE assets.creator_id=excluded.creator_id
     ON CONFLICT(creator_id,relative_path) DO UPDATE SET basename=excluded.basename,extension=excluded.extension,bytes=excluded.bytes,
       modified_at=excluded.modified_at,filename_class=excluded.filename_class,source_available=1,indexed_at=excluded.indexed_at,
       preview_r2_key=CASE WHEN assets.dropbox_revision IS excluded.dropbox_revision THEN assets.preview_r2_key ELSE NULL END,
@@ -738,6 +782,7 @@ export default {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/pair") return pairingPage();
       if (request.method === "POST" && url.pathname === "/catalogue/refresh") return refreshDropboxCatalogue(request, env);
+      if (request.method === "POST" && url.pathname === "/catalogue/dropbox/reconnect") return startDropboxReconnect(request, env);
       if (url.pathname === "/reddit" || url.pathname.startsWith("/reddit/")) {
         const identity = await authenticateReddit(request, env);
         if (!identity) return json(request, { ok: false, error: "unauthorized" }, 401);
