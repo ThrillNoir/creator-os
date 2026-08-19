@@ -10,6 +10,7 @@ const agencyNavigation = [
   ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
   ["⌁", "Growth insights", "/growth"],
+  ["✓", "Launch readiness", "/launch-readiness"],
   ["↗", "Public profile", "/public-profile"],
   ["✦", "Messages", "/messages"],
   ["$", "Money & health", "/money"],

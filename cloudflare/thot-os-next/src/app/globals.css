@@ -453,6 +453,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .growth-summary span,.growth-summary small { color: var(--muted); }
 .growth-summary strong { margin: 7px 0 5px; font-size: 25px; }
 .growth-summary small { font-size: 11px; line-height: 1.4; }
+.launch-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 28px 0 16px; }
+.launch-summary article { padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
+.launch-summary article.attention { border-color: #654b1d; background: #261e11; }
+.launch-summary article.blocked { border-color: #673247; background: #25131b; }
+.launch-summary span,.launch-summary strong,.launch-summary small { display: block; }
+.launch-summary span,.launch-summary small { color: var(--muted); }
+.launch-summary strong { margin: 7px 0 5px; font-size: 25px; }
+.launch-summary small { font-size: 11px; line-height: 1.4; }
+.launch-checks { margin-top: 16px; }
 .growth-method { margin-bottom: 16px; }
 .growth-method p { max-width: 880px; color: var(--muted); line-height: 1.55; }
 .growth-recommendation-list { display: grid; margin-top: 17px; }
@@ -543,6 +552,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .admin-membership-form .section-divider { grid-column: 1 / -1; }
   .money-kpis { grid-template-columns: 1fr 1fr; }
   .growth-summary { grid-template-columns: 1fr 1fr; }
+  .launch-summary { grid-template-columns: 1fr 1fr; }
   .money-layout { grid-template-columns: 1fr; }
   .public-profile-form { grid-template-columns: 1fr; }
   .public-profile-form .wide,.public-profile-form > button { grid-column: auto; }
@@ -562,6 +572,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .ops-summary { grid-template-columns: 1fr 1fr; }
   .ops-grid, .community-grid { grid-template-columns: 1fr; }
   .growth-summary { grid-template-columns: 1fr; }
+  .launch-summary { grid-template-columns: 1fr; }
   .ops-asset-picker { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .reddit-fields { grid-template-columns: 1fr; }
   .reddit-fields .wide { grid-column: auto; }

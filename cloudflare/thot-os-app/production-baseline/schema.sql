@@ -39,6 +39,7 @@
 -- 0035_delivery_outbox_and_metric_observations.sql 52b4cc45f47ff1c80933491cd5ae89a4872716566023e76511b60534e26d9767
 -- 0036_public_profile_authoring_guards.sql 62e7d2140b80b7ebeffc50f1cf2dbb5e62f0d9e8460e0ada731c264616d53df8
 -- 0037_instagram_analytics_collection_runs.sql 184f296e49fb0b1a7be8d7d19211aaa464d913cae06692cb6d3f9e632e692dcf
+-- 0038_instagram_analytics_metric_coverage.sql 4f67076eca0b6e4196c8f6683f4b8cacf2554b00042993fd624f6be795c4b73a
 
 PRAGMA foreign_keys = ON;
 
@@ -387,7 +388,7 @@ CREATE TABLE instagram_analytics_collection_runs (
   started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at TEXT,
   error TEXT
-);
+, media_insights_attempted INTEGER NOT NULL DEFAULT 0, media_insights_succeeded INTEGER NOT NULL DEFAULT 0, complete_metric_media INTEGER NOT NULL DEFAULT 0, missing_view_media INTEGER NOT NULL DEFAULT 0, missing_save_media INTEGER NOT NULL DEFAULT 0, missing_share_media INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE instagram_analytics_snapshots (
   id TEXT PRIMARY KEY,

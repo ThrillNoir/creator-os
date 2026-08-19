@@ -28,6 +28,13 @@ type InstagramReplyDraft = {
   last_inbound_at: string | null;
   connection_status: string; write_enabled: number; outbound_validated: number; emergency_paused: number;
 };
+type InstagramMediaInsights = {
+  likes: number | null;
+  comments: number | null;
+  views: number | null;
+  saves: number | null;
+  shares: number | null;
+};
 
 class OutcomeUncertainError extends Error {}
 
@@ -80,6 +87,10 @@ async function proxyInstagram<T>(env: Env, connectedAccountId: string, endpoint:
 
 const INSTAGRAM_MESSAGE_SUBSCRIPTIONS = ["messages", "messaging_postbacks", "messaging_seen", "message_reactions", "messaging_referral"] as const;
 const MAX_MESSAGE_MEDIA_BYTES = 50 * 1024 * 1024;
+// Per-media insights are a separate provider read. Keep it bounded so an
+// analytics cron cannot fan out unbounded work as a creator's library grows.
+const MAX_MEDIA_INSIGHT_LOOKUPS = 25;
+const MEDIA_INSIGHT_CONCURRENCY = 4;
 
 async function ensureInstagramMessageSubscriptions(env: Env, connectedAccountId: string, instagramUserId: string) {
   const endpoint = `/v25.0/${encodeURIComponent(instagramUserId)}/subscribed_apps`;
@@ -247,6 +258,62 @@ function numeric(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function mediaInsightRecords(value: unknown) {
+  if (Array.isArray(value)) return records(value);
+  const direct = dataRecords(value);
+  if (direct.length) return direct;
+  return dataRecords(record(value)?.result);
+}
+
+function emptyMediaInsights(): InstagramMediaInsights {
+  return { likes: null, comments: null, views: null, saves: null, shares: null };
+}
+
+function mediaInsightsFrom(value: unknown): InstagramMediaInsights {
+  const parsed = emptyMediaInsights();
+  for (const item of mediaInsightRecords(value)) {
+    const name = typeof item.name === "string" ? item.name : "";
+    const metric = scalarMetric(item);
+    if (metric === null) continue;
+    if (name === "likes") parsed.likes = metric;
+    if (name === "comments") parsed.comments = metric;
+    if (name === "views") parsed.views = metric;
+    if (name === "saved") parsed.saves = metric;
+    if (name === "shares") parsed.shares = metric;
+  }
+  return parsed;
+}
+
+function hasMediaInsights(value: InstagramMediaInsights) {
+  return Object.values(value).some((metric) => metric !== null);
+}
+
+async function getInstagramMediaInsights(env: Env, connection: { connected_account_id: string }, instagramUserId: string, mediaId: string) {
+  // Metric eligibility differs by media type and age. A narrower fallback is
+  // still a read-only observation; it never turns an unavailable metric into
+  // a fabricated zero.
+  const metricSets = [
+    ["views", "saved", "likes", "comments", "shares"],
+    ["reach", "saved", "likes", "comments", "shares", "total_interactions"],
+    ["views", "likes", "comments"],
+  ];
+  for (const metric of metricSets) {
+    try {
+      const response = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA_INSIGHTS", connection.connected_account_id, instagramUserId, {
+        ig_media_id: mediaId,
+        metric,
+        period: "lifetime",
+      });
+      const insights = mediaInsightsFrom(response);
+      if (hasMediaInsights(insights)) return { succeeded: true, insights };
+    } catch {
+      // A provider may reject a metric set for one media type. The aggregate
+      // collection remains valid and records the coverage gap for review.
+    }
+  }
+  return { succeeded: false, insights: emptyMediaInsights() };
+}
+
 function d1TimestampMs(value: string | null) {
   if (!value) return Number.NaN;
   const normalized = value.replace(" ", "T");
@@ -407,7 +474,9 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
   const state = await env.DB.prepare("SELECT last_analytics_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_analytics_sync_at: string | null }>();
   if (!force && state?.last_analytics_sync_at) {
     const last = new Date(`${state.last_analytics_sync_at.replace(" ", "T")}Z`).getTime();
-    if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60_000) return { skipped: true, mediaCount: 0 };
+    if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60_000) {
+      return { skipped: true, mediaCount: 0, mediaInsightsAttempted: 0, mediaInsightsSucceeded: 0, completeMetricMedia: 0, missingViewMedia: 0, missingSaveMedia: 0, missingShareMedia: 0 };
+    }
   }
   const [insightsPayload, mediaPayload, profilePayload] = await Promise.all([
     executeTool<unknown>(env, "INSTAGRAM_GET_USER_INSIGHTS", connection.connected_account_id, instagramUserId, {
@@ -429,22 +498,53 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
   const profile = record(profilePayload) ?? {};
   const mediaRoot = record(mediaPayload) ?? {};
   const mediaItems = Array.isArray(mediaPayload) ? records(mediaPayload) : dataRecords(mediaRoot);
+  const mediaInsights = new Map<string, InstagramMediaInsights>();
+  const insightCandidates = mediaItems.filter((item) => typeof item.id === "string" && item.id.length > 0).slice(0, MAX_MEDIA_INSIGHT_LOOKUPS);
+  let mediaInsightsSucceeded = 0;
+  for (let offset = 0; offset < insightCandidates.length; offset += MEDIA_INSIGHT_CONCURRENCY) {
+    const batch = insightCandidates.slice(offset, offset + MEDIA_INSIGHT_CONCURRENCY);
+    const collected = await Promise.all(batch.map(async (item) => {
+      const mediaId = String(item.id);
+      return { mediaId, ...(await getInstagramMediaInsights(env, connection, instagramUserId, mediaId)) };
+    }));
+    for (const item of collected) {
+      mediaInsights.set(item.mediaId, item.insights);
+      if (item.succeeded) mediaInsightsSucceeded += 1;
+    }
+  }
   await env.DB.prepare(`INSERT INTO instagram_analytics_snapshots
     (id,creator_id,account_id,reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks)
     VALUES (?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), creatorId, connection.account_id, metrics.get("reach") ?? null, metrics.get("follower_count") ?? numeric(profile.followers_count), metrics.get("accounts_engaged") ?? null, metrics.get("total_interactions") ?? null, metrics.get("profile_views") ?? null, metrics.get("website_clicks") ?? null).run();
+  let completeMetricMedia = 0;
+  let missingViewMedia = 0;
+  let missingSaveMedia = 0;
+  let missingShareMedia = 0;
   for (const item of mediaItems) {
     if (!item.id) continue;
     const mediaId = String(item.id);
     const permalink = typeof item.permalink === "string" ? item.permalink : null;
+    const itemInsights = mediaInsights.get(mediaId) ?? emptyMediaInsights();
+    const likeCount = itemInsights.likes ?? numeric(item.like_count);
+    const commentsCount = itemInsights.comments ?? numeric(item.comments_count);
+    const viewCount = itemInsights.views ?? numeric(item.view_count) ?? numeric(item.total_views_count);
+    const savedCount = itemInsights.saves ?? numeric(item.saved_count);
+    const sharesCount = itemInsights.shares ?? numeric(item.shares_count);
+    const missingViews = viewCount === null || viewCount === 0;
+    const missingSaves = savedCount === null;
+    const missingShares = sharesCount === null;
+    if (missingViews) missingViewMedia += 1;
+    if (missingSaves) missingSaveMedia += 1;
+    if (missingShares) missingShareMedia += 1;
+    if (!missingViews && likeCount !== null && commentsCount !== null && !missingSaves && !missingShares) completeMetricMedia += 1;
     const mediaStatements = [env.DB.prepare(`INSERT INTO instagram_media_metrics
       (creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
       ON CONFLICT(creator_id,media_id) DO UPDATE SET permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP`)
-      .bind(creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count)),
+      .bind(creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount),
     env.DB.prepare(`INSERT INTO instagram_media_metric_observations
       (id,creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at,source)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,'instagram_api')`)
-      .bind(crypto.randomUUID(), creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, numeric(item.like_count), numeric(item.comments_count), numeric(item.view_count) ?? numeric(item.total_views_count), numeric(item.saved_count), numeric(item.shares_count))];
+      .bind(crypto.randomUUID(), creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount)];
     if (permalink) mediaStatements.push(env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram' AND external_post_id=? AND (external_url IS NULL OR external_url='')").bind(permalink, creatorId, mediaId));
     await env.DB.batch(mediaStatements);
   }
@@ -464,7 +564,27 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
     }
   }
   await env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_analytics_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_analytics_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.account_id).run();
-  return { skipped: false, mediaCount: mediaItems.length };
+  console.log(JSON.stringify({
+    event: "instagram_analytics_metric_coverage",
+    creatorId,
+    mediaCount: mediaItems.length,
+    mediaInsightsAttempted: insightCandidates.length,
+    mediaInsightsSucceeded,
+    completeMetricMedia,
+    missingViewMedia,
+    missingSaveMedia,
+    missingShareMedia,
+  }));
+  return {
+    skipped: false,
+    mediaCount: mediaItems.length,
+    mediaInsightsAttempted: insightCandidates.length,
+    mediaInsightsSucceeded,
+    completeMetricMedia,
+    missingViewMedia,
+    missingSaveMedia,
+    missingShareMedia,
+  };
 }
 
 type AnalyticsCollectionTrigger = "manual" | "cron";
@@ -476,16 +596,16 @@ async function collectInstagramAnalytics(env: Env, creatorId: string, triggerTyp
     VALUES (?,?,?,'running',?)`).bind(runId, creatorId, triggerType, force ? 1 : 0).run();
   if (!claim.meta.changes) {
     console.log(JSON.stringify({ event: "instagram_analytics_collection_skipped", creatorId, triggerType, reason: "collection_in_progress" }));
-    return { ok: true, runId: null, status: "skipped", skipped: true, mediaCount: 0, reason: "collection_in_progress" };
+    return { ok: true, runId: null, status: "skipped", skipped: true, mediaCount: 0, mediaInsightsAttempted: 0, mediaInsightsSucceeded: 0, completeMetricMedia: 0, missingViewMedia: 0, missingSaveMedia: 0, missingShareMedia: 0, reason: "collection_in_progress" };
   }
   try {
     const result = await syncInstagramAnalytics(env, creatorId, force);
     const status = result.skipped ? "skipped" : "completed";
     await env.DB.prepare(`UPDATE instagram_analytics_collection_runs
-      SET status=?,media_count=?,completed_at=CURRENT_TIMESTAMP,error=NULL
+      SET status=?,media_count=?,media_insights_attempted=?,media_insights_succeeded=?,complete_metric_media=?,missing_view_media=?,missing_save_media=?,missing_share_media=?,completed_at=CURRENT_TIMESTAMP,error=NULL
       WHERE id=? AND creator_id=? AND status='running'`)
-      .bind(status, result.mediaCount, runId, creatorId).run();
-    console.log(JSON.stringify({ event: "instagram_analytics_collection", runId, creatorId, triggerType, status, mediaCount: result.mediaCount }));
+      .bind(status, result.mediaCount, result.mediaInsightsAttempted, result.mediaInsightsSucceeded, result.completeMetricMedia, result.missingViewMedia, result.missingSaveMedia, result.missingShareMedia, runId, creatorId).run();
+    console.log(JSON.stringify({ event: "instagram_analytics_collection", runId, creatorId, triggerType, status, mediaCount: result.mediaCount, mediaInsightsAttempted: result.mediaInsightsAttempted, mediaInsightsSucceeded: result.mediaInsightsSucceeded, completeMetricMedia: result.completeMetricMedia }));
     return { ok: true, runId, status, ...result };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instagram analytics collection failed.";

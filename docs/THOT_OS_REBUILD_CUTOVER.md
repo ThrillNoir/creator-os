@@ -9,6 +9,12 @@ now uses the recorded creator-scoped provider identifier. Its bounded retry
 completed, recorded 15 official media observations, and retained the first
 failure as an audit receipt.
 
+Stage 4 is a staging-only production-readiness hardening pass. It adds a
+private launch gate and bounded per-media official-insight coverage evidence;
+it does not provision production, create a public route, attach a custom
+domain, or change Dropbox. Its release record and production prerequisites are
+in `docs/STAGE_4_PRODUCTION_READINESS.md`.
+
 ## Staging execution record
 
 - The approved `0033`–`0036` D1 migrations and creator-scoped service

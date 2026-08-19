@@ -125,8 +125,10 @@ test("0037 records creator-scoped analytics collection attempts separately from 
   const fixture = await replay();
   try {
     const { db } = fixture;
-    db.prepare("INSERT INTO instagram_analytics_collection_runs (id,creator_id,trigger_type,status,media_count) VALUES ('analytics-adelaide','adelaide','cron','completed',12)").run();
-    assert.equal(db.prepare("SELECT media_count FROM instagram_analytics_collection_runs WHERE creator_id='adelaide'").get().media_count, 12);
+    db.prepare("INSERT INTO instagram_analytics_collection_runs (id,creator_id,trigger_type,status,media_count,media_insights_attempted,media_insights_succeeded,complete_metric_media,missing_view_media,missing_save_media,missing_share_media) VALUES ('analytics-adelaide','adelaide','cron','completed',12,12,10,8,2,3,4)").run();
+    assert.deepEqual(db.prepare("SELECT media_count,media_insights_attempted,media_insights_succeeded,complete_metric_media,missing_view_media,missing_save_media,missing_share_media FROM instagram_analytics_collection_runs WHERE creator_id='adelaide'").get(), {
+      media_count: 12, media_insights_attempted: 12, media_insights_succeeded: 10, complete_metric_media: 8, missing_view_media: 2, missing_save_media: 3, missing_share_media: 4,
+    });
     db.prepare("INSERT INTO instagram_analytics_collection_runs (id,creator_id,trigger_type,status) VALUES ('analytics-running','adelaide','manual','running')").run();
     assert.throws(() => db.prepare("INSERT INTO instagram_analytics_collection_runs (id,creator_id,trigger_type,status) VALUES ('analytics-running-duplicate','adelaide','cron','running')").run(), /UNIQUE constraint failed/);
     assert.throws(() => db.prepare("INSERT INTO instagram_analytics_collection_runs (id,creator_id,trigger_type,status) VALUES ('analytics-invalid','adelaide','provider','completed')").run(), /CHECK constraint failed/);

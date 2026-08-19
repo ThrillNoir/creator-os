@@ -143,6 +143,12 @@ export interface InstagramAnalyticsCollectionRun {
   status: "running" | "completed" | "skipped" | "failed";
   trigger_type: "manual" | "cron";
   media_count: number;
+  media_insights_attempted: number;
+  media_insights_succeeded: number;
+  complete_metric_media: number;
+  missing_view_media: number;
+  missing_save_media: number;
+  missing_share_media: number;
   started_at: string;
   completed_at: string | null;
   error: string | null;
@@ -211,7 +217,7 @@ export async function getInstagramAnalytics(creatorId: string) {
     DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsSnapshot>(),
     DB.prepare("SELECT media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at FROM instagram_media_metrics WHERE creator_id=? ORDER BY COALESCE(published_at,collected_at) DESC LIMIT 50").bind(creatorId).all<InstagramMediaMetric>(),
     DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<InstagramSyncState>(),
-    DB.prepare("SELECT status,trigger_type,media_count,started_at,completed_at,error FROM instagram_analytics_collection_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsCollectionRun>(),
+    DB.prepare("SELECT status,trigger_type,media_count,media_insights_attempted,media_insights_succeeded,complete_metric_media,missing_view_media,missing_save_media,missing_share_media,started_at,completed_at,error FROM instagram_analytics_collection_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsCollectionRun>(),
   ]);
   return { snapshot, media: media.results, syncState, collection };
 }
