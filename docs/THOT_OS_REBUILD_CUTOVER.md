@@ -17,6 +17,13 @@ scheduled coverage receipt and authenticated visual check remain the final
 staging evidence. Its release record and production prerequisites are in
 `docs/STAGE_4_PRODUCTION_READINESS.md`.
 
+Stage 5 began on 2026-08-19 with isolated production foundations only. The
+empty production D1 has the schema-only `0039` baseline, private production R2
+and KV namespaces exist, and the route-less public-links Worker created its
+separate Analytics Engine dataset. No custom domain, workers.dev target,
+creator data, public profile, social job, secret or Dropbox action was added.
+The remaining launch gates are recorded in `docs/STAGE_5_PRODUCTION_FOUNDATIONS.md`.
+
 ## Staging execution record
 
 - The approved `0033`–`0036` D1 migrations and creator-scoped service

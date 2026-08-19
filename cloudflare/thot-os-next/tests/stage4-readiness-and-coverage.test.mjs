@@ -20,14 +20,14 @@ test("Stage 4 records bounded per-media insight coverage without treating unavai
   assert.match(operations, /media_insights_succeeded,complete_metric_media/);
 });
 
-test("Stage 4 launch-readiness surfaces staging evidence and keeps production blocked", async () => {
+test("launch-readiness surfaces staging evidence and keeps the production launch blocked", async () => {
   const [model, page, route, shell] = await Promise.all([
     readFile(new URL("../src/lib/launch-readiness.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/app/launch-readiness/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/api/launch-readiness/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/app-shell.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(model, /status: "blocked"[\s\S]*Production is deliberately unprovisioned/);
+  assert.match(model, /status: "blocked"[\s\S]*Isolated production foundations exist/);
   assert.match(model, /status='uncertain'/);
   assert.match(model, /resolved_at IS NULL/);
   assert.match(model, /completeMetricMedia >= 6/);

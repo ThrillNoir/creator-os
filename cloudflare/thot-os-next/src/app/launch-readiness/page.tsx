@@ -23,10 +23,10 @@ export default async function LaunchReadinessPage() {
     <section className="launch-summary" aria-label="Launch readiness summary">
       <article><span>Ready</span><strong>{readiness.summary.ready}</strong><small>Evidence checks currently clear</small></article>
       <article className="attention"><span>Attention</span><strong>{readiness.summary.attention}</strong><small>Review before relying on the result</small></article>
-      <article className="blocked"><span>Blocked</span><strong>{readiness.summary.blocked}</strong><small>Production remains intentionally unavailable</small></article>
+      <article className="blocked"><span>Blocked</span><strong>{readiness.summary.blocked}</strong><small>Production launch remains intentionally unavailable</small></article>
       <article><span>Evidence scope</span><strong>Staging</strong><small>Generated {date(readiness.generatedAt)}</small></article>
     </section>
-    <section className="connection-banner attention"><div><strong>Staging evidence only</strong><span>Passing checks here is not production authorization. Production resources, a custom domain and any real creator route remain out of scope until you explicitly approve the cutover.</span></div></section>
+    <section className="connection-banner attention"><div><strong>Staging evidence only</strong><span>Passing checks here is not production authorization. Isolated production foundations exist, but a custom domain, private Access policy and any real creator route remain out of scope until you explicitly approve the cutover.</span></div></section>
     <section className="panel launch-checks">
       <div className="section-heading"><div><span className="eyebrow">CONTROLLED RELEASE EVIDENCE</span><h2>What needs to be true</h2><p>Every blocker and attention item is intentionally visible. Missing provider values are retained as unavailable rather than converted to performance data.</p></div></div>
       <div className="post-list">{readiness.checks.map((check) => <article className="post-row" key={check.id}>

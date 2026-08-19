@@ -78,7 +78,7 @@ export function buildCreatorLaunchReadiness(input: {
     checks.push({ id: "public_profile", title: "Public-profile approval", status: "attention", summary: "No explicitly approved public-profile version exists. No public creator route can be enabled from this workspace.", observedAt: generatedAt });
   }
 
-  checks.push({ id: "production_cutover", title: "Production cutover", status: "blocked", summary: "Production is deliberately unprovisioned. This screen reports staging evidence only; it does not authorize or create production resources.", observedAt: generatedAt });
+  checks.push({ id: "production_cutover", title: "Production cutover", status: "blocked", summary: "Isolated production foundations exist, but no custom domain, private Access policy, WAF/rate-limit policy, creator approval or public profile is enabled. This staging screen cannot authorize a launch.", observedAt: generatedAt });
   const summary = checks.reduce<Record<ReadinessStatus, number>>((counts, check) => ({ ...counts, [check.status]: counts[check.status] + 1 }), { ready: 0, attention: 0, blocked: 0 });
   return { generatedAt, scope: "staging", checks, summary };
 }
