@@ -18,3 +18,15 @@ test("Dropbox reconnection stays behind a creator-scoped internal capability", a
   assert.match(source, /connected_accounts\/link/);
   assert.match(source, /user_id: `creator-os:\$\{creatorId\}:service:dropbox`/);
 });
+
+test("revisioned private previews avoid D1 GLOB lookups", async () => {
+  const [library, previewRoute] = await Promise.all([
+    readFile(new URL("../src/lib/library.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/api/preview/[objectId]/route.ts", import.meta.url), "utf8"),
+  ]);
+  for (const source of [library, previewRoute]) {
+    assert.doesNotMatch(source, /preview_r2_key GLOB/);
+    assert.match(source, /revisionedPrefix/);
+    assert.match(source, /substr\([^)]*preview_r2_key,1,\?\)=\?/);
+  }
+});

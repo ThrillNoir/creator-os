@@ -77,13 +77,14 @@ export async function getLibraryAssets(creatorId: string, filters: LibraryFilter
 
 export async function getAssetByObjectId(creatorId: string, objectId: string) {
   const legacyKey = `creators/${creatorId}/assets/${objectId}/preview.jpg`;
+  const revisionedPrefix = `creators/${creatorId}/assets/${objectId}/previews/`;
   return cloudflareEnv().DB.prepare(`
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-    WHERE a.creator_id=? AND (a.preview_r2_key=? OR a.preview_r2_key GLOB ?) AND a.source_available=1
-  `).bind(creatorId, legacyKey, `creators/${creatorId}/assets/${objectId}/previews/*.jpg`).first<AssetRow>();
+    WHERE a.creator_id=? AND (a.preview_r2_key=? OR (substr(a.preview_r2_key,1,?)=? AND substr(a.preview_r2_key,-4)='.jpg')) AND a.source_available=1
+  `).bind(creatorId, legacyKey, revisionedPrefix.length, revisionedPrefix).first<AssetRow>();
 }
 
 export function objectIdFor(asset: AssetRow) {
