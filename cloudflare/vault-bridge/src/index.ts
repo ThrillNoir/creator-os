@@ -14,6 +14,7 @@ type RedditNativeJob = {
 type DropboxListEntry = { ".tag"?: string; name?: string; path_display?: string; path_lower?: string; id?: string; size?: number; server_modified?: string; rev?: string };
 type DropboxListResult = { entries?: DropboxListEntry[]; has_more?: boolean; cursor?: string };
 type DropboxConnection = { id: string; userId: string };
+type DropboxAuthConfig = { id: string };
 type DropboxThumbnail = { thumbnail?: { s3url?: string; name?: string }; content_type?: string };
 type PreviewAsset = { id: string; relative_path: string; extension: string; dropbox_revision: string | null };
 type PreviewQueueMessage = { creatorId: string; assetId: string; sourceRevision: string | null };
@@ -21,6 +22,14 @@ type PreviewJobAsset = PreviewAsset & { dropbox_root: string; preview_r2_key: st
 
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
 const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
+const READ_ONLY_DROPBOX_AUTH_CONFIG_NAME = "THOT OS Dropbox catalogue (read-only)";
+const READ_ONLY_DROPBOX_SCOPES = "files.metadata.read,files.content.read";
+const READ_ONLY_DROPBOX_TOOLS = [
+  "DROPBOX_LIST_FILES_IN_FOLDER",
+  "DROPBOX_LIST_FOLDER_CONTINUE",
+  "DROPBOX_GET_THUMBNAIL",
+  "DROPBOX_GET_TEMPORARY_LINK",
+];
 const allowedOrigins = new Set(["https://fansly.com", "https://www.reddit.com", "https://reddit.com", "https://thot-os-staging.thot-os.workers.dev"]);
 
 function cors(request: Request) {
@@ -112,6 +121,52 @@ async function getDropboxConnection(env: Env, creatorId: string): Promise<Dropbo
   return { id: connection.id!, userId };
 }
 
+async function getDropboxAuthConfig(env: Env): Promise<DropboxAuthConfig> {
+  const response = await fetch(`${COMPOSIO_V31}/auth_configs?toolkit_slug=dropbox&limit=10`, {
+    headers: { "x-api-key": env.COMPOSIO_API_KEY },
+  });
+  const payload = await response.json().catch(() => ({})) as {
+    items?: Array<{ id?: string; name?: string; status?: string; toolkit?: { slug?: string } }>;
+    error?: string | { message?: string };
+  };
+  // Never fall back to the project default. Its scopes may be broader than this
+  // read-only catalogue integration needs. A deliberately named configuration is
+  // created with only Dropbox metadata/content read scopes before connection.
+  const config = payload.items?.find((item) => item.id
+    && item.name === READ_ONLY_DROPBOX_AUTH_CONFIG_NAME
+    && item.status === "ENABLED"
+    && item.toolkit?.slug === "dropbox");
+  if (config?.id) return { id: config.id };
+
+  // This project may also have general-purpose Dropbox configurations. Create a
+  // separate, deliberately narrow managed configuration for THOT OS rather than
+  // ever reusing one whose permissions are unknown.
+  const createResponse = await fetch(`${COMPOSIO_V3}/auth_configs`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
+    body: JSON.stringify({
+      toolkit: { slug: "dropbox" },
+      auth_config: {
+        type: "use_composio_managed_auth",
+        name: READ_ONLY_DROPBOX_AUTH_CONFIG_NAME,
+        credentials: { scopes: READ_ONLY_DROPBOX_SCOPES },
+        restrict_to_following_tools: READ_ONLY_DROPBOX_TOOLS,
+      },
+    }),
+  });
+  const created = await createResponse.json().catch(() => ({})) as {
+    auth_config?: { id?: string };
+    id?: string;
+    error?: string | { message?: string };
+  };
+  const id = created.auth_config?.id ?? created.id;
+  if (!createResponse.ok || !id) {
+    const message = typeof created.error === "string" ? created.error : created.error?.message;
+    throw new Error(message || "The read-only Dropbox authorization could not be prepared. No Dropbox permissions were requested.");
+  }
+  return { id };
+}
+
 async function executeDropboxForConnection<T>(env: Env, connection: DropboxConnection, slug: string, args: Record<string, unknown>) {
   const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
     method: "POST",
@@ -148,11 +203,14 @@ async function startDropboxReconnect(request: Request, env: Env) {
     return json(request, { ok: false, error: "unauthorized" }, 401);
   }
   await internalServiceAuditStatement(env.DB, service, "/catalogue/dropbox/reconnect").run();
-  const connection = await getDropboxConnection(env, creatorId);
-  const response = await fetch(`${COMPOSIO_V3}/connected_accounts/${encodeURIComponent(connection.id)}/refresh`, {
+  // A failed or abandoned authorization has no ACTIVE account to refresh. Start a
+  // new link session from the project Dropbox auth config so this can recover
+  // without relying on any previous provider state.
+  const authConfig = await getDropboxAuthConfig(env);
+  const response = await fetch(`${COMPOSIO_V3}/connected_accounts/link`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ redirect_url: callback.toString() }),
+    body: JSON.stringify({ auth_config_id: authConfig.id, user_id: `creator-os:${creatorId}:service:dropbox`, callback_url: callback.toString() }),
   });
   const payload = await response.json().catch(() => ({})) as { redirect_url?: unknown; error?: string | { message?: string } };
   const redirectUrl = typeof payload.redirect_url === "string" ? payload.redirect_url : "";

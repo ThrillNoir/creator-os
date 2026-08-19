@@ -10,5 +10,11 @@ test("catalogue refresh reconciles a moved Dropbox file by its tenant-scoped sta
 test("Dropbox reconnection stays behind a creator-scoped internal capability", async () => {
   const source = await readFile(new URL("../../vault-bridge/src/index.ts", import.meta.url), "utf8");
   assert.match(source, /requireInternalServiceForCreator\(request, env\.DB, creatorId, "thot-os-web-vault-catalogue", "vault\.catalogue\.connection\.manage"\)/);
-  assert.match(source, /connected_accounts\/\$\{encodeURIComponent\(connection\.id\)\}\/refresh/);
+  assert.match(source, /auth_configs\?toolkit_slug=dropbox&limit=10/);
+  assert.match(source, /THOT OS Dropbox catalogue \(read-only\)/);
+  assert.match(source, /Never fall back to the project default/);
+  assert.match(source, /files\.metadata\.read,files\.content\.read/);
+  assert.match(source, /restrict_to_following_tools: READ_ONLY_DROPBOX_TOOLS/);
+  assert.match(source, /connected_accounts\/link/);
+  assert.match(source, /user_id: `creator-os:\$\{creatorId\}:service:dropbox`/);
 });

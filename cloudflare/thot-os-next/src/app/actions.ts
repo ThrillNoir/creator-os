@@ -243,16 +243,22 @@ export async function startDropboxReconnectAction() {
   const identity = await requireCreatorContext("manage_identity");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/accounts/dropbox/callback", env.APP_BASE_URL).toString();
-  const response = await fetchInternalService(env, "vault_catalogue", "vault.catalogue.connection.manage", env.VAULT_BRIDGE, "https://vault-bridge/catalogue/dropbox/reconnect", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ creatorId: identity.creator.creator_id, callbackUrl }),
-  });
-  const result = await response.json().catch(() => ({})) as { ok?: boolean; redirectUrl?: string; error?: string };
-  if (!response.ok || !result.ok || !result.redirectUrl) throw new Error(result.error || "Dropbox reconnection could not be started.");
-  let redirectUrl: URL;
-  try { redirectUrl = new URL(result.redirectUrl); } catch { throw new Error("Dropbox reconnection returned an invalid sign-in URL."); }
-  if (redirectUrl.protocol !== "https:" || redirectUrl.username || redirectUrl.password) throw new Error("Dropbox reconnection returned an unsafe sign-in URL.");
+  let redirectUrl: URL | null = null;
+  let connectionError = "";
+  try {
+    const response = await fetchInternalService(env, "vault_catalogue", "vault.catalogue.connection.manage", env.VAULT_BRIDGE, "https://vault-bridge/catalogue/dropbox/reconnect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ creatorId: identity.creator.creator_id, callbackUrl }),
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; redirectUrl?: string; error?: string };
+    if (!response.ok || !result.ok || !result.redirectUrl) throw new Error(result.error || "Dropbox reconnection could not be started.");
+    redirectUrl = new URL(result.redirectUrl);
+    if (redirectUrl.protocol !== "https:" || redirectUrl.username || redirectUrl.password) throw new Error("Dropbox reconnection returned an unsafe sign-in URL.");
+  } catch (error) {
+    connectionError = (error instanceof Error ? error.message : "Dropbox reconnection could not be started.").slice(0, 300);
+  }
+  if (!redirectUrl) redirect(`/accounts?connectionError=${encodeURIComponent(connectionError || "Dropbox reconnection could not be started.")}`);
   await identityAuditStatement(env.DB, humanAuditActor(identity), "dropbox_connection_requested", "dropbox", { providerCallback: true, readOnlySource: true }).run();
   redirect(redirectUrl.toString());
 }
