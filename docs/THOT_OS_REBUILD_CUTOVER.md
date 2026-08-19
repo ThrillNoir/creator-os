@@ -23,6 +23,9 @@ and KV namespaces exist, and the route-less public-links Worker created its
 separate Analytics Engine dataset. No custom domain, workers.dev target,
 creator data, public profile, social job, secret or Dropbox action was added.
 The remaining launch gates are recorded in `docs/STAGE_5_PRODUCTION_FOUNDATIONS.md`.
+`thathuboverthere.com` was selected afterwards as the public link domain. It
+is reserved exclusively for `/<creator-slug>` profiles; the separate private
+dashboard boundary and launch rules are in `docs/STAGE_6_PUBLIC_DOMAIN_BOUNDARY.md`.
 
 ## Staging execution record
 

@@ -37,8 +37,11 @@ attempt directories, and the route-less Worker deployment receipt.
 
 ## Still blocked by design
 
-1. Select a public link-in-bio domain and obtain written content/destination
-   compatibility confirmation for the social platforms in scope.
+1. The public link-in-bio domain is now `thathuboverthere.com`. It is reserved
+   exclusively for public `/<creator-slug>` profiles and remains unattached.
+   Obtain written content/destination compatibility confirmation for the
+   social platforms in scope. The separate private dashboard boundary is in
+   `docs/STAGE_6_PUBLIC_DOMAIN_BOUNDARY.md`.
 2. Create the private production control/Web deployment with a dedicated
    Cloudflare Access application and a fail-closed allowed-identity policy.
    Staging URLs, audience values, QA flags and service secrets must not be

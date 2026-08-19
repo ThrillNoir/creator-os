@@ -20,6 +20,49 @@ type PublicProfileSnapshot = {
 
 const CREATOR_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const LINK_ID = /^[a-zA-Z0-9_-]{1,120}$/;
+// These paths belong to the private THOT OS product surface, not the public
+// link hub. Reserving them here means a future creator slug can never cause a
+// public request for a dashboard path to resolve to a profile by accident.
+const RESERVED_PRIVATE_PATHS = new Set([
+  "accounts",
+  "activity",
+  "admin",
+  "agents",
+  "analytics",
+  "approvals",
+  "api",
+  "auth",
+  "automation",
+  "calendar",
+  "connections",
+  "content",
+  "creators",
+  "finance",
+  "go",
+  "growth",
+  "healthz",
+  "health",
+  "handoff",
+  "launch-readiness",
+  "library",
+  "login",
+  "logout",
+  "messages",
+  "migration",
+  "money",
+  "operations",
+  "people",
+  "public-profile",
+  "publishing",
+  "reddit",
+  "reporting",
+  "research",
+  "schedule",
+  "settings",
+  "staging-qa",
+  "vault",
+  "voice",
+]);
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
@@ -37,6 +80,10 @@ function safeHttpsUrl(value: unknown) {
 
 function snapshotKey(slug: string) {
   return `public-profile:${slug}`;
+}
+
+function isPublicCreatorSlug(value: string) {
+  return CREATOR_SLUG.test(value) && !RESERVED_PRIVATE_PATHS.has(value);
 }
 
 function validSnapshot(value: unknown, requestedSlug: string): value is PublicProfileSnapshot {
@@ -98,7 +145,7 @@ export default {
     if (url.pathname === "/healthz") return textResponse("ok", 200, { "cache-control": "public, max-age=60" });
 
     const segments = url.pathname.split("/").filter(Boolean);
-    if (segments.length === 1 && CREATOR_SLUG.test(segments[0])) {
+    if (segments.length === 1 && isPublicCreatorSlug(segments[0])) {
       const snapshot = await loadSnapshot(env, segments[0]);
       if (!snapshot) return textResponse("Not found", 404);
       if (request.method === "GET") {

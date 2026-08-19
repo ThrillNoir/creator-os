@@ -205,6 +205,13 @@
       "deployable": true,
       "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
       "description": "Stage 5 foundations only. The public-links Worker is route-less and contains no profile projection; D1, private R2, KV and Analytics Engine are isolated from staging. No custom domain, secret, social job or creator profile is deployed.",
+      "publicLinkDomain": {
+        "hostname": "thathuboverthere.com",
+        "profilePath": "/<creator-slug>",
+        "exclusiveComponent": "publicLinks",
+        "state": "reserved-unattached",
+        "privateDashboard": "must use a separately selected hostname, a separately deployed private Worker and a dedicated Cloudflare Access policy; it must never attach to this public link domain"
+      },
       "resources": {
         "d1": {
           "thot-os-production": { "id": "4a353a1b-4a28-4d85-ab9a-776cbb59d3b2", "migrationsDir": "../thot-os-app/migrations" }
@@ -224,7 +231,7 @@
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-production",
           "deployable": true,
-          "productionBoundary": "Route-less foundation only. The Worker has no D1 or private R2 binding, no custom domain and no creator profile projection. A public route requires a separately approved production launch release.",
+          "productionBoundary": "Route-less foundation only. thathuboverthere.com is reserved exclusively for public /<creator-slug> profiles and must never host the private THOT OS dashboard. The Worker has no D1 or private R2 binding, no custom domain and no creator profile projection. A public route requires a separately approved production launch release.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],

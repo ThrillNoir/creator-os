@@ -55,3 +55,12 @@ test("invalid snapshots and unapproved paths fail closed", async () => {
   assert.equal(redirect.status, 404);
   assert.equal(events.length, 0);
 });
+
+test("private THOT OS dashboard paths never resolve on the public link hub", async () => {
+  const { env, events } = environment(snapshot);
+  for (const path of ["/accounts", "/creators", "/growth", "/health", "/launch-readiness", "/library", "/messages", "/migration", "/money", "/operations", "/public-profile", "/reddit", "/staging-qa", "/admin", "/api", "/login"]) {
+    const response = await worker.fetch(new Request(`https://thathuboverthere.com${path}`), env);
+    assert.equal(response.status, 404, path);
+  }
+  assert.equal(events.length, 0);
+});
