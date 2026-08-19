@@ -40,6 +40,7 @@
 -- 0036_public_profile_authoring_guards.sql 62e7d2140b80b7ebeffc50f1cf2dbb5e62f0d9e8460e0ada731c264616d53df8
 -- 0037_instagram_analytics_collection_runs.sql 184f296e49fb0b1a7be8d7d19211aaa464d913cae06692cb6d3f9e632e692dcf
 -- 0038_instagram_analytics_metric_coverage.sql 4f67076eca0b6e4196c8f6683f4b8cacf2554b00042993fd624f6be795c4b73a
+-- 0039_production_environment_audit_contract.sql 132aca9a09b09bfb349bb4c5bcef7923e975a732f1eecdd3d018dbd45953ad9c
 
 PRAGMA foreign_keys = ON;
 
@@ -543,10 +544,10 @@ CREATE TABLE messaging_connections (
   UNIQUE(creator_id, platform, display_name)
 );
 
-CREATE TABLE migration_ledger_events (
+CREATE TABLE "migration_ledger_events" (
   id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES migration_ledger_runs(id) ON DELETE RESTRICT,
-  record_id TEXT REFERENCES migration_ledger_records(id) ON DELETE RESTRICT,
+  run_id TEXT NOT NULL REFERENCES "migration_ledger_runs"(id) ON DELETE RESTRICT,
+  record_id TEXT REFERENCES "migration_ledger_records"(id) ON DELETE RESTRICT,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
   event_type TEXT NOT NULL CHECK(event_type IN (
     'RUN_CREATED',
@@ -563,9 +564,9 @@ CREATE TABLE migration_ledger_events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE migration_ledger_records (
+CREATE TABLE "migration_ledger_records" (
   id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES migration_ledger_runs(id) ON DELETE RESTRICT,
+  run_id TEXT NOT NULL REFERENCES "migration_ledger_runs"(id) ON DELETE RESTRICT,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
   domain TEXT NOT NULL,
   source_table TEXT NOT NULL,
@@ -582,10 +583,10 @@ CREATE TABLE migration_ledger_records (
   UNIQUE(run_id, domain, source_table, source_record_ref)
 );
 
-CREATE TABLE migration_ledger_runs (
+CREATE TABLE "migration_ledger_runs" (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
-  environment TEXT NOT NULL CHECK(environment='staging'),
+  environment TEXT NOT NULL CHECK(environment IN ('staging','production')),
   source_snapshot_label TEXT NOT NULL,
   source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256)=64),
   target_database_id TEXT NOT NULL,
@@ -791,9 +792,9 @@ CREATE TABLE scheduler_runs (
   error TEXT
 );
 
-CREATE TABLE service_auth_activation_runs (
+CREATE TABLE "service_auth_activation_runs" (
   id TEXT PRIMARY KEY,
-  environment TEXT NOT NULL CHECK(environment='staging'),
+  environment TEXT NOT NULL CHECK(environment IN ('staging','production')),
   plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256)=64),
   registry_sha256 TEXT NOT NULL CHECK(length(registry_sha256)=64),
   backup_receipt_sha256 TEXT NOT NULL CHECK(length(backup_receipt_sha256)=64),
@@ -806,9 +807,9 @@ CREATE TABLE service_auth_activation_runs (
   UNIQUE(environment, plan_sha256)
 );
 
-CREATE TABLE service_auth_activation_steps (
+CREATE TABLE "service_auth_activation_steps" (
   id TEXT PRIMARY KEY,
-  activation_id TEXT NOT NULL REFERENCES service_auth_activation_runs(id) ON DELETE RESTRICT,
+  activation_id TEXT NOT NULL REFERENCES "service_auth_activation_runs"(id) ON DELETE RESTRICT,
   step TEXT NOT NULL CHECK(step IN ('PLANNED','SECRET_STAGED','D1_ACTIVE','VERIFIED','ACTIVE','FAILED','ROLLBACK_REQUIRED','REVOKED')),
   principal_name TEXT,
   detail TEXT NOT NULL DEFAULT '{}',
