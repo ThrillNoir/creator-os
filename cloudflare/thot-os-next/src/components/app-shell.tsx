@@ -12,6 +12,7 @@ const agencyNavigation = [
   ["⌁", "Growth insights", "/growth"],
   ["✓", "Launch readiness", "/launch-readiness"],
   ["↗", "Public profile", "/public-profile"],
+  ["18+", "18+ profile", "/adult-profile"],
   ["✦", "Messages", "/messages"],
   ["$", "Money & health", "/money"],
   ["◇", "Creators", "/creators"],
@@ -24,6 +25,7 @@ const creatorNavigation = [
   ["▣", "Operations", "/operations"],
   ["⌁", "Growth insights", "/growth"],
   ["↗", "Public profile", "/public-profile"],
+  ["18+", "18+ profile", "/adult-profile"],
   ["✦", "Messages", "/messages"],
   ["$", "Money & health", "/money"],
 ] as const;

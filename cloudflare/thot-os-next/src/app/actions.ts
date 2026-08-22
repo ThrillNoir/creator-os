@@ -9,6 +9,8 @@ import { requireCreatorContext } from "@/lib/identity";
 import { destinations, type Destination } from "@/lib/library";
 import { issueFanslyBridgePairing } from "@/lib/fansly-pairing";
 import { fetchInternalService } from "@/lib/internal-service";
+import { approvedHttpsDestination, parseProfileLinkRows } from "@/lib/profile-link-input";
+import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
 
 function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
@@ -16,6 +18,17 @@ function values(formData: FormData, key: string) {
 
 type PublicProfileLinkInput = {
   id: string;
+  stableId: string;
+  label: string;
+  destinationUrl: string;
+  destinationHost: string;
+  sortOrder: number;
+};
+
+type PublicContactInput = { channel: "sms" | "email"; value: string };
+
+type AdultProfileLinkInput = {
+  stableId: string;
   label: string;
   destinationUrl: string;
   destinationHost: string;
@@ -53,26 +66,68 @@ function publicProfileSlugValue(value: FormDataEntryValue | null) {
   return slug;
 }
 
-function approvedPublicDestination(value: string) {
-  let url: URL;
-  try { url = new URL(value); } catch { throw new Error("Every public link needs a complete HTTPS destination."); }
-  if (url.protocol !== "https:" || url.username || url.password || !url.hostname) throw new Error("Every public link must be a credential-free HTTPS destination.");
-  return { destinationUrl: url.toString(), destinationHost: url.hostname.toLowerCase() };
-}
-
 function publicProfileLinks(formData: FormData) {
   const labels = formData.getAll("linkLabel").map((value) => String(value).replace(/\s+/g, " ").trim());
   const destinations = formData.getAll("linkDestination").map((value) => String(value).trim());
-  if (labels.length !== destinations.length || labels.length > 8) throw new Error("A public profile can contain up to eight links.");
-  const links = labels.flatMap((label, index): PublicProfileLinkInput[] => {
-    const destination = destinations[index];
-    if (!label && !destination) return [];
-    if (!label || !destination || label.length > 80) throw new Error("Every public link needs a label of up to 80 characters and an HTTPS destination.");
-    const approved = approvedPublicDestination(destination);
-    return [{ id: crypto.randomUUID(), label, ...approved, sortOrder: index }];
+  const stableIds = formData.getAll("linkStableId").map((value) => String(value).trim());
+  const links = parseProfileLinkRows({ labels, destinations, stableIds, maximum: 8 }).map((link): PublicProfileLinkInput => {
+    const stableId = link.stableId || crypto.randomUUID();
+    if (!publicProfileId.test(stableId)) throw new Error("A public link identity is invalid. Refresh the page and try again.");
+    return { id: crypto.randomUUID(), stableId, label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder };
   });
-  if (!links.length) throw new Error("Add at least one explicit HTTPS destination before saving this public profile.");
   return links;
+}
+
+function publicProfileContacts(formData: FormData) {
+  const phone = publicText(formData.get("bookingPhone"), 20, "phone number", { collapseWhitespace: true });
+  const email = publicText(formData.get("bookingEmail"), 254, "email address", { collapseWhitespace: true }).toLowerCase();
+  if (phone && !/^\+[1-9]\d{5,14}$/.test(phone)) throw new Error("Use a phone number in international format, for example +61400000000.");
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email address.");
+  return [phone ? { channel: "sms", value: phone } : null, email ? { channel: "email", value: email } : null].filter(Boolean) as PublicContactInput[];
+}
+
+function publicProfileAppearance(formData: FormData) {
+  return parseProfileAppearance({
+    themeKey: formData.get("appearanceThemeKey"),
+    buttonStyle: formData.get("appearanceButtonStyle"),
+    backgroundMode: formData.get("appearanceBackgroundMode"),
+    backgroundColor: formData.get("appearanceBackgroundColor"),
+    primaryColor: formData.get("appearancePrimaryColor"),
+    textColor: formData.get("appearanceTextColor"),
+    cardColor: formData.get("appearanceCardColor"),
+    radiusScale: formData.get("appearanceRadiusScale"),
+  });
+}
+
+function adultProfileAppearance(formData: FormData) {
+  return parseProfileAppearance({
+    themeKey: formData.get("appearanceThemeKey"),
+    buttonStyle: formData.get("appearanceButtonStyle"),
+    backgroundMode: formData.get("appearanceBackgroundMode"),
+    backgroundColor: formData.get("appearanceBackgroundColor"),
+    primaryColor: formData.get("appearancePrimaryColor"),
+    textColor: formData.get("appearanceTextColor"),
+    cardColor: formData.get("appearanceCardColor"),
+    radiusScale: formData.get("appearanceRadiusScale"),
+    inheritSfwTheme: formData.get("appearanceInheritSfwTheme") === "yes",
+  }, { adult: true });
+}
+
+function adultProfileLinks(formData: FormData) {
+  const labels = formData.getAll("adultLinkLabel").map((value) => String(value).replace(/\s+/g, " ").trim());
+  const destinations = formData.getAll("adultLinkDestination").map((value) => String(value).trim());
+  const stableIds = formData.getAll("adultLinkStableId").map((value) => String(value).trim());
+  return parseProfileLinkRows({ labels, destinations, stableIds, maximum: 12, adult: true }).map((link): AdultProfileLinkInput => {
+    const stableId = link.stableId || crypto.randomUUID();
+    if (!publicProfileId.test(stableId)) throw new Error("An adult link identity is invalid. Refresh the page and try again.");
+    return { stableId, label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder };
+  });
+}
+
+async function adultProfileChecksum(content: { bio: string; links: AdultProfileLinkInput[] }) {
+  const canonical = JSON.stringify({ bio: content.bio, links: content.links.map((link) => ({ label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder })) });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function publicProfileChecksum(content: { displayName: string; headline: string; bio: string; links: Array<Pick<PublicProfileLinkInput, "label" | "destinationUrl" | "destinationHost" | "sortOrder">> }) {
@@ -84,6 +139,12 @@ async function publicProfileChecksum(content: { displayName: string; headline: s
 function submittedPublicProfileVersionId(formData: FormData) {
   const id = String(formData.get("versionId") ?? "");
   if (!publicProfileId.test(id)) throw new Error("The requested public profile version is invalid.");
+  return id;
+}
+
+function submittedAdultProfileVersionId(formData: FormData) {
+  const id = String(formData.get("adultVersionId") ?? "");
+  if (!publicProfileId.test(id)) throw new Error("The requested adult profile version is invalid.");
   return id;
 }
 
@@ -1030,10 +1091,13 @@ export async function savePublicProfileDraftAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const slug = publicProfileSlugValue(formData.get("slug"));
-  const displayName = publicText(formData.get("displayName"), 120, "display name", { required: true, collapseWhitespace: true });
+  const requestedDisplayName = publicText(formData.get("displayName"), 120, "display name", { collapseWhitespace: true });
+  const displayName = requestedDisplayName || identity.creator.creator_name;
   const headline = publicText(formData.get("headline"), 280, "headline");
   const bio = publicText(formData.get("bio"), 2000, "bio");
   const links = publicProfileLinks(formData);
+  const contacts = publicProfileContacts(formData);
+  const appearance = publicProfileAppearance(formData);
   const checksum = await publicProfileChecksum({ displayName, headline, bio, links });
   const { DB } = cloudflareEnv();
   const [profile, draft, nextVersion] = await Promise.all([
@@ -1055,6 +1119,8 @@ export async function savePublicProfileDraftAction(formData: FormData) {
     ...(profile ? profile.slug === slug ? [] : [creatorPrepare(DB, creatorId, "UPDATE creator_public_profiles SET slug=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND published_version_id IS NULL").bind(slug, profileId)] : [creatorPrepare(DB, creatorId, "INSERT INTO creator_public_profiles (id,creator_id,slug,created_by) VALUES (?,@creator,?,?)").bind(profileId, slug, identity.email)]),
     ...(draft ? [
       creatorPrepare(DB, creatorId, "DELETE FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_public_link_revisions WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_public_contact_methods WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
       creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
         SET display_name=?,headline=?,bio=?,avatar_media_id=NULL,content_checksum=?
         WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`)
@@ -1065,7 +1131,26 @@ export async function savePublicProfileDraftAction(formData: FormData) {
     ...links.map((link) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_links
       (id,creator_id,profile_version_id,label,destination_url,destination_host,sort_order)
       VALUES (?,@creator,?,?,?,?,?)`).bind(link.id, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder)),
-    identityAuditStatement(DB, actor, draft ? "public_profile_draft_updated" : "public_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contentChecksum: checksum, publicSurface: true }),
+    creatorPrepare(DB, creatorId, `INSERT INTO creator_public_profile_details
+      (profile_version_id,creator_id,public_display_name,public_bio,theme_key,button_style,background_mode,background_color,primary_color,text_color,card_color,radius_scale,updated_at)
+      VALUES (?,@creator,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(profile_version_id) DO UPDATE SET
+        public_display_name=excluded.public_display_name,public_bio=excluded.public_bio,
+        theme_key=excluded.theme_key,button_style=excluded.button_style,background_mode=excluded.background_mode,
+        background_color=excluded.background_color,primary_color=excluded.primary_color,text_color=excluded.text_color,
+        card_color=excluded.card_color,radius_scale=excluded.radius_scale,updated_at=CURRENT_TIMESTAMP`)
+      .bind(versionId, displayName, bio, appearance.themeKey, appearance.buttonStyle, appearance.backgroundMode, appearance.backgroundColor, appearance.primaryColor, appearance.textColor, appearance.cardColor, appearance.radiusScale),
+    ...links.flatMap((link) => [
+      creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO creator_public_link_entities (id,creator_id) VALUES (?,@creator)").bind(link.stableId),
+      creatorPrepare(DB, creatorId, `INSERT INTO creator_public_link_revisions
+        (id,creator_id,link_id,profile_version_id,label,destination_url,destination_host,icon_key,category,sort_order,enabled)
+        VALUES (?,@creator,?,?,?,?,?,'link','social',?,1)`)
+        .bind(crypto.randomUUID(), link.stableId, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder),
+    ]),
+    ...contacts.map((contact) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_contact_methods
+      (id,creator_id,profile_version_id,channel,contact_value,enabled)
+      VALUES (?,@creator,?,?,?,1)`).bind(crypto.randomUUID(), versionId, contact.channel, contact.value)),
+    identityAuditStatement(DB, actor, draft ? "public_profile_draft_updated" : "public_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contactChannels: contacts.map((contact) => contact.channel), contentChecksum: checksum, appearance: appearance.themeKey, publicSurface: true }),
   ];
   await DB.batch(statements);
   revalidatePath("/public-profile");
@@ -1074,7 +1159,7 @@ export async function savePublicProfileDraftAction(formData: FormData) {
 
 export async function approvePublicProfileVersionAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
-  if (formData.get("approvalConfirmed") !== "yes") throw new Error("Confirm that the public text and every destination are approved before continuing.");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must approve a public release.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
   const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");
@@ -1086,9 +1171,8 @@ export async function approvePublicProfileVersionAction(formData: FormData) {
   const linkRows = await creatorPrepare(DB, creatorId, `SELECT label,destination_url,destination_host,sort_order
     FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=? ORDER BY sort_order ASC`).bind(version.id)
     .all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
-  if (!linkRows.results.length) throw new Error("A public profile needs at least one approved HTTPS destination.");
   const links = linkRows.results.map((link) => {
-    const destination = approvedPublicDestination(link.destination_url);
+    const destination = approvedHttpsDestination(link.destination_url);
     if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes approval validation. Update the draft first.");
     return { label: link.label, ...destination, sortOrder: link.sort_order };
   });
@@ -1105,6 +1189,7 @@ export async function approvePublicProfileVersionAction(formData: FormData) {
 
 export async function publishPublicProfileAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must publish a public release.");
   if (formData.get("publishConfirmed") !== "yes") throw new Error("Confirm that this explicitly approved profile should be made public.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
@@ -1126,6 +1211,7 @@ export async function publishPublicProfileAction(formData: FormData) {
 
 export async function withdrawPublicProfileAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must withdraw a public release.");
   if (formData.get("withdrawConfirmed") !== "yes") throw new Error("Confirm that this public profile should be withdrawn.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
@@ -1142,4 +1228,121 @@ export async function withdrawPublicProfileAction(formData: FormData) {
   await identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_withdraw_requested", profile.published_version_id, { profileId: profile.id, publicSurface: true }).run();
   revalidatePath("/public-profile");
   redirect("/public-profile?notice=withdrawal_started");
+}
+
+export async function saveAdultProfileDraftAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const bio = publicText(formData.get("adultBio"), 2000, "adult bio");
+  const links = adultProfileLinks(formData);
+  const appearance = adultProfileAppearance(formData);
+  const checksum = await adultProfileChecksum({ bio, links });
+  const { DB } = cloudflareEnv();
+  const [profile, draft, nextVersion] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id,published_version_id FROM creator_adult_profiles WHERE creator_id=@creator LIMIT 1").first<{ id: string; published_version_id: string | null }>(),
+    creatorPrepare(DB, creatorId, "SELECT id,profile_id,version_number FROM creator_adult_profile_versions WHERE creator_id=@creator AND status='draft' ORDER BY version_number DESC LIMIT 1").first<{ id: string; profile_id: string; version_number: number }>(),
+    creatorPrepare(DB, creatorId, "SELECT COALESCE(MAX(version_number),0)+1 AS version_number FROM creator_adult_profile_versions WHERE creator_id=@creator").first<{ version_number: number }>(),
+  ]);
+  const profileId = profile?.id ?? crypto.randomUUID();
+  const versionId = draft?.id ?? crypto.randomUUID();
+  const versionNumber = draft?.version_number ?? nextVersion?.version_number ?? 1;
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(profile ? [] : [creatorPrepare(DB, creatorId, "INSERT INTO creator_adult_profiles (id,creator_id,created_by) VALUES (?,@creator,?)").bind(profileId, identity.email)]),
+    ...(draft ? [
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_adult_link_revisions WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "UPDATE creator_adult_profile_versions SET adult_bio=?,content_checksum=? WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'").bind(bio, checksum, versionId, profileId),
+    ] : [creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_profile_versions
+      (id,profile_id,creator_id,version_number,adult_bio,content_checksum,created_by)
+      VALUES (?,?,@creator,?,?,?,?)`).bind(versionId, profileId, versionNumber, bio, checksum, identity.email)]),
+    ...links.flatMap((link) => [
+      creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO creator_adult_link_entities (id,creator_id) VALUES (?,@creator)").bind(link.stableId),
+      creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_link_revisions
+        (id,creator_id,link_id,profile_version_id,label,destination_url,destination_host,icon_key,category,sort_order,enabled)
+        VALUES (?,@creator,?,?,?,?,?,'link','creator',?,1)`)
+        .bind(crypto.randomUUID(), link.stableId, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder),
+    ]),
+    creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_profile_appearances
+      (profile_version_id,creator_id,theme_key,button_style,background_mode,background_color,primary_color,text_color,card_color,radius_scale,inherit_sfw_theme,updated_at)
+      VALUES (?,@creator,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(profile_version_id) DO UPDATE SET
+        theme_key=excluded.theme_key,button_style=excluded.button_style,background_mode=excluded.background_mode,
+        background_color=excluded.background_color,primary_color=excluded.primary_color,text_color=excluded.text_color,
+        card_color=excluded.card_color,radius_scale=excluded.radius_scale,inherit_sfw_theme=excluded.inherit_sfw_theme,updated_at=CURRENT_TIMESTAMP`)
+      .bind(versionId, appearance.themeKey, appearance.buttonStyle, appearance.backgroundMode, appearance.backgroundColor, appearance.primaryColor, appearance.textColor, appearance.cardColor, appearance.radiusScale, appearance.inheritSfwTheme ? 1 : 0),
+    identityAuditStatement(DB, actor, draft ? "adult_profile_draft_updated" : "adult_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contentChecksum: checksum, appearance: appearance.themeKey, adultSurface: true }),
+  ];
+  await DB.batch(statements);
+  revalidatePath("/adult-profile");
+  redirect("/adult-profile?notice=draft_saved");
+}
+
+export async function approveAdultProfileVersionAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must approve an adult release.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedAdultProfileVersionId(formData);
+  const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");
+  const { DB } = cloudflareEnv();
+  const version = await creatorPrepare(DB, creatorId, "SELECT id,profile_id,version_number,adult_bio,content_checksum FROM creator_adult_profile_versions WHERE id=? AND creator_id=@creator AND status='draft'").bind(versionId).first<{ id: string; profile_id: string; version_number: number; adult_bio: string; content_checksum: string }>();
+  if (!version) throw new Error("Only this creator’s current adult-profile draft can be approved.");
+  const linkRows = await creatorPrepare(DB, creatorId, "SELECT label,destination_url,destination_host,sort_order FROM creator_adult_link_revisions WHERE creator_id=@creator AND profile_version_id=? AND enabled=1 ORDER BY sort_order ASC").bind(version.id).all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved adult destination no longer passes approval validation. Update the draft first.");
+    return { stableId: "checksum", label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await adultProfileChecksum({ bio: version.adult_bio, links });
+  if (checksum !== version.content_checksum) throw new Error("The adult profile changed outside the approved draft workflow. Save the draft again before approving it.");
+  const approved = await creatorPrepare(DB, creatorId, "UPDATE creator_adult_profile_versions SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note=? WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'").bind(identity.email, approvalNote, version.id, version.profile_id).run();
+  if (!approved.meta?.changes) throw new Error("This adult profile draft is no longer available for approval.");
+  await identityAuditStatement(DB, humanAuditActor(identity), "adult_profile_version_approved", version.id, { profileId: version.profile_id, versionNumber: version.version_number, contentChecksum: checksum, destinationCount: links.length, adultSurface: true }).run();
+  revalidatePath("/adult-profile");
+  redirect("/adult-profile?notice=version_approved");
+}
+
+export async function publishAdultProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must publish an adult release.");
+  if (formData.get("publishConfirmed") !== "yes") throw new Error("Confirm that this approved adult version should be projected to the separately configured age-gated gateway.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedAdultProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const profile = await creatorPrepare(env.DB, creatorId, `SELECT p.id,p.published_version_id,v.id AS version_id,v.version_number
+    FROM creator_adult_profiles p
+    JOIN creator_adult_profile_versions v ON v.id=? AND v.profile_id=p.id AND v.creator_id=p.creator_id
+    WHERE p.creator_id=@creator AND v.status='approved'`).bind(versionId).first<{ id: string; published_version_id: string | null; version_id: string; version_number: number }>();
+  if (!profile) throw new Error("This adult profile version is not approved for a protected release.");
+  const response = await fetchInternalService(env, "public_links_control", "adult.profile.publish", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/adult/publish", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: profile.id, versionId: profile.version_id }),
+  });
+  if (response.status !== 202) throw new Error(`Adult publication control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "adult_profile_publish_requested", profile.version_id, { profileId: profile.id, versionNumber: profile.version_number, adultSurface: true }).run();
+  revalidatePath("/adult-profile");
+  revalidatePath("/public-profile");
+  redirect("/adult-profile?notice=publication_started");
+}
+
+export async function withdrawAdultProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must withdraw an adult release.");
+  if (formData.get("withdrawConfirmed") !== "yes") throw new Error("Confirm that this adult profile should be withdrawn from the isolated gateway.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedAdultProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const profile = await creatorPrepare(env.DB, creatorId, "SELECT id,published_version_id FROM creator_adult_profiles WHERE creator_id=@creator AND status='active' AND published_version_id=?")
+    .bind(versionId).first<{ id: string; published_version_id: string }>();
+  if (!profile) throw new Error("This creator has no matching published adult profile to withdraw.");
+  const response = await fetchInternalService(env, "public_links_control", "adult.profile.withdraw", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/adult/withdraw", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: profile.id, versionId: profile.published_version_id }),
+  });
+  if (response.status !== 202) throw new Error(`Adult withdrawal control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "adult_profile_withdraw_requested", profile.published_version_id, { profileId: profile.id, adultSurface: true }).run();
+  revalidatePath("/adult-profile");
+  revalidatePath("/public-profile");
+  redirect("/adult-profile?notice=withdrawal_started");
 }

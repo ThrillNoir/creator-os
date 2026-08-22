@@ -28,7 +28,7 @@ test("cloud library writes are creator scoped and audited", async () => {
 test("private previews require a matching authorised creator D1 asset", async () => {
   const route = await source("src/app/api/preview/[objectId]/route.ts");
   assert.match(route, /requireCreatorContext/);
-  assert.match(route, /creator_id=\? AND \(preview_r2_key=\? OR preview_r2_key GLOB \?\)/);
+  assert.match(route, /creator_id=\? AND \(preview_r2_key=\? OR \(substr\(preview_r2_key,1,\?\)=\? AND substr\(preview_r2_key,-4\)='\.jpg'\)\)/);
   assert.match(route, /private, max-age=86400/);
 });
 

@@ -61,7 +61,25 @@ test("the browser QA mutation requires an exact same-origin request", () => {
   const url = "https://thot-os-staging.thot-os.workers.dev/api/staging/qa/human-mutation";
   assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "https://thot-os-staging.thot-os.workers.dev" } })), true);
   assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "https://attacker.example" } })), false);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { referer: "https://thot-os-staging.thot-os.workers.dev/staging-qa" } })), true);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { referer: "https://attacker.example/" } })), false);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { "sec-fetch-site": "same-origin" } })), true);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { "sec-fetch-site": "same-site" } })), false);
   assert.equal(isSameOriginRequest(new Request(url)), false);
+});
+
+test("local development accepts only equivalent loopback origins", () => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = "development";
+  try {
+    const url = "http://127.0.0.1:3001/api/profile-image";
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "http://localhost:3001" } })), true);
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "http://localhost:3002" } })), false);
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "https://localhost:3001" } })), false);
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "http://attacker.example:3001" } })), false);
+  } finally {
+    process.env.NODE_ENV = previous;
+  }
 });
 
 test("service role is returned only after credential and creator-grant validation", async () => {

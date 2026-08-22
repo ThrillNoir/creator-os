@@ -27,10 +27,16 @@ async function accessKeys(url: string, forceRefresh = false) {
 export async function requireAccessIdentity() {
   const env = cloudflareEnv();
   const localEnv = env as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string };
+  // OpenNext's local platform proxy does not include `.dev.vars` in the
+  // request context. The process fallback lets the documented local-only
+  // bypass work without adding this value to a deployable Wrangler config.
+  const localBypass = localEnv.LOCAL_ACCESS_BYPASS ?? process.env.LOCAL_ACCESS_BYPASS;
   const requestHeaders = await headers();
   const host = requestHeaders.get("host") ?? "";
-  if (localEnv.LOCAL_ACCESS_BYPASS === "1" && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)) {
-    return { email: env.ACCESS_ALLOWED_EMAIL.toLowerCase() };
+  if (localBypass === "1" && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)) {
+    const email = env.ACCESS_ALLOWED_EMAIL ?? process.env.ACCESS_ALLOWED_EMAIL;
+    if (!email) throw new Error("Local Access bypass requires an allowed email.");
+    return { email: email.toLowerCase() };
   }
   const token = requestHeaders.get("cf-access-jwt-assertion");
   if (!token) throw new Error("Cloudflare Access identity is required.");

@@ -27,8 +27,37 @@ export function rejectClientActorRole(input: Record<string, unknown>) {
   }
 }
 
+function requestOriginMatches(candidate: string, expected: URL) {
+  if (candidate === expected.origin) return true;
+  if (process.env.NODE_ENV !== "development") return false;
+  try {
+    const received = new URL(candidate);
+    const loopback = new Set(["127.0.0.1", "localhost", "[::1]"]);
+    return received.protocol === expected.protocol
+      && received.port === expected.port
+      && loopback.has(received.hostname)
+      && loopback.has(expected.hostname);
+  } catch { return false; }
+}
+
 export function isSameOriginRequest(request: Request) {
-  return request.headers.get("origin") === new URL(request.url).origin;
+  const expected = new URL(request.url);
+  const origin = request.headers.get("origin");
+  if (origin && origin !== "null") return requestOriginMatches(origin, expected);
+
+  const referer = request.headers.get("referer");
+  if (referer) {
+    try { return requestOriginMatches(new URL(referer).origin, expected); } catch { return false; }
+  }
+
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite) return fetchSite === "same-origin";
+
+  // Some local browser harnesses omit all three browser-managed headers. This
+  // fallback is limited to the development loopback origin; staging and
+  // production continue to require explicit same-origin browser evidence.
+  return process.env.NODE_ENV === "development"
+    && ["127.0.0.1", "localhost", "[::1]"].includes(expected.hostname);
 }
 
 export function identityAuditStatement(

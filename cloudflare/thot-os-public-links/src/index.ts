@@ -5,8 +5,14 @@ type PublicLink = {
   destinationHost: string;
 };
 
+type PublicAction = {
+  id: "book" | "more";
+  label: string;
+  href: string;
+};
+
 type PublicProfileSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2 | 3;
   publishedVersionId: string;
   creator: {
     slug: string;
@@ -16,10 +22,17 @@ type PublicProfileSnapshot = {
     avatarUrl?: string;
   };
   links: PublicLink[];
+  actions?: PublicAction[];
+  appearance?: { themeKey: string; buttonStyle: string; backgroundMode: string; backgroundColor: string; primaryColor: string; textColor: string; cardColor: string; radiusScale: string };
 };
 
 const CREATOR_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const LINK_ID = /^[a-zA-Z0-9_-]{1,120}$/;
+const HEX = /^#[0-9a-f]{6}$/i;
+const THEME_KEYS = new Set(["thot-noir", "soft-pearl", "candy-pink", "lavender-dream", "sunset", "ocean", "forest", "crimson", "chrome", "clean-minimal"]);
+const BUTTON_STYLES = new Set(["solid-rounded", "full-pill", "minimal-outline", "soft-card-icon", "elevated-shadow-tile"]);
+const BACKGROUND_MODES = new Set(["solid", "gradient"]);
+const RADIUS_SCALES = new Set(["compact", "comfortable", "round"]);
 // These paths belong to the private THOT OS product surface, not the public
 // link hub. Reserving them here means a future creator slug can never cause a
 // public request for a dashboard path to resolve to a profile by accident.
@@ -72,10 +85,37 @@ function safeHttpsUrl(value: unknown) {
   if (typeof value !== "string") return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" ? url : null;
+    return url.protocol === "https:" && !url.username && !url.password && Boolean(url.hostname) ? url : null;
   } catch {
     return null;
   }
+}
+
+function configuredActionBase(value: string | undefined) {
+  if (!value) return null;
+  const url = safeHttpsUrl(value);
+  if (!url || url.pathname !== "/" || url.search || url.hash) return null;
+  return url.origin;
+}
+
+function validActionUrl(value: unknown, actionId: PublicAction["id"], slug: string, env: Env) {
+  const url = safeHttpsUrl(value);
+  if (!url || url.username || url.password || url.search || url.hash) return false;
+  const base = configuredActionBase(actionId === "book" ? env.BOOKING_ACTION_BASE_URL : env.ADULT_GATEWAY_BASE_URL);
+  return Boolean(base && url.origin === base && url.pathname === `/${actionId === "book" ? "book" : "age"}/${slug}`);
+}
+
+function validAppearance(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const appearance = value as Partial<NonNullable<PublicProfileSnapshot["appearance"]>>;
+  return typeof appearance.themeKey === "string" && THEME_KEYS.has(appearance.themeKey)
+    && typeof appearance.buttonStyle === "string" && BUTTON_STYLES.has(appearance.buttonStyle)
+    && typeof appearance.backgroundMode === "string" && BACKGROUND_MODES.has(appearance.backgroundMode)
+    && typeof appearance.radiusScale === "string" && RADIUS_SCALES.has(appearance.radiusScale)
+    && typeof appearance.backgroundColor === "string" && HEX.test(appearance.backgroundColor)
+    && typeof appearance.primaryColor === "string" && HEX.test(appearance.primaryColor)
+    && typeof appearance.textColor === "string" && HEX.test(appearance.textColor)
+    && typeof appearance.cardColor === "string" && HEX.test(appearance.cardColor);
 }
 
 function snapshotKey(slug: string) {
@@ -86,19 +126,28 @@ function isPublicCreatorSlug(value: string) {
   return CREATOR_SLUG.test(value) && !RESERVED_PRIVATE_PATHS.has(value);
 }
 
-function validSnapshot(value: unknown, requestedSlug: string): value is PublicProfileSnapshot {
+function validSnapshot(value: unknown, requestedSlug: string, env: Env): value is PublicProfileSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Partial<PublicProfileSnapshot>;
-  if (snapshot.schemaVersion !== 1 || !snapshot.publishedVersionId || !snapshot.creator || !Array.isArray(snapshot.links)) return false;
+  if ((snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2 && snapshot.schemaVersion !== 3) || !snapshot.publishedVersionId || !snapshot.creator || !Array.isArray(snapshot.links)) return false;
   const creator = snapshot.creator;
   if (creator.slug !== requestedSlug || !CREATOR_SLUG.test(creator.slug) || typeof creator.displayName !== "string" || typeof creator.headline !== "string" || typeof creator.bio !== "string") return false;
   if (creator.displayName.length < 1 || creator.displayName.length > 120 || creator.headline.length > 280 || creator.bio.length > 2000) return false;
   if (creator.avatarUrl !== undefined && !safeHttpsUrl(creator.avatarUrl)) return false;
-  return snapshot.links.every((link) => {
+  if (!snapshot.links.every((link) => {
     if (!link || typeof link !== "object" || !LINK_ID.test(link.id) || typeof link.label !== "string" || link.label.length < 1 || link.label.length > 80 || typeof link.destinationHost !== "string") return false;
     const destination = safeHttpsUrl(link.destinationUrl);
     return Boolean(destination && destination.hostname.toLowerCase() === link.destinationHost.toLowerCase());
+  })) return false;
+  if (snapshot.schemaVersion === 1) return snapshot.actions === undefined && snapshot.appearance === undefined;
+  if (!Array.isArray(snapshot.actions) || snapshot.actions.length > 2) return false;
+  const actionIds = new Set<string>();
+  const actionsValid = snapshot.actions.every((action) => {
+    if (!action || typeof action !== "object" || (action.id !== "book" && action.id !== "more") || actionIds.has(action.id) || typeof action.label !== "string" || action.label.length < 1 || action.label.length > 80) return false;
+    actionIds.add(action.id);
+    return validActionUrl(action.href, action.id, requestedSlug, env);
   });
+  return actionsValid && (snapshot.schemaVersion === 2 ? snapshot.appearance === undefined : validAppearance(snapshot.appearance));
 }
 
 function securityHeaders() {
@@ -117,20 +166,26 @@ function textResponse(body: string, status: number, headers: HeadersInit = {}) {
 
 async function loadSnapshot(env: Env, slug: string) {
   const snapshot = await env.PUBLIC_LINKS.get(snapshotKey(slug), "json");
-  return validSnapshot(snapshot, slug) ? snapshot : null;
+  return validSnapshot(snapshot, slug, env) ? snapshot : null;
 }
 
 function renderProfile(snapshot: PublicProfileSnapshot) {
+  const appearance = snapshot.appearance ?? { buttonStyle: "solid-rounded", backgroundMode: "gradient", backgroundColor: "#0d0c10", primaryColor: "#7655f6", textColor: "#f8f6fa", cardColor: "#211a29", radiusScale: "comfortable" };
+  const radius = appearance.radiusScale === "compact" ? ".45rem" : appearance.radiusScale === "round" ? "999px" : ".85rem";
+  const buttonClass = appearance.buttonStyle === "full-pill" ? " pill" : appearance.buttonStyle === "minimal-outline" ? " outline" : appearance.buttonStyle === "soft-card-icon" ? " soft" : appearance.buttonStyle === "elevated-shadow-tile" ? " elevated" : "";
   const avatar = snapshot.creator.avatarUrl
     ? `<img class="avatar" src="${escapeHtml(snapshot.creator.avatarUrl)}" alt="" width="96" height="96">`
     : "";
-  const links = snapshot.links.map((link) => `<a class="link" href="/go/${encodeURIComponent(snapshot.creator.slug)}/${encodeURIComponent(link.id)}" rel="noreferrer">${escapeHtml(link.label)}<span aria-hidden="true">↗</span></a>`).join("\n");
+  const links = snapshot.links.map((link) => `<a class="link${buttonClass}" href="/go/${encodeURIComponent(snapshot.creator.slug)}/${encodeURIComponent(link.id)}" rel="noreferrer">${escapeHtml(link.label)}<span aria-hidden="true">↗</span></a>`).join("\n");
+  const actions = snapshot.actions?.map((action) => `<a class="action" href="${escapeHtml(action.href)}" rel="noreferrer">${escapeHtml(action.label)}</a>`).join("\n") ?? "";
   const title = escapeHtml(snapshot.creator.displayName);
+  const headline = snapshot.creator.headline ? `<p>${escapeHtml(snapshot.creator.headline)}</p>` : "";
+  const bio = snapshot.creator.bio ? `<p class="bio">${escapeHtml(snapshot.creator.bio)}</p>` : "";
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
-<style>html{color-scheme:dark;background:#0d0c10}body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;color:#f8f6fa;background:radial-gradient(circle at top,#2b1933,#0d0c10 55%)}main{width:min(100% - 2rem,36rem);padding:3rem 0;text-align:center}.avatar{display:block;border-radius:50%;object-fit:cover;margin:0 auto 1rem;border:1px solid #ffffff35}h1{margin:0;font-size:clamp(2rem,7vw,3rem)}p{margin:0.5rem auto;white-space:pre-line}.bio{color:#d7d0da;max-width:34rem}.links{display:grid;gap:.75rem;margin-top:2rem}.link{display:flex;justify-content:space-between;gap:1rem;align-items:center;border:1px solid #ffffff2f;border-radius:.85rem;padding:1rem 1.1rem;color:inherit;background:#ffffff0c;text-decoration:none;text-align:left}.link:hover,.link:focus-visible{background:#ffffff1c;border-color:#ffffff75;outline:0}.link span{opacity:.75}</style></head>
-<body><main>${avatar}<h1>${title}</h1><p>${escapeHtml(snapshot.creator.headline)}</p><p class="bio">${escapeHtml(snapshot.creator.bio)}</p><nav class="links" aria-label="Links">${links}</nav></main></body></html>`;
+<style>html{color-scheme:dark;background:${appearance.backgroundColor}}body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;color:${appearance.textColor};background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor}}main{width:min(100% - 2rem,36rem);padding:3rem 0;text-align:center}.avatar{display:block;border-radius:50%;object-fit:cover;margin:0 auto 1rem;border:1px solid ${appearance.textColor}35}h1{margin:0;font-size:clamp(2rem,7vw,3rem)}p{margin:.5rem auto;white-space:pre-line}.bio{color:${appearance.textColor};opacity:.8;max-width:34rem}.actions,.links{display:grid;gap:.75rem;margin-top:2rem}.action,.link{display:flex;justify-content:space-between;gap:1rem;align-items:center;border:1px solid ${appearance.textColor}2f;border-radius:${radius};padding:1rem 1.1rem;color:inherit;background:${appearance.cardColor};text-decoration:none;text-align:left}.action{justify-content:center;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link{background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 6px 0 ${appearance.primaryColor}55}.action:hover,.action:focus-visible,.link:hover,.link:focus-visible{filter:brightness(1.08);outline:0}.link span{opacity:.75}</style></head>
+<body><main>${avatar}<h1>${title}</h1>${headline}${bio}${actions ? `<nav class="actions" aria-label="Creator actions">${actions}</nav>` : ""}${links ? `<nav class="links" aria-label="Links">${links}</nav>` : ""}</main></body></html>`;
 }
 
 function isStaticAssetPath(pathname: string) {

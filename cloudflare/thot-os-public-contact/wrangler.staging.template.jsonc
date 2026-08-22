@@ -1,0 +1,15 @@
+// Deliberately non-runnable release template. Populate only after hostname,
+// legal/policy, rate-limit, and secret-management approvals; do not deploy it
+// as part of local profile work.
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "REQUIRES_APPROVED_STAGING_CONTACT_WORKER",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "kv_namespaces": [{ "binding": "CONTACT_PROFILES", "id": "REQUIRES_APPROVED_STAGING_KV_NAMESPACE" }],
+  "analytics_engine_datasets": [{ "binding": "CONTACT_EVENTS", "dataset": "REQUIRES_APPROVED_STAGING_DATASET" }],
+  "vars": { "TURNSTILE_SITE_KEY": "REQUIRES_APPROVED_STAGING_VALUE", "TURNSTILE_EXPECTED_HOSTNAME": "REQUIRES_APPROVED_HOSTNAME" },
+  "secrets": { "required": ["TURNSTILE_SECRET"] }
+}

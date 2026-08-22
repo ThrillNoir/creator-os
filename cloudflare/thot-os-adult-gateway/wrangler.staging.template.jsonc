@@ -1,0 +1,15 @@
+// Deliberately non-runnable release template. Populate only after hostname,
+// adult-content policy, consent, rate-limit, and secret-management approval.
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "REQUIRES_APPROVED_STAGING_ADULT_GATEWAY",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "kv_namespaces": [{ "binding": "ADULT_PROFILES", "id": "REQUIRES_APPROVED_STAGING_KV_NAMESPACE" }],
+  "r2_buckets": [{ "binding": "ADULT_MEDIA", "bucket_name": "REQUIRES_APPROVED_STAGING_MEDIA_BUCKET" }],
+  "analytics_engine_datasets": [{ "binding": "ADULT_EVENTS", "dataset": "REQUIRES_APPROVED_STAGING_DATASET" }],
+  "vars": { "TURNSTILE_SITE_KEY": "REQUIRES_APPROVED_STAGING_VALUE", "TURNSTILE_EXPECTED_HOSTNAME": "REQUIRES_APPROVED_HOSTNAME" },
+  "secrets": { "required": ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"] }
+}

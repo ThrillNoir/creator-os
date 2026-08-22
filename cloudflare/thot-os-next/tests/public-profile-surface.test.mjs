@@ -6,24 +6,44 @@ import test from "node:test";
 const root = path.resolve(import.meta.dirname, "..");
 const source = (file) => readFile(path.join(root, file), "utf8");
 
-test("public profile authoring has separate draft, approval, publish and withdrawal controls", async () => {
-  const [page, actions, navigation, migration] = await Promise.all([
+test("release configuration remains source-only and UI labels distinguish private approval from publication", async () => {
+  const [publicPage, adultPage, migration, contactLocal, adultLocal] = await Promise.all([
     source("src/app/public-profile/page.tsx"),
-    source("src/app/actions.ts"),
-    source("src/components/app-shell.tsx"),
-    source("../thot-os-app/migrations/0036_public_profile_authoring_guards.sql"),
+    source("src/app/adult-profile/page.tsx"),
+    source("../thot-os-app/migrations/0040_creator_profile_interactions.sql"),
+    source("../thot-os-public-contact/wrangler.local.example.jsonc"),
+    source("../thot-os-adult-gateway/wrangler.local.example.jsonc"),
   ]);
-  assert.match(page, /savePublicProfileDraftAction/);
-  assert.match(page, /approvePublicProfileVersionAction/);
-  assert.match(page, /publishPublicProfileAction/);
-  assert.match(page, /withdrawPublicProfileAction/);
-  assert.match(page, /Private preview or source media can be selected/i);
-  assert.match(actions, /requireCreatorContext\("mutate"\)/);
-  assert.match(actions, /requireCreatorContext\("approve"\)/);
-  assert.match(actions, /public\.profile\.publish/);
-  assert.match(actions, /public\.profile\.withdraw/);
-  assert.match(actions, /PUBLIC_LINKS_CONTROL/);
-  assert.match(navigation, /Public profile/);
-  assert.match(migration, /creator_public_profile_slug_immutable_after_publication/);
-  assert.match(migration, /creator_public_profile_single_draft/);
+  assert.match(publicPage, /Approved, private/);
+  assert.match(adultPage, /Approved, private/);
+  assert.match(migration, /creator_adult_profile_publications/);
+  assert.match(migration, /creator_adult_profile_published_version/);
+  assert.doesNotMatch(contactLocal, /"routes"\s*:/);
+  assert.doesNotMatch(adultLocal, /"routes"\s*:/);
+});
+
+test("redirect-handler links are ordinary anchors, preventing Next RSC navigation attempts", async () => {
+  const [safePreview, adultPreview] = await Promise.all([
+    source("src/app/public-profile/preview/page.tsx"),
+    source("src/app/public-profile/preview/adult/[versionId]/page.tsx"),
+  ]);
+  assert.match(safePreview, /<a className="public-preview-link" href=\{`\/public-profile\/preview\/go\//);
+  assert.match(adultPreview, /<a className="public-preview-link" href=\{`\/public-profile\/preview\/adult\//);
+  assert.doesNotMatch(safePreview, /<Link className="public-preview-link"/);
+  assert.doesNotMatch(adultPreview, /<Link className="public-preview-link"/);
+});
+
+test("profile approval is one click while image mutations remain same-origin", async () => {
+  const [actions, publicPage, adultPage, uploadRoute, imageRoute] = await Promise.all([
+    source("src/app/actions.ts"),
+    source("src/app/public-profile/page.tsx"),
+    source("src/app/adult-profile/page.tsx"),
+    source("src/app/api/profile-image/route.ts"),
+    source("src/app/api/profile-image/[attachmentId]/route.ts"),
+  ]);
+  assert.doesNotMatch(actions, /formData\.get\("approvalConfirmed"\)/);
+  assert.doesNotMatch(publicPage, /name="approvalConfirmed"/);
+  assert.doesNotMatch(adultPage, /name="approvalConfirmed"/);
+  assert.match(uploadRoute, /isSameOriginRequest\(request\)/);
+  assert.match(imageRoute, /isSameOriginRequest\(request\)/);
 });
