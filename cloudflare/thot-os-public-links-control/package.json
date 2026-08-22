@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "types": "../thot-os-next/node_modules/.bin/wrangler types",
+    "types": "../thot-os-next/node_modules/.bin/wrangler types && node ../../scripts/normalize-generated-types.mjs worker-configuration.d.ts",
     "check": "npm run types && ../thot-os-next/node_modules/.bin/tsc --noEmit"
   }
 }

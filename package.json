@@ -26,6 +26,8 @@
     "services:activate": "node scripts/service-auth-activate.mjs",
     "services:activation-backup": "node scripts/service-auth-activation-backup.mjs",
     "deployment:preflight": "node scripts/deployment-preflight.mjs",
+    "cloudflare:compatibility": "node scripts/check-cloudflare-compatibility.mjs",
+    "artifact:staging": "node scripts/build-staging-artifact.mjs",
     "deployment:receipt": "node scripts/deployment-receipt.mjs",
     "deploy": "node scripts/deploy-component.mjs",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/*.test.mjs",

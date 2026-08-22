@@ -9,7 +9,7 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "node ../../scripts/deploy-component.mjs",
     "upload": "node ../../scripts/deploy-component.mjs",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts && node ../../scripts/normalize-generated-types.mjs cloudflare-env.d.ts",
     "health:staging": "node scripts/check-authenticated-health.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "verify": "npm test && npm run build && opennextjs-cloudflare build"
@@ -33,7 +33,7 @@
     "@types/react-dom": "^19",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
-    "wrangler": "4.120.0"
+    "wrangler": "4.125.0"
   },
   "overrides": {
     "postcss": "8.5.26",

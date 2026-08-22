@@ -1,8 +1,9 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 
-const db = new Database(path.resolve(".creator-os", "creator-os.sqlite"), { readonly: true });
-const checks = [
+const databasePath = path.resolve(process.env.CREATOR_OS_DB_PATH ?? ".creator-os/creator-os.sqlite");
+const db = new Database(databasePath, { readonly: true });
+const legacyChecks = [
   ["post primary asset/account", `
     SELECT p.id FROM post_packages p
     JOIN assets x ON x.id=p.asset_id
@@ -215,6 +216,139 @@ const checks = [
   `],
 ];
 
+const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(({ name }) => name));
+const checks = [];
+const skippedLegacyChecks = [];
+function tablesReferencedBy(sql) {
+  return [...new Set([...sql.matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/gi)].map((match) => match[1]))];
+}
+for (const [name, sql] of legacyChecks) {
+  const requiredTables = tablesReferencedBy(sql);
+  const missingTables = requiredTables.filter((table) => !tables.has(table));
+  if (missingTables.length) skippedLegacyChecks.push({ name, missingTables });
+  else checks.push([name, sql]);
+}
+const skippedProfileChecks = [];
+function addProfileCheck(name, requiredTables, sql) {
+  if (requiredTables.every((table) => tables.has(table))) checks.push([name, sql]);
+  else skippedProfileChecks.push({ name, missingTables: requiredTables.filter((table) => !tables.has(table)) });
+}
+
+addProfileCheck("public profiles", ["creator_public_profiles", "creators"], `
+  SELECT p.id FROM creator_public_profiles p
+  LEFT JOIN creators c ON c.id=p.creator_id
+  WHERE c.id IS NULL
+`);
+addProfileCheck("public profile versions", ["creator_public_profile_versions", "creator_public_profiles", "creators"], `
+  SELECT v.id FROM creator_public_profile_versions v
+  LEFT JOIN creator_public_profiles p ON p.id=v.profile_id
+  LEFT JOIN creators c ON c.id=v.creator_id
+  WHERE p.id IS NULL OR c.id IS NULL OR p.creator_id<>v.creator_id
+`);
+addProfileCheck("public profile details", ["creator_public_profile_details", "creator_public_profile_versions"], `
+  SELECT d.profile_version_id FROM creator_public_profile_details d
+  LEFT JOIN creator_public_profile_versions v ON v.id=d.profile_version_id
+  WHERE v.id IS NULL OR v.creator_id<>d.creator_id
+`);
+addProfileCheck("public contact methods", ["creator_public_contact_methods", "creator_public_profile_versions"], `
+  SELECT m.id FROM creator_public_contact_methods m
+  LEFT JOIN creator_public_profile_versions v ON v.id=m.profile_version_id
+  WHERE v.id IS NULL OR v.creator_id<>m.creator_id
+`);
+addProfileCheck("public link entities", ["creator_public_link_entities", "creators"], `
+  SELECT e.id FROM creator_public_link_entities e
+  LEFT JOIN creators c ON c.id=e.creator_id
+  WHERE c.id IS NULL
+`);
+addProfileCheck("public link revisions", ["creator_public_link_revisions", "creator_public_link_entities", "creator_public_profile_versions"], `
+  SELECT r.id FROM creator_public_link_revisions r
+  LEFT JOIN creator_public_link_entities e ON e.id=r.link_id
+  LEFT JOIN creator_public_profile_versions v ON v.id=r.profile_version_id
+  WHERE e.id IS NULL OR v.id IS NULL OR e.creator_id<>r.creator_id OR v.creator_id<>r.creator_id
+`);
+addProfileCheck("legacy public links", ["creator_public_links", "creator_public_profile_versions"], `
+  SELECT l.id FROM creator_public_links l
+  LEFT JOIN creator_public_profile_versions v ON v.id=l.profile_version_id
+  WHERE v.id IS NULL OR v.creator_id<>l.creator_id
+`);
+addProfileCheck("public media", ["creator_public_media", "assets"], `
+  SELECT m.id FROM creator_public_media m
+  LEFT JOIN assets a ON a.id=m.asset_id
+  WHERE a.id IS NULL OR a.creator_id<>m.creator_id
+`);
+addProfileCheck("public profile publications", ["creator_public_profile_publications", "creator_public_profiles", "creator_public_profile_versions"], `
+  SELECT r.id FROM creator_public_profile_publications r
+  LEFT JOIN creator_public_profiles p ON p.id=r.profile_id
+  LEFT JOIN creator_public_profile_versions v ON v.id=r.version_id
+  WHERE p.id IS NULL OR v.id IS NULL OR p.creator_id<>r.creator_id OR v.creator_id<>r.creator_id OR v.profile_id<>r.profile_id
+`);
+addProfileCheck("adult profiles", ["creator_adult_profiles", "creators"], `
+  SELECT p.id FROM creator_adult_profiles p
+  LEFT JOIN creators c ON c.id=p.creator_id
+  WHERE c.id IS NULL
+`);
+addProfileCheck("adult profile versions", ["creator_adult_profile_versions", "creator_adult_profiles", "creators"], `
+  SELECT v.id FROM creator_adult_profile_versions v
+  LEFT JOIN creator_adult_profiles p ON p.id=v.profile_id
+  LEFT JOIN creators c ON c.id=v.creator_id
+  WHERE p.id IS NULL OR c.id IS NULL OR p.creator_id<>v.creator_id
+`);
+addProfileCheck("adult link entities", ["creator_adult_link_entities", "creators"], `
+  SELECT e.id FROM creator_adult_link_entities e
+  LEFT JOIN creators c ON c.id=e.creator_id
+  WHERE c.id IS NULL
+`);
+addProfileCheck("adult link revisions", ["creator_adult_link_revisions", "creator_adult_link_entities", "creator_adult_profile_versions"], `
+  SELECT r.id FROM creator_adult_link_revisions r
+  LEFT JOIN creator_adult_link_entities e ON e.id=r.link_id
+  LEFT JOIN creator_adult_profile_versions v ON v.id=r.profile_version_id
+  WHERE e.id IS NULL OR v.id IS NULL OR e.creator_id<>r.creator_id OR v.creator_id<>r.creator_id
+`);
+addProfileCheck("media release attestations", ["creator_media_release_attestations", "assets"], `
+  SELECT r.id FROM creator_media_release_attestations r
+  LEFT JOIN assets a ON a.id=r.asset_id
+  WHERE a.id IS NULL OR a.creator_id<>r.creator_id
+`);
+addProfileCheck("adult profile media", ["creator_adult_profile_media", "creator_adult_profile_versions", "assets"], `
+  SELECT m.id FROM creator_adult_profile_media m
+  LEFT JOIN creator_adult_profile_versions v ON v.id=m.profile_version_id
+  LEFT JOIN assets a ON a.id=m.asset_id
+  WHERE v.id IS NULL OR a.id IS NULL OR v.creator_id<>m.creator_id OR a.creator_id<>m.creator_id
+`);
+addProfileCheck("adult profile publications", ["creator_adult_profile_publications", "creator_adult_profiles", "creator_adult_profile_versions"], `
+  SELECT r.id FROM creator_adult_profile_publications r
+  LEFT JOIN creator_adult_profiles p ON p.id=r.profile_id
+  LEFT JOIN creator_adult_profile_versions v ON v.id=r.version_id
+  WHERE p.id IS NULL OR v.id IS NULL OR p.creator_id<>r.creator_id OR v.creator_id<>r.creator_id OR v.profile_id<>r.profile_id
+`);
+addProfileCheck("adult profile appearances", ["creator_adult_profile_appearances", "creator_adult_profile_versions"], `
+  SELECT a.profile_version_id FROM creator_adult_profile_appearances a
+  LEFT JOIN creator_adult_profile_versions v ON v.id=a.profile_version_id
+  WHERE v.id IS NULL OR v.creator_id<>a.creator_id
+`);
+addProfileCheck("profile image uploads", ["creator_profile_image_uploads", "creators"], `
+  SELECT u.id FROM creator_profile_image_uploads u
+  LEFT JOIN creators c ON c.id=u.creator_id
+  WHERE c.id IS NULL
+`);
+addProfileCheck("profile image derivatives", ["creator_profile_image_derivatives", "creator_profile_image_uploads"], `
+  SELECT d.id FROM creator_profile_image_derivatives d
+  LEFT JOIN creator_profile_image_uploads u ON u.id=d.upload_id
+  WHERE u.id IS NULL OR u.creator_id<>d.creator_id
+`);
+addProfileCheck("profile image attachments", ["creator_profile_image_attachments", "creator_profile_image_derivatives", "creator_profile_image_uploads", "creator_public_profile_versions", "creator_adult_profile_versions"], `
+  SELECT a.id FROM creator_profile_image_attachments a
+  LEFT JOIN creator_profile_image_derivatives d ON d.id=a.derivative_id
+  LEFT JOIN creator_profile_image_uploads u ON u.id=d.upload_id
+  LEFT JOIN creator_public_profile_versions pv ON pv.id=a.public_profile_version_id
+  LEFT JOIN creator_adult_profile_versions av ON av.id=a.adult_profile_version_id
+  WHERE d.id IS NULL OR u.id IS NULL OR d.creator_id<>a.creator_id OR u.creator_id<>a.creator_id
+    OR u.surface<>a.surface OR u.image_role<>a.image_role
+    OR (a.status='attached' AND u.status<>'processed')
+    OR (a.surface='public_sfw' AND (a.public_profile_version_id IS NULL OR a.adult_profile_version_id IS NOT NULL OR pv.id IS NULL OR pv.creator_id<>a.creator_id))
+    OR (a.surface='adult_profile' AND (a.adult_profile_version_id IS NULL OR a.public_profile_version_id IS NOT NULL OR av.id IS NULL OR av.creator_id<>a.creator_id))
+`);
+
 const failures = [];
 for (const [name, sql] of checks) {
   const rows = db.prepare(sql).all();
@@ -223,7 +357,7 @@ for (const [name, sql] of checks) {
 db.close();
 
 if (failures.length) {
-  console.error({ isolation: "failed", failures });
+  console.error({ isolation: "failed", databasePath, failures, skippedLegacyChecks, skippedProfileChecks });
   process.exit(1);
 }
-console.log({ isolation: "ok", checks: checks.map(([name]) => name) });
+console.log({ isolation: "ok", databasePath, checks: checks.map(([name]) => name), skippedLegacyChecks, skippedProfileChecks });

@@ -9,6 +9,7 @@ import Database from "better-sqlite3";
 const appRoot = path.resolve(import.meta.dirname, "..");
 const migrationsRoot = path.resolve(appRoot, "../thot-os-app/migrations");
 const wrangler = path.resolve(appRoot, "node_modules/.bin/wrangler");
+const isolationScript = path.resolve(appRoot, "../../scripts/check-creator-isolation.mjs");
 
 async function findDatabase(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -36,7 +37,8 @@ test("0040 keeps interaction data creator scoped and requires an approved adult-
     }));
     const result = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-profile-interactions-local", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" } });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    db = new Database(await findDatabase(state));
+    const databasePath = await findDatabase(state);
+    db = new Database(databasePath);
     const checksum = "a".repeat(64);
     db.prepare("INSERT INTO creators (id,name,slug,initials) VALUES ('second','Second','second','S')").run();
     db.prepare("INSERT INTO assets (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,indexed_at) VALUES ('adult-asset','adelaide','adult.jpg','adult.jpg','jpg',1,CURRENT_TIMESTAMP,'image',CURRENT_TIMESTAMP)").run();
@@ -51,6 +53,11 @@ test("0040 keeps interaction data creator scoped and requires an approved adult-
 
     db.prepare("INSERT INTO creator_adult_profiles (id,creator_id,created_by) VALUES ('adult-profile','adelaide','connect@thrillnoir.com')").run();
     db.prepare("INSERT INTO creator_adult_profile_versions (id,profile_id,creator_id,version_number,adult_bio,content_checksum,created_by) VALUES ('adult-version','adult-profile','adelaide',1,'Adult bio',?,'connect@thrillnoir.com')").run(checksum);
+    db.prepare("INSERT INTO creator_adult_profiles (id,creator_id,created_by) VALUES ('second-adult-profile','second','connect@thrillnoir.com')").run();
+    db.prepare("INSERT INTO creator_adult_profile_versions (id,profile_id,creator_id,version_number,adult_bio,content_checksum,created_by) VALUES ('second-adult-version','second-adult-profile','second',1,'Second adult bio',?,'connect@thrillnoir.com')").run(checksum);
+    assert.throws(() => db.prepare("INSERT INTO creator_adult_profile_versions (id,profile_id,creator_id,version_number,adult_bio,content_checksum,created_by) VALUES ('cross-adult-version','adult-profile','second',2,'Cross creator',?,'connect@thrillnoir.com')").run(checksum), /adult_profile_version_creator_mismatch/);
+    assert.throws(() => db.prepare("UPDATE creator_adult_profile_versions SET profile_id='second-adult-profile' WHERE id='adult-version'").run(), /adult_profile_version_creator_mismatch/);
+    assert.throws(() => db.prepare("UPDATE creator_adult_profile_versions SET creator_id='second' WHERE id='adult-version'").run(), /adult_profile_version_creator_mismatch/);
     db.prepare("INSERT INTO creator_adult_link_entities (id,creator_id) VALUES ('adult-link','adelaide')").run();
     db.prepare("INSERT INTO creator_adult_link_revisions (id,creator_id,link_id,profile_version_id,label,destination_url,destination_host,sort_order) VALUES ('adult-link-r1','adelaide','adult-link','adult-version','Fans','https://example.com/fans','example.com',0)").run();
     assert.throws(() => db.prepare("INSERT INTO creator_adult_profile_media (id,creator_id,profile_version_id,asset_id,derivative_object_key,sort_order) VALUES ('adult-media','adelaide','adult-version','adult-asset','adult/adelaide/asset.jpg',0)").run(), /adult_media_requires_approved_release/);
@@ -60,6 +67,20 @@ test("0040 keeps interaction data creator scoped and requires an approved adult-
     assert.throws(() => db.prepare("INSERT INTO creator_adult_profile_media (id,creator_id,profile_version_id,asset_id,derivative_object_key,sort_order) VALUES ('adult-media','adelaide','adult-version','adult-asset','adult/adelaide/asset.jpg',0)").run(), /adult_media_requires_approved_release/);
     db.prepare("INSERT INTO asset_paid_consent_attestations (asset_id,creator_id,person_id,evidence_platform,confirmed_by) VALUES ('adult-asset','adelaide',101,'fansly','connect@thrillnoir.com')").run();
     db.prepare("INSERT INTO creator_adult_profile_media (id,creator_id,profile_version_id,asset_id,derivative_object_key,alt_text,sort_order) VALUES ('adult-media','adelaide','adult-version','adult-asset','adult/adelaide/asset.jpg','Approved image',0)").run();
+    db.prepare("INSERT INTO creator_adult_profile_publications (id,creator_id,profile_id,version_id,status,published_by,adult_snapshot_key) VALUES ('adult-publication','adelaide','adult-profile','adult-version','published','connect@thrillnoir.com','adult/adelaide/v1.json')").run();
+    assert.throws(() => db.prepare("INSERT INTO creator_adult_profile_publications (id,creator_id,profile_id,version_id,status,published_by,adult_snapshot_key) VALUES ('cross-publication-creator','second','adult-profile','second-adult-version','published','connect@thrillnoir.com','adult/second/v1.json')").run(), /adult_profile_publication_scope_invalid/);
+    assert.throws(() => db.prepare("INSERT INTO creator_adult_profile_publications (id,creator_id,profile_id,version_id,status,published_by,adult_snapshot_key) VALUES ('cross-publication-profile','adelaide','second-adult-profile','adult-version','published','connect@thrillnoir.com','adult/adelaide/v2.json')").run(), /adult_profile_publication_scope_invalid/);
+    assert.throws(() => db.prepare("UPDATE creator_adult_profile_publications SET creator_id='second' WHERE id='adult-publication'").run(), /adult_profile_publication_scope_invalid/);
+    assert.throws(() => db.prepare("UPDATE creator_adult_profile_publications SET profile_id='second-adult-profile' WHERE id='adult-publication'").run(), /adult_profile_publication_scope_invalid/);
+    assert.throws(() => db.prepare("UPDATE creator_adult_profile_publications SET version_id='second-adult-version' WHERE id='adult-publication'").run(), /adult_profile_publication_scope_invalid/);
+    const cleanIsolation = spawnSync(process.execPath, [isolationScript], { cwd: appRoot, encoding: "utf8", env: { ...process.env, CREATOR_OS_DB_PATH: databasePath } });
+    assert.equal(cleanIsolation.status, 0, `${cleanIsolation.stdout}\n${cleanIsolation.stderr}`);
+    db.pragma("foreign_keys = OFF");
+    db.exec("DROP TRIGGER creator_adult_profile_publication_scope_update");
+    db.prepare("UPDATE creator_adult_profile_publications SET creator_id='second' WHERE id='adult-publication'").run();
+    const invalidIsolation = spawnSync(process.execPath, [isolationScript], { cwd: appRoot, encoding: "utf8", env: { ...process.env, CREATOR_OS_DB_PATH: databasePath } });
+    assert.notEqual(invalidIsolation.status, 0, `${invalidIsolation.stdout}\n${invalidIsolation.stderr}`);
+    assert.match(`${invalidIsolation.stdout}\n${invalidIsolation.stderr}`, /adult profile publications/);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM creator_adult_profile_media WHERE creator_id='adelaide'").get().count, 1);
     assert.equal(db.pragma("quick_check", { simple: true }), "ok");
   } finally {

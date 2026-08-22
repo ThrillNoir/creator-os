@@ -2,6 +2,9 @@ import "server-only";
 
 import { notFound } from "next/navigation";
 import { issueLocalPreviewToken, localPreviewNonce, readLocalPreviewToken } from "@/lib/local-preview-tokens";
+import { localAdultPreviewAvailable } from "@/lib/local-preview-runtime";
+
+export { localAdultPreviewAvailable } from "@/lib/local-preview-runtime";
 
 const COOKIE_NAME = "thot_local_adult_preview";
 const MAX_AGE_SECONDS = 60 * 60;
@@ -11,7 +14,7 @@ type PreviewSession = { creatorId: string; versionId: string; expiresAt: number 
 type GateToken = PreviewSession & { purpose: "local_adult_age_gate"; nonce: string };
 
 function localOnly() {
-  return process.env.NODE_ENV === "development";
+  return localAdultPreviewAvailable();
 }
 
 function localSecret() {

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readPinnedWorkerRuntime, validateWorkerCompatibility } from "./cloudflare-runtime-compatibility.mjs";
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -254,6 +255,13 @@ export function runPreflight(options) {
     ? Object.entries(environment.components ?? {}).filter(([, component]) => component.deployable).map(([name]) => name)
     : [options.component];
   if (!componentNames.length) return { ok: false, errors: [`No deployable components are registered for ${options.environment}.`], results: [] };
+  let pinnedRuntime;
+  let runtimeError;
+  try {
+    pinnedRuntime = readPinnedWorkerRuntime(path.join(projectRoot, "cloudflare/thot-os-next"));
+  } catch (error) {
+    runtimeError = error instanceof Error ? error.message : String(error);
+  }
   const results = componentNames.map((componentName) => {
     const component = environment.components?.[componentName];
     const configPath = component?.config ? path.join(projectRoot, component.config) : null;
@@ -266,6 +274,12 @@ export function runPreflight(options) {
     }
     const result = validateDeployment({ registry, environmentName: options.environment, componentName, config, requireClean: options.requireClean, gitSha: options.gitSha, gitBranch: options.gitBranch, buildTime: options.buildTime });
     if (readError) result.errors.push(`Unable to read ${component?.config ?? "configuration"}: ${readError}`);
+    if (runtimeError) result.errors.push(`Pinned workerd compatibility check failed: ${runtimeError}`);
+    else if (config) {
+      const compatibility = validateWorkerCompatibility({ components: [{ label: `${options.environment}/${componentName}`, configPath: component?.config, config }], runtime: pinnedRuntime });
+      result.compatibility = compatibility;
+      result.errors.push(...compatibility.errors);
+    }
     result.ok = result.errors.length === 0;
     return result;
   });

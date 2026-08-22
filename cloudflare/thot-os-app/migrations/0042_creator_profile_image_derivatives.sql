@@ -77,16 +77,31 @@ WHEN NOT EXISTS (
 )
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
 
+-- Attachments are mutable only while their target is a draft, but every
+-- mutable scope column must be validated again. This prevents a processed SFW
+-- derivative from being swapped for an adult derivative (and vice versa), or
+-- an attachment being re-scoped to another creator, role, or version after
+-- the INSERT checks above have passed.
+CREATE TRIGGER creator_profile_image_attachment_scope_update
+BEFORE UPDATE OF creator_id, surface, image_role, public_profile_version_id, adult_profile_version_id, derivative_id, status
+ON creator_profile_image_attachments
+WHEN NOT EXISTS (
+  SELECT 1 FROM creator_profile_image_derivatives d
+  JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
+  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND u.surface=NEW.surface
+    AND u.image_role=NEW.image_role AND u.status='processed'
+)
+BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
+
 CREATE TRIGGER creator_profile_image_attachment_draft_only
 BEFORE INSERT ON creator_profile_image_attachments
 WHEN (NEW.surface='public_sfw' AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions WHERE id=NEW.public_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
   OR (NEW.surface='adult_profile' AND NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions WHERE id=NEW.adult_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_requires_draft'); END;
 
-CREATE TRIGGER creator_profile_image_attachment_detach_draft_only
-BEFORE UPDATE OF status ON creator_profile_image_attachments
-WHEN OLD.status='attached' AND NEW.status='detached' AND (
-  (OLD.surface='public_sfw' AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions WHERE id=OLD.public_profile_version_id AND creator_id=OLD.creator_id AND status='draft'))
-  OR (OLD.surface='adult_profile' AND NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions WHERE id=OLD.adult_profile_version_id AND creator_id=OLD.creator_id AND status='draft'))
-)
+CREATE TRIGGER creator_profile_image_attachment_draft_update_only
+BEFORE UPDATE OF creator_id, surface, image_role, public_profile_version_id, adult_profile_version_id, derivative_id, status
+ON creator_profile_image_attachments
+WHEN (NEW.surface='public_sfw' AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions WHERE id=NEW.public_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
+  OR (NEW.surface='adult_profile' AND NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions WHERE id=NEW.adult_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
 BEGIN SELECT RAISE(ABORT,'profile_image_detach_requires_draft'); END;

@@ -203,6 +203,15 @@ BEFORE INSERT ON creator_adult_profile_versions
 WHEN NOT EXISTS (SELECT 1 FROM creator_adult_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
 BEGIN SELECT RAISE(ABORT,'adult_profile_version_creator_mismatch'); END;
 
+-- Composite foreign keys ensure the version owner exists, but the profile ID
+-- also needs to remain owned by that creator whenever either scope column is
+-- changed. Without this update guard, a draft version could be re-parented to
+-- another creator's profile after insertion.
+CREATE TRIGGER IF NOT EXISTS creator_adult_profile_version_creator_scope_update
+BEFORE UPDATE OF profile_id, creator_id ON creator_adult_profile_versions
+WHEN NOT EXISTS (SELECT 1 FROM creator_adult_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'adult_profile_version_creator_mismatch'); END;
+
 CREATE TRIGGER IF NOT EXISTS creator_adult_profile_single_draft
 BEFORE INSERT ON creator_adult_profile_versions
 WHEN NEW.status='draft' AND EXISTS (SELECT 1 FROM creator_adult_profile_versions v WHERE v.profile_id=NEW.profile_id AND v.creator_id=NEW.creator_id AND v.status='draft')
@@ -272,3 +281,29 @@ WHEN NEW.published_version_id IS NOT NULL AND NOT EXISTS (
   WHERE v.id=NEW.published_version_id AND v.profile_id=NEW.id AND v.creator_id=NEW.creator_id AND v.status IN ('approved','published')
 )
 BEGIN SELECT RAISE(ABORT,'adult_profile_requires_approved_version'); END;
+
+-- The two foreign keys below independently prove that a profile and a
+-- version exist, but neither proves that they belong together. Keep the
+-- publication receipt bound to one creator/profile/version tuple on both
+-- write paths.
+CREATE TRIGGER IF NOT EXISTS creator_adult_profile_publication_scope
+BEFORE INSERT ON creator_adult_profile_publications
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM creator_adult_profiles p
+  JOIN creator_adult_profile_versions v
+    ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+)
+BEGIN SELECT RAISE(ABORT,'adult_profile_publication_scope_invalid'); END;
+
+CREATE TRIGGER IF NOT EXISTS creator_adult_profile_publication_scope_update
+BEFORE UPDATE OF profile_id, creator_id, version_id ON creator_adult_profile_publications
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM creator_adult_profiles p
+  JOIN creator_adult_profile_versions v
+    ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+)
+BEGIN SELECT RAISE(ABORT,'adult_profile_publication_scope_invalid'); END;

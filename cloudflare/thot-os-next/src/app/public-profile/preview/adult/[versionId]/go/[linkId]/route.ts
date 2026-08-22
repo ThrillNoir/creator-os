@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { localAdultPreviewCookieName, readLocalAdultPreviewSession, requireLocalAdultPreview } from "@/lib/local-adult-preview";
+import { localPreviewRedirect } from "@/lib/local-preview-redirect";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type AdultLink = { destination_url: string; destination_host: string };
@@ -29,5 +29,5 @@ export async function GET(_: Request, { params }: { params: Promise<{ versionId:
     .bind(linkId, identity.creator.creator_id, versionId).first<AdultLink>();
   const destination = link && approvedDestination(link);
   if (!destination) return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
-  redirect(destination.toString());
+  return localPreviewRedirect(destination);
 }

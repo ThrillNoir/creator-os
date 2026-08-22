@@ -42,9 +42,9 @@
 -- 0037_instagram_analytics_collection_runs.sql 184f296e49fb0b1a7be8d7d19211aaa464d913cae06692cb6d3f9e632e692dcf
 -- 0038_instagram_analytics_metric_coverage.sql 4f67076eca0b6e4196c8f6683f4b8cacf2554b00042993fd624f6be795c4b73a
 -- 0039_production_environment_audit_contract.sql 132aca9a09b09bfb349bb4c5bcef7923e975a732f1eecdd3d018dbd45953ad9c
--- 0040_creator_profile_interactions.sql b5cd5b2b06db732854a0946d93b6343be3de5de6978a314fbadec6700e2fdc19
+-- 0040_creator_profile_interactions.sql d79b782e42cc7a7924caa2d2c3ee435dd62f9b6de43f238a52b4cf5d73284df3
 -- 0041_creator_profile_appearance.sql 88e3e139d41bf64285a334ac9731bee70fd7e50af7ab85232d62bfba9db37977
--- 0042_creator_profile_image_derivatives.sql 78e6544dbba172da7008d6c852a9ed3be89fd1cc7def9a1b44131963024dc1c8
+-- 0042_creator_profile_image_derivatives.sql fd69bc61b238a7bb9d5653c260b9a9c07184dd3012f4180590dcfdbeb62957e0
 
 PRAGMA foreign_keys = ON;
 
@@ -1655,6 +1655,28 @@ BEFORE UPDATE ON creator_adult_profile_appearances
 WHEN NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions v WHERE v.id=OLD.profile_version_id AND v.creator_id=OLD.creator_id AND v.status='draft')
 BEGIN SELECT RAISE(ABORT,'adult_profile_appearance_requires_draft_version'); END;
 
+CREATE TRIGGER creator_adult_profile_publication_scope
+BEFORE INSERT ON creator_adult_profile_publications
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM creator_adult_profiles p
+  JOIN creator_adult_profile_versions v
+    ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+)
+BEGIN SELECT RAISE(ABORT,'adult_profile_publication_scope_invalid'); END;
+
+CREATE TRIGGER creator_adult_profile_publication_scope_update
+BEFORE UPDATE OF profile_id, creator_id, version_id ON creator_adult_profile_publications
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM creator_adult_profiles p
+  JOIN creator_adult_profile_versions v
+    ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+)
+BEGIN SELECT RAISE(ABORT,'adult_profile_publication_scope_invalid'); END;
+
 CREATE TRIGGER creator_adult_profile_published_version
 BEFORE UPDATE OF published_version_id,status ON creator_adult_profiles
 WHEN NEW.published_version_id IS NOT NULL AND NOT EXISTS (
@@ -1670,6 +1692,11 @@ BEGIN SELECT RAISE(ABORT,'adult_profile_already_has_a_draft'); END;
 
 CREATE TRIGGER creator_adult_profile_version_creator_scope
 BEFORE INSERT ON creator_adult_profile_versions
+WHEN NOT EXISTS (SELECT 1 FROM creator_adult_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'adult_profile_version_creator_mismatch'); END;
+
+CREATE TRIGGER creator_adult_profile_version_creator_scope_update
+BEFORE UPDATE OF profile_id, creator_id ON creator_adult_profile_versions
 WHEN NOT EXISTS (SELECT 1 FROM creator_adult_profiles p WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id)
 BEGIN SELECT RAISE(ABORT,'adult_profile_version_creator_mismatch'); END;
 
@@ -1738,22 +1765,32 @@ BEGIN
   SELECT RAISE(ABORT, 'creator_identity_cannot_be_staff');
 END;
 
-CREATE TRIGGER creator_profile_image_attachment_detach_draft_only
-BEFORE UPDATE OF status ON creator_profile_image_attachments
-WHEN OLD.status='attached' AND NEW.status='detached' AND (
-  (OLD.surface='public_sfw' AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions WHERE id=OLD.public_profile_version_id AND creator_id=OLD.creator_id AND status='draft'))
-  OR (OLD.surface='adult_profile' AND NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions WHERE id=OLD.adult_profile_version_id AND creator_id=OLD.creator_id AND status='draft'))
-)
-BEGIN SELECT RAISE(ABORT,'profile_image_detach_requires_draft'); END;
-
 CREATE TRIGGER creator_profile_image_attachment_draft_only
 BEFORE INSERT ON creator_profile_image_attachments
 WHEN (NEW.surface='public_sfw' AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions WHERE id=NEW.public_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
   OR (NEW.surface='adult_profile' AND NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions WHERE id=NEW.adult_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_requires_draft'); END;
 
+CREATE TRIGGER creator_profile_image_attachment_draft_update_only
+BEFORE UPDATE OF creator_id, surface, image_role, public_profile_version_id, adult_profile_version_id, derivative_id, status
+ON creator_profile_image_attachments
+WHEN (NEW.surface='public_sfw' AND NOT EXISTS (SELECT 1 FROM creator_public_profile_versions WHERE id=NEW.public_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
+  OR (NEW.surface='adult_profile' AND NOT EXISTS (SELECT 1 FROM creator_adult_profile_versions WHERE id=NEW.adult_profile_version_id AND creator_id=NEW.creator_id AND status='draft'))
+BEGIN SELECT RAISE(ABORT,'profile_image_detach_requires_draft'); END;
+
 CREATE TRIGGER creator_profile_image_attachment_scope
 BEFORE INSERT ON creator_profile_image_attachments
+WHEN NOT EXISTS (
+  SELECT 1 FROM creator_profile_image_derivatives d
+  JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
+  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND u.surface=NEW.surface
+    AND u.image_role=NEW.image_role AND u.status='processed'
+)
+BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
+
+CREATE TRIGGER creator_profile_image_attachment_scope_update
+BEFORE UPDATE OF creator_id, surface, image_role, public_profile_version_id, adult_profile_version_id, derivative_id, status
+ON creator_profile_image_attachments
 WHEN NOT EXISTS (
   SELECT 1 FROM creator_profile_image_derivatives d
   JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
