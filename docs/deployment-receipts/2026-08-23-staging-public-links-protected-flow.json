@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "publicLinks",
+  "service": "thot-os-public-links",
+  "environment": "staging",
+  "gitSha": "ca0274404f6a04e741466f475bec85bcc53a0537",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T11:21:39.802Z",
+  "worker": "thot-os-public-links-staging",
+  "workerVersion": "f70aa084-3331-458f-a752-4416aea238b4",
+  "deploymentTimestamp": "2026-08-23T11:30:37.463Z",
+  "migrationState": "No D1 migration applied; existing staging baseline retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "verified",
+    "detail": "Safe Adelaide public profile returned HTTP 200. Friendly adult entry is intentionally unavailable until an adult version is human-published."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}
