@@ -97,22 +97,46 @@ test("v4 public image projections contain only an environment-controlled deliver
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v4).env)).status, 404);
 });
 
-test("v2 interaction actions require the exact configured HTTPS protected-service origin", async () => {
+test("v2 interaction actions use the exact configured safe friendly entrance", async () => {
   const v2 = structuredClone(snapshot);
   v2.schemaVersion = 2;
-  v2.actions = [{ id: "more", label: "More from Adelaide", href: "https://adult.example/age/adelaide" }];
-  const { env } = environment(v2, { ADULT_GATEWAY_BASE_URL: "https://adult.example" });
+  v2.actions = [{ id: "more", label: "More from Adelaide", href: "https://links.example/adelaide/more" }];
+  const { env } = environment(v2, {
+    SAFE_PUBLIC_PROFILE_BASE_URL: "https://links.example",
+    ADULT_GATEWAY_BASE_URL: "https://adult.example",
+  });
   const response = await worker.fetch(new Request("https://links.example/adelaide"), env);
   const body = await response.text();
   assert.equal(response.status, 200);
   assert.match(body, /More from Adelaide/);
+  assert.match(body, /https:\/\/links\.example\/adelaide\/more/);
   assert.doesNotMatch(body, /destinationUrl|publishedVersionId/);
   v2.actions[0].href = "javascript:alert(1)";
-  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { ADULT_GATEWAY_BASE_URL: "https://adult.example" }).env)).status, 404);
-  v2.actions[0].href = "https://unconfigured.example/age/adelaide";
-  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { ADULT_GATEWAY_BASE_URL: "https://adult.example" }).env)).status, 404);
-  v2.actions[0].href = "https://adult.example/age/adelaide";
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { SAFE_PUBLIC_PROFILE_BASE_URL: "https://links.example", ADULT_GATEWAY_BASE_URL: "https://adult.example" }).env)).status, 404);
+  v2.actions[0].href = "https://unconfigured.example/adelaide/more";
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { SAFE_PUBLIC_PROFILE_BASE_URL: "https://links.example", ADULT_GATEWAY_BASE_URL: "https://adult.example" }).env)).status, 404);
+  v2.actions[0].href = "https://links.example/adelaide/more";
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2).env)).status, 404);
+});
+
+test("friendly adult entrances use the approved snapshot and an environment-owned gateway destination", async () => {
+  const v2 = structuredClone(snapshot);
+  v2.schemaVersion = 2;
+  v2.actions = [{ id: "more", label: "More from Adelaide", href: "https://links.example/adelaide/more" }];
+  const configured = {
+    SAFE_PUBLIC_PROFILE_BASE_URL: "https://links.example",
+    ADULT_GATEWAY_BASE_URL: "https://adult.example",
+  };
+  const allowed = await worker.fetch(new Request("https://links.example/adelaide/more?next=https://attacker.example&returnTo=https://elsewhere.example"), environment(v2, configured).env);
+  assert.equal(allowed.status, 302);
+  assert.equal(allowed.headers.get("location"), "https://adult.example/age/adelaide");
+  assert.equal(allowed.headers.get("cache-control"), "no-store");
+
+  const missingAction = structuredClone(v2);
+  missingAction.actions = [];
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide/more"), environment(missingAction, configured).env)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide/more"), environment(v2, { SAFE_PUBLIC_PROFILE_BASE_URL: "https://links.example" }).env)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://links.example/not-a-slug/more"), environment(v2, configured).env)).status, 404);
 });
 
 test("stored redirect destinations reject credentials, hostname mismatch, and caller-controlled data", async () => {

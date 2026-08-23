@@ -63,6 +63,7 @@ function configResources(config) {
     r2: (config.r2_buckets ?? []).map((binding) => binding.bucket_name),
     images: config.images?.binding ? [config.images.binding] : [],
     analytics: (config.analytics_engine_datasets ?? []).map((binding) => binding.dataset),
+    kv: (config.kv_namespaces ?? []).map((binding) => binding.id),
     queues: [
       ...(config.queues?.producers ?? []).map((binding) => binding.queue),
       ...(config.queues?.consumers ?? []).map((binding) => binding.queue),
@@ -78,6 +79,7 @@ function resourceNames(environment) {
     d1: new Set(Object.keys(environment.resources?.d1 ?? {})),
     r2: new Set(environment.resources?.r2 ?? []),
     analytics: new Set(environment.resources?.analytics ?? []),
+    kv: new Set(environment.resources?.kv ?? []),
     queues: new Set(environment.resources?.queues ?? []),
     workers: new Set(Object.values(environment.resources?.workers ?? {})),
   };
@@ -120,7 +122,22 @@ function validatePublicationPolicyConfig(errors, componentName, component, confi
     errors.push("Synthetic-only public profile publication requires at least one configured synthetic creator ID.");
   }
   if (policy.adultProfile.mode !== "disabled") {
-    errors.push("Adult publication must remain disabled until protected-service configuration is separately approved.");
+    if (component.protectedAdultRelease !== true) errors.push("Adult publication requires an explicitly approved protected-service configuration.");
+    const requiredVars = {
+      ADULT_MEDIA_DELIVERY_ENABLED: "1",
+      ADULT_GATEWAY_BASE_URL: "https://more-staging.thathuboverthere.com",
+      SAFE_PUBLIC_PROFILE_BASE_URL: "https://public-profile-staging.thathuboverthere.com",
+    };
+    for (const [name, value] of Object.entries(requiredVars)) {
+      if (vars[name] !== value) errors.push(`Protected adult release requires ${name}=${value}.`);
+    }
+    if (!(config.kv_namespaces ?? []).some((binding) => binding.binding === "ADULT_PROFILES")) errors.push("Protected adult release requires the isolated ADULT_PROFILES KV binding.");
+    if (!(config.r2_buckets ?? []).some((binding) => binding.binding === "ADULT_MEDIA" && binding.bucket_name === "thot-os-adult-media-staging")) errors.push("Protected adult release requires the isolated ADULT_MEDIA bucket.");
+    const workflows = config.workflows ?? [];
+    if (!workflows.some((workflow) => workflow.binding === "ADULT_PROFILE_PUBLISH" && workflow.class_name === "AdultProfilePublishWorkflow")
+      || !workflows.some((workflow) => workflow.binding === "ADULT_PROFILE_WITHDRAW" && workflow.class_name === "AdultProfileWithdrawWorkflow")) {
+      errors.push("Protected adult release requires publish and withdrawal Workflows.");
+    }
   }
 }
 
@@ -219,6 +236,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
     addExactListError(errors, "R2 bindings", resources.r2, component.resources?.r2 ?? []);
     addExactListError(errors, "Images bindings", resources.images, component.resources?.images ?? []);
     addExactListError(errors, "Queue bindings", [...new Set(resources.queues)], component.resources?.queues ?? []);
+    addExactListError(errors, "KV namespace bindings", resources.kv, component.resources?.kv ?? []);
     const expectedServices = component.resources?.services ?? {};
     if (JSON.stringify(resources.services) !== JSON.stringify(expectedServices)) errors.push(`Service bindings mismatch for ${environmentName}/${componentName}.`);
     addExactListError(errors, "Required secret names", resources.secrets, component.requiredSecrets ?? []);
@@ -242,6 +260,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
       ["D1", resources.d1.map((binding) => binding.name), currentResources.d1],
       ["R2", resources.r2, currentResources.r2],
       ["Analytics Engine", resources.analytics, currentResources.analytics],
+      ["KV namespace", resources.kv, currentResources.kv],
       ["Queue", resources.queues, currentResources.queues],
       ["service Worker", Object.values(resources.services), currentResources.workers],
     ];
@@ -249,7 +268,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
       for (const value of values) {
         if (!ownedValues.has(value)) errors.push(`${label} ${value} is not owned by ${environmentName}.`);
         for (const otherResources of allOtherResources) {
-          if (otherResources.d1.has(value) || otherResources.r2.has(value) || otherResources.queues.has(value) || otherResources.workers.has(value)) {
+          if (otherResources.d1.has(value) || otherResources.r2.has(value) || otherResources.kv.has(value) || otherResources.queues.has(value) || otherResources.workers.has(value)) {
             errors.push(`Cross-environment binding: ${environmentName}/${componentName} references ${value}.`);
           }
         }

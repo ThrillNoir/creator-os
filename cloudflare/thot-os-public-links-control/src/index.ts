@@ -152,6 +152,12 @@ function configuredActionHref(baseUrl: string | undefined, route: "book" | "age"
   return origin ? `${origin}/${route}/${encodeURIComponent(slug)}` : null;
 }
 
+/** The safe Worker owns the friendly adult entrance and only redirects from it. */
+function configuredFriendlyMoreHref(baseUrl: string | undefined, slug: string) {
+  const origin = configuredOrigin(baseUrl);
+  return origin ? `${origin}/${encodeURIComponent(slug)}/more` : null;
+}
+
 function publicMediaDeliveryConfigured(env: Env) {
   return env.PUBLIC_MEDIA_DELIVERY_ENABLED === "1" && Boolean(env.MEDIA && env.PUBLIC_MEDIA && configuredOrigin(env.PUBLIC_MEDIA_BASE_URL));
 }
@@ -291,7 +297,7 @@ async function publicActions(env: Env, profile: ProfileRow, contacts: ContactRow
   const bookingHref = configuredActionHref(env.BOOKING_ACTION_BASE_URL, "book", profile.slug);
   // A contact action requires both a configured route and a protected KV projection.
   if (bookingHref && env.CONTACT_PROFILES && contacts.length > 0) actions.push({ id: "book", label: `Book ${profile.display_name}`, href: bookingHref });
-  const adultHref = configuredActionHref(env.ADULT_GATEWAY_BASE_URL, "age", profile.slug);
+  const adultHref = configuredFriendlyMoreHref(env.SAFE_PUBLIC_PROFILE_BASE_URL, profile.slug);
   if (includeAdultAction && adultHref && await adultProjectionIsEligible(env, profile.creator_id)) actions.push({ id: "more", label: `More from ${profile.display_name}`, href: adultHref });
   return actions;
 }

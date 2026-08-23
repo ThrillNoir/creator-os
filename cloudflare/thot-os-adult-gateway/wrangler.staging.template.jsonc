@@ -4,7 +4,7 @@
   "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
   "name": "REQUIRES_APPROVED_STAGING_ADULT_GATEWAY",
   "main": "src/index.ts",
-  "compatibility_date": "2026-08-21",
+  "compatibility_date": "2026-08-20",
   "workers_dev": false,
   "preview_urls": false,
   "kv_namespaces": [{ "binding": "ADULT_PROFILES", "id": "REQUIRES_APPROVED_STAGING_KV_NAMESPACE" }],

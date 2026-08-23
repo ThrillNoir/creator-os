@@ -10,10 +10,13 @@
   "vars": {
     "PUBLIC_PROFILE_PUBLICATION_MODE": "synthetic-only",
     "PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS": "staging-synthetic-creator,adelaide",
-    "ADULT_PROFILE_PUBLICATION_MODE": "disabled",
-    "ADULT_PROFILE_SYNTHETIC_CREATOR_IDS": "",
+    "ADULT_PROFILE_PUBLICATION_MODE": "synthetic-only",
+    "ADULT_PROFILE_SYNTHETIC_CREATOR_IDS": "adelaide",
     "PUBLIC_MEDIA_DELIVERY_ENABLED": "1",
-    "PUBLIC_MEDIA_BASE_URL": "https://public-profile-staging.thathuboverthere.com"
+    "PUBLIC_MEDIA_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
+    "ADULT_MEDIA_DELIVERY_ENABLED": "1",
+    "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
+    "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com"
   },
   "d1_databases": [
     {
@@ -27,6 +30,10 @@
     {
       "binding": "PUBLIC_LINKS",
       "id": "34a4601e8bbb4d3bb05656bf1f59c2c1"
+    },
+    {
+      "binding": "ADULT_PROFILES",
+      "id": "960ce926cd234170aa789a8eb0ca223a"
     }
   ],
   "r2_buckets": [
@@ -37,6 +44,10 @@
     {
       "binding": "PUBLIC_MEDIA",
       "bucket_name": "thot-os-public-media-staging"
+    },
+    {
+      "binding": "ADULT_MEDIA",
+      "bucket_name": "thot-os-adult-media-staging"
     }
   ],
   "workflows": [
@@ -49,6 +60,16 @@
       "name": "thot-os-public-profile-withdraw-staging",
       "binding": "PUBLIC_PROFILE_WITHDRAW",
       "class_name": "PublicProfileWithdrawWorkflow"
+    },
+    {
+      "name": "thot-os-adult-profile-publish-staging",
+      "binding": "ADULT_PROFILE_PUBLISH",
+      "class_name": "AdultProfilePublishWorkflow"
+    },
+    {
+      "name": "thot-os-adult-profile-withdraw-staging",
+      "binding": "ADULT_PROFILE_WITHDRAW",
+      "class_name": "AdultProfileWithdrawWorkflow"
     }
   ],
   "observability": {

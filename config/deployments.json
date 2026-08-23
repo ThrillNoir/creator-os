@@ -32,6 +32,7 @@
         "r2": [
           "thot-os-media-staging",
           "thot-os-public-media-staging",
+          "thot-os-adult-media-staging",
           "thot-os-previews-staging",
           "thot-os-creator-intake-staging",
           "thot-os-creator-packages-staging"
@@ -42,8 +43,8 @@
           "thot-os-preview-staging",
           "thot-os-preview-dlq-staging"
         ],
-        "kv": ["thot-os-public-links-staging"],
-        "analytics": ["thot-os-public-link-events-staging"],
+        "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a"],
+        "analytics": ["thot-os-public-link-events-staging", "thot-os-adult-events-staging"],
         "workers": {
           "web": "thot-os-staging",
           "instagram": "thot-os-instagram-scheduler-staging",
@@ -53,6 +54,7 @@
           "publicLinks": "thot-os-public-links-staging",
           "publicMedia": "thot-os-public-media-staging",
           "publicLinksControl": "thot-os-public-links-control-staging",
+          "adultGateway": "thot-os-adult-gateway-staging",
           "legacyWorker": "thot-os-legacy-staging",
           "legacyGateway": "creator-os-staging-gateway"
         }
@@ -142,13 +144,13 @@
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-staging",
           "deployable": true,
-          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured staging allowlist (the synthetic fixture and the explicitly approved Adelaide SFW test) and must never bind operational D1 or private R2. Adult and booking-contact publication remain disabled.",
+          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured staging allowlist and must never bind operational D1, adult KV, or private R2. Its only adult capability is a no-store redirect from /{slug}/more to the configured protected gateway.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],
             "r2": [],
             "queues": [],
-            "kv": ["thot-os-public-links-staging"],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1"],
             "analytics": ["thot-os-public-link-events-staging"],
             "services": {}
           }
@@ -165,7 +167,7 @@
             "d1": [],
             "r2": ["thot-os-public-media-staging"],
             "queues": [],
-            "kv": ["thot-os-public-links-staging"],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1"],
             "analytics": [],
             "services": {}
           }
@@ -179,15 +181,33 @@
           "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
           "publicationPolicy": {
             "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator", "adelaide"] },
-            "adultProfile": { "mode": "disabled", "syntheticCreatorIds": [] }
+            "adultProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["adelaide"] }
           },
+          "protectedAdultRelease": true,
           "requiredSecrets": [],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": ["thot-os-media-staging", "thot-os-public-media-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-public-media-staging", "thot-os-adult-media-staging"],
             "queues": [],
-            "kv": ["thot-os-public-links-staging"],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a"],
             "analytics": [],
+            "services": {}
+          }
+        },
+        "adultGateway": {
+          "service": "thot-os-adult-gateway",
+          "config": "cloudflare/thot-os-adult-gateway/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-adult-gateway",
+          "worker": "thot-os-adult-gateway-staging",
+          "deployable": true,
+          "stagingBoundary": "Protected adult staging gateway for more-staging.thathuboverthere.com only. It may bind only the isolated adult projection KV, adult derivative R2 bucket, and adult event dataset. It must never bind D1, authoring R2, safe public KV, contact KV, or the SFW public Worker.",
+          "requiredSecrets": ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"],
+          "resources": {
+            "d1": [],
+            "r2": ["thot-os-adult-media-staging"],
+            "queues": [],
+            "kv": ["960ce926cd234170aa789a8eb0ca223a"],
+            "analytics": ["thot-os-adult-events-staging"],
             "services": {}
           }
         },
@@ -242,7 +262,7 @@
         },
         "r2": ["thot-os-media-production", "thot-os-previews-production"],
         "queues": [],
-        "kv": ["thot-os-public-links-production"],
+        "kv": ["be71a3d6f07c4c708bc3e053d7ef4be5"],
         "analytics": ["thot-os-public-link-events-production"],
         "workers": {
           "publicLinks": "thot-os-public-links-production"
@@ -261,7 +281,7 @@
             "d1": [],
             "r2": [],
             "queues": [],
-            "kv": ["thot-os-public-links-production"],
+            "kv": ["be71a3d6f07c4c708bc3e053d7ef4be5"],
             "analytics": ["thot-os-public-link-events-production"],
             "services": {}
           }

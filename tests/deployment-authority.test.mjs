@@ -19,6 +19,7 @@ function fixtureRegistry() {
         resources: {
           d1: { "thot-os-staging": { id: "d1-staging", migrationsDir: "migrations" } },
           r2: ["thot-os-media-staging"],
+          kv: ["kv-staging"],
           queues: ["thot-os-jobs-staging"],
           workers: { web: "thot-os-staging-web" },
         },
@@ -32,6 +33,7 @@ function fixtureRegistry() {
             resources: {
               d1: ["thot-os-staging"],
               r2: ["thot-os-media-staging"],
+              kv: ["kv-staging"],
               images: ["IMAGES"],
               queues: ["thot-os-jobs-staging"],
               services: {},
@@ -46,6 +48,7 @@ function fixtureRegistry() {
         resources: {
           d1: { "thot-os-production": { id: "d1-production", migrationsDir: "migrations" } },
           r2: ["thot-os-media-production"],
+          kv: ["kv-production"],
           queues: ["thot-os-jobs-production"],
           workers: { web: "thot-os-production-web" },
         },
@@ -59,6 +62,7 @@ function fixtureRegistry() {
             resources: {
               d1: ["thot-os-production"],
               r2: ["thot-os-media-production"],
+              kv: ["kv-production"],
               queues: ["thot-os-jobs-production"],
               services: {},
             },
@@ -76,6 +80,7 @@ function fixtureConfig({ environment = "staging", secretNames } = {}) {
     account_id: production ? "account-production" : "account-staging",
     d1_databases: [{ database_name: production ? "thot-os-production" : "thot-os-staging", database_id: production ? "d1-production" : "d1-staging", migrations_dir: "migrations" }],
     r2_buckets: [{ bucket_name: production ? "thot-os-media-production" : "thot-os-media-staging" }],
+    kv_namespaces: [{ id: production ? "kv-production" : "kv-staging" }],
     images: { binding: "IMAGES" },
     queues: { producers: [{ queue: production ? "thot-os-jobs-production" : "thot-os-jobs-staging" }] },
     services: [],
@@ -106,6 +111,15 @@ test("production cannot bind to a declared staging resource", () => {
   const config = fixtureConfig({ environment: "production" });
   config.r2_buckets[0] = { bucket_name: "thot-os-media-staging" };
   const result = validateDeployment({ registry, environmentName: "production", componentName: "web", config });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /Cross-environment binding/);
+});
+
+test("a KV namespace cannot cross an environment boundary", () => {
+  const registry = fixtureRegistry();
+  const config = fixtureConfig({ environment: "staging" });
+  config.kv_namespaces[0] = { id: "kv-production" };
+  const result = validateDeployment({ registry, environmentName: "staging", componentName: "web", config });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /Cross-environment binding/);
 });

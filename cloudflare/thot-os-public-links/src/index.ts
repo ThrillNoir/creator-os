@@ -105,8 +105,17 @@ function configuredActionBase(value: string | undefined) {
 function validActionUrl(value: unknown, actionId: PublicAction["id"], slug: string, env: Env) {
   const url = safeHttpsUrl(value);
   if (!url || url.username || url.password || url.search || url.hash) return false;
-  const base = configuredActionBase(actionId === "book" ? env.BOOKING_ACTION_BASE_URL : env.ADULT_GATEWAY_BASE_URL);
-  return Boolean(base && url.origin === base && url.pathname === `/${actionId === "book" ? "book" : "age"}/${slug}`);
+  if (actionId === "book") {
+    const base = configuredActionBase(env.BOOKING_ACTION_BASE_URL);
+    return Boolean(base && url.origin === base && url.pathname === `/book/${encodeURIComponent(slug)}`);
+  }
+  const safeProfileBase = configuredActionBase(env.SAFE_PUBLIC_PROFILE_BASE_URL);
+  return Boolean(safeProfileBase && url.origin === safeProfileBase && url.pathname === `/${encodeURIComponent(slug)}/more`);
+}
+
+function configuredAdultGateHref(value: string | undefined, slug: string) {
+  const base = configuredActionBase(value);
+  return base ? `${base}/age/${encodeURIComponent(slug)}` : null;
 }
 
 function configuredPublicMediaBase(value: string | undefined) {
@@ -234,6 +243,20 @@ export default {
     if (url.pathname === "/healthz") return textResponse("ok", 200, { "cache-control": "public, max-age=60" });
 
     const segments = url.pathname.split("/").filter(Boolean);
+    if (segments.length === 2 && isPublicCreatorSlug(segments[0]) && segments[1] === "more") {
+      const snapshot = await loadSnapshot(env, segments[0]);
+      const more = snapshot?.actions?.find((action) => action.id === "more");
+      // The safe snapshot proves the action is currently eligible. The adult
+      // origin is environment-owned; no request value, snapshot value, cookie,
+      // or subrequest can select a different protected destination.
+      const destination = snapshot && more ? configuredAdultGateHref(env.ADULT_GATEWAY_BASE_URL, snapshot.creator.slug) : null;
+      if (!destination) return textResponse("Not found", 404);
+      return new Response(null, {
+        status: 302,
+        headers: { ...securityHeaders(), "cache-control": "no-store", location: destination },
+      });
+    }
+
     if (segments.length === 1 && isPublicCreatorSlug(segments[0])) {
       const snapshot = await loadSnapshot(env, segments[0]);
       if (!snapshot) return textResponse("Not found", 404);

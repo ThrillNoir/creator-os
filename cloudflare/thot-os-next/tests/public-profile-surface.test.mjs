@@ -61,7 +61,7 @@ test("publish is one explicit creator-scoped action while protected release and 
   assert.match(actions, /publishAdultProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
   assert.match(actions, /String\(env\.ADULT_PROFILE_PUBLISHING_ENABLED\) !== "1"/);
   assert.match(adultPage, /String\(env\.ADULT_PROFILE_PUBLISHING_ENABLED\) === "1"/);
-  assert.match(wrangler, /"ADULT_PROFILE_PUBLISHING_ENABLED": "0"/);
+  assert.match(wrangler, /"ADULT_PROFILE_PUBLISHING_ENABLED": "1"/);
   assert.match(uploadRoute, /isSameOriginRequest\(request\)/);
   assert.match(imageRoute, /isSameOriginRequest\(request\)/);
 });
