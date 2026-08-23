@@ -11,7 +11,9 @@
     "PUBLIC_PROFILE_PUBLICATION_MODE": "synthetic-only",
     "PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS": "staging-synthetic-creator",
     "ADULT_PROFILE_PUBLICATION_MODE": "disabled",
-    "ADULT_PROFILE_SYNTHETIC_CREATOR_IDS": ""
+    "ADULT_PROFILE_SYNTHETIC_CREATOR_IDS": "",
+    "PUBLIC_MEDIA_DELIVERY_ENABLED": "1",
+    "PUBLIC_MEDIA_BASE_URL": "https://public-profile-staging.thathuboverthere.com"
   },
   "d1_databases": [
     {
@@ -25,6 +27,16 @@
     {
       "binding": "PUBLIC_LINKS",
       "id": "34a4601e8bbb4d3bb05656bf1f59c2c1"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "thot-os-media-staging"
+    },
+    {
+      "binding": "PUBLIC_MEDIA",
+      "bucket_name": "thot-os-public-media-staging"
     }
   ],
   "workflows": [

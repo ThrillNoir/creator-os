@@ -47,3 +47,15 @@ test("public media rejects private keys, a foreign snapshot URL, and metadata or
   assert.equal((await worker.fetch(new Request(`https://media.example/media/adelaide/version-1/${attachmentId}`), environment(snapshot, { objectChecksum: "b".repeat(64) }).env)).status, 404);
   assert.equal((await worker.fetch(new Request(`https://media.example/media/adelaide/version-1/${attachmentId}`), environment(snapshot, { objectMetadata: { creatorSlug: "adelaide", versionId: "version-1", attachmentId, checksum, surface: "adult_profile", imageRole: "avatar" } }).env)).status, 404);
 });
+
+test("public media rejects malformed creators and serves no cacheable error responses", async () => {
+  const invalid = structuredClone(snapshot);
+  invalid.creator = { slug: "adelaide" };
+  const response = await worker.fetch(new Request(`https://media.example/media/adelaide/version-1/${attachmentId}`), environment(invalid).env);
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+
+  const method = await worker.fetch(new Request(`https://media.example/media/adelaide/version-1/${attachmentId}`, { method: "POST" }), environment().env);
+  assert.equal(method.status, 405);
+  assert.equal(method.headers.get("cache-control"), "no-store");
+});

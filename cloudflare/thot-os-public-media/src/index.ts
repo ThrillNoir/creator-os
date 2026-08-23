@@ -9,7 +9,7 @@ type PublicMediaItem = {
 type PublicSnapshot = {
   schemaVersion: 4;
   publishedVersionId: string;
-  creator: { slug: string };
+  creator: { slug: string; displayName: string; headline: string; bio: string };
   media: PublicMediaItem[];
 };
 
@@ -50,11 +50,21 @@ function validHref(value: unknown, requestOrigin: string, slug: string, versionI
   }
 }
 
+function validCreator(value: unknown, slug: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const creator = value as Partial<PublicSnapshot["creator"]>;
+  return hasOnlyKeys(creator, ["slug", "displayName", "headline", "bio"])
+    && creator.slug === slug && SLUG.test(creator.slug)
+    && typeof creator.displayName === "string" && creator.displayName.length >= 1 && creator.displayName.length <= 120
+    && typeof creator.headline === "string" && creator.headline.length <= 280
+    && typeof creator.bio === "string" && creator.bio.length <= 2000;
+}
+
 function validSnapshot(value: unknown, requestOrigin: string, slug: string, versionId: string, attachmentId: string): value is PublicSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Partial<PublicSnapshot>;
   if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media"])
-    || snapshot.schemaVersion !== 4 || snapshot.publishedVersionId !== versionId || !snapshot.creator || snapshot.creator.slug !== slug || !Array.isArray(snapshot.media)) return false;
+    || snapshot.schemaVersion !== 4 || snapshot.publishedVersionId !== versionId || !validCreator(snapshot.creator, slug) || !Array.isArray(snapshot.media)) return false;
   const selected = snapshot.media.filter((item) => item && typeof item === "object" && item.id === attachmentId);
   if (selected.length !== 1) return false;
   const media = selected[0];

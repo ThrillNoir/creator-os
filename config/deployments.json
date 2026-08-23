@@ -31,6 +31,7 @@
         },
         "r2": [
           "thot-os-media-staging",
+          "thot-os-public-media-staging",
           "thot-os-previews-staging",
           "thot-os-creator-intake-staging",
           "thot-os-creator-packages-staging"
@@ -50,6 +51,7 @@
           "telegram": "thot-os-telegram-bridge-staging",
           "vault": "thot-os-vault-bridge-staging",
           "publicLinks": "thot-os-public-links-staging",
+          "publicMedia": "thot-os-public-media-staging",
           "publicLinksControl": "thot-os-public-links-control-staging",
           "legacyWorker": "thot-os-legacy-staging",
           "legacyGateway": "creator-os-staging-gateway"
@@ -140,7 +142,7 @@
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-staging",
           "deployable": true,
-          "stagingBoundary": "Isolated staging Worker only. Do not attach a custom domain or publish a real creator profile until the synthetic publication-and-withdrawal check and written destination approval are complete. This Worker must never bind operational D1 or private R2.",
+          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured synthetic creator and must never bind operational D1 or private R2. Adult and booking-contact publication remain disabled.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],
@@ -148,6 +150,23 @@
             "queues": [],
             "kv": ["thot-os-public-links-staging"],
             "analytics": ["thot-os-public-link-events-staging"],
+            "services": {}
+          }
+        },
+        "publicMedia": {
+          "service": "thot-os-public-media",
+          "config": "cloudflare/thot-os-public-media/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-media",
+          "worker": "thot-os-public-media-staging",
+          "deployable": true,
+          "stagingBoundary": "Isolated SFW derivative delivery only for public-profile-staging.thathuboverthere.com/media/*. It may bind only the public-link projection KV and the dedicated public derivative bucket; it must never bind private authoring R2, D1, contact, or adult resources.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": [],
+            "r2": ["thot-os-public-media-staging"],
+            "queues": [],
+            "kv": ["thot-os-public-links-staging"],
+            "analytics": [],
             "services": {}
           }
         },
@@ -165,7 +184,7 @@
           "requiredSecrets": [],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": [],
+            "r2": ["thot-os-media-staging", "thot-os-public-media-staging"],
             "queues": [],
             "kv": ["thot-os-public-links-staging"],
             "analytics": [],
