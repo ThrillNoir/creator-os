@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "web",
+  "service": "thot-os-web",
+  "environment": "staging",
+  "gitSha": "fdf36e7b2c08a6714cae4a84d930ab55183f015f",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T07:57:15.336Z",
+  "worker": "thot-os-staging",
+  "workerVersion": "23820c8d-f01e-42f5-87cd-80d8e6f01e13",
+  "deploymentTimestamp": "2026-08-23T07:59:45.396Z",
+  "migrationState": "0040-0043 applied and remotely confirmed",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "deployed",
+    "detail": "Cloudflare version confirmed; unauthenticated /health returned the expected Access redirect. Authenticated health was not run because no Access session was supplied."
+  },
+  "operator": "Codex",
+  "tool": "manual-controlled-deploy"
+}
