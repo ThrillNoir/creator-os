@@ -1,9 +1,9 @@
-import { publishPublicProfileAction, savePublicProfileDraftAction, withdrawPublicProfileAction } from "@/app/actions";
+import { withdrawPublicProfileAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
-import { ProfileAppearanceEditor, type ProfileImageAttachment } from "@/components/profile-appearance-editor";
+import { PublicProfileEditor } from "@/components/public-profile-editor";
 import Link from "next/link";
 import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
@@ -82,34 +82,17 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const notice = query.notice ? notices[query.notice] : null;
   const defaultSlug = profile?.slug ?? creator?.slug ?? "creator";
   const authoringAppearance = appearanceFromRow(authoring ? appearances.results.find((appearance) => appearance.profile_version_id === authoring.id) : undefined);
-  const authoringImages: ProfileImageAttachment[] = authoring ? images.results.filter((image) => image.profile_version_id === authoring.id).map((image) => ({ id: image.id, role: image.image_role, previewUrl: `/api/profile-image/${image.id}` })) : [];
+  const authoringImages = authoring ? images.results.filter((image) => image.profile_version_id === authoring.id).map((image) => ({ id: image.id, role: image.image_role, previewUrl: `/api/profile-image/${image.id}` })) : [];
 
   return <AppShell active="Public profile"><PageHeader title="Public profile" subtitle="Build, preview and publish this creator’s public link page." eyebrow="PUBLIC LINKS" />
     {notice && <div className="success">{notice}</div>}
     {authoring && <Link className="preview-link" href="/public-profile/preview">Open private local preview</Link>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Save changes privately, preview the page, then publish when it is ready.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Saved" : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
-      {canEdit ? <form action={savePublicProfileDraftAction} className="inline-form public-profile-form" id="public-profile-editor">
-        <label>Public URL slug<input name="slug" required maxLength={80} defaultValue={defaultSlug} disabled={Boolean(profile?.published_version_id)} autoComplete="off" /><small>{profile?.published_version_id ? "Published public URL slugs are stable. Withdraw the current profile before changing its URL." : "Lowercase letters, numbers and single hyphens only."}</small></label>
-        <label>Display name <small>(optional)</small><input name="displayName" maxLength={120} defaultValue={authoring?.display_name ?? context.creator.creator_name} /></label>
-        <label className="wide">Headline<input name="headline" maxLength={280} defaultValue={authoring?.headline ?? ""} /></label>
-        <label className="wide">Bio<textarea name="bio" maxLength={2000} defaultValue={authoring?.bio ?? ""} /></label>
-        <div className="section-divider wide"><b>Booking contact</b><span>These values are stored only for the isolated booking flow. They are never included in the safe public-profile page or its public snapshot.</span></div>
-        <label>Phone <small>(optional)</small><input name="bookingPhone" type="tel" inputMode="tel" maxLength={20} defaultValue={phone} placeholder="+61400000000" autoComplete="tel" /></label>
-        <label>Email <small>(optional)</small><input name="bookingEmail" type="email" maxLength={254} defaultValue={email} placeholder="bookings@example.com" autoComplete="email" /></label>
-        <div className="section-divider wide"><b>Links</b><span>Add social or other public destinations. Blank rows are not shown, and only approved HTTPS links can be published.</span></div>
-        {slots.map((link, index) => <div className="public-link-fields" key={link?.id ?? `new-${index}`}><input type="hidden" name="linkStableId" value={link?.stable_link_id ?? ""} /><label>Label<input name="linkLabel" maxLength={80} defaultValue={link?.label ?? ""} placeholder="Official site" /></label><label>HTTPS destination<input name="linkDestination" type="url" defaultValue={link?.destination_url ?? ""} placeholder="https://example.com" /></label></div>)}
-        <ProfileAppearanceEditor surface="sfw" initialAppearance={authoringAppearance} displayName={authoring?.display_name ?? context.creator.creator_name} sampleLinks={authoringLinks.map((link) => link.label)} versionId={draft?.id} initialImages={authoringImages} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
-      </form> : <div className="empty"><b>Read-only public profile view</b><span>Your role can inspect profile history but cannot alter text, destinations, approvals, or publication.</span></div>}
-      {canEdit && <div className="profile-action-bar wide" aria-label="Profile actions">
-        <div><b>{published ? draft ? "Unpublished changes" : "Live" : versionForPublish ? "Saved privately" : "Not saved yet"}</b><span>{published && !draft ? "Your public profile is live." : "Save your changes, then publish when ready."}</span></div>
-        <div className="profile-action-buttons">
-          <button className="secondary-action" type="submit" form="public-profile-editor">Save</button>
-          {canApprove && versionForPublish && <form action={publishPublicProfileAction}><input type="hidden" name="versionId" value={versionForPublish.id} /><button className="primary" type="submit" disabled={!publishingConfigured}>Publish</button></form>}
-          {published && canApprove && <form action={withdrawPublicProfileAction}><input type="hidden" name="versionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form>}
-        </div>
-        {!publishingConfigured && canApprove && <small>Publishing will become available when the staging release service is configured.</small>}
-        {!canApprove && <small>Save changes here. An agency administrator can publish them.</small>}
-      </div>}
+      {canEdit ? <PublicProfileEditor defaultSlug={defaultSlug} displayName={authoring?.display_name ?? context.creator.creator_name} headline={authoring?.headline ?? ""} bio={authoring?.bio ?? ""} phone={phone} email={email}
+        links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
+        appearance={authoringAppearance} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} canApprove={canApprove} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
+        : <div className="empty"><b>Read-only public profile view</b><span>Your role can inspect profile history but cannot alter text, destinations, approvals, or publication.</span></div>}
+      {published && canApprove && <div className="profile-action-bar wide"><form action={withdrawPublicProfileAction}><input type="hidden" name="versionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form></div>}
     </section>
 
     <details className="panel profile-history-panel"><summary>History ({versions.results.length} version{versions.results.length === 1 ? "" : "s"})</summary>

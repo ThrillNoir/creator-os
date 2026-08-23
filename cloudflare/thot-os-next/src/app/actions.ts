@@ -27,6 +27,34 @@ type PublicProfileLinkInput = {
 
 type PublicContactInput = { channel: "sms" | "email"; value: string };
 
+export type PublicProfileDraftValues = {
+  slug: string;
+  displayName: string;
+  headline: string;
+  bio: string;
+  bookingPhone: string;
+  bookingEmail: string;
+  linkLabels: string[];
+  linkDestinations: string[];
+  linkStableIds: string[];
+};
+
+export type PublicProfileDraftState = {
+  status: "idle" | "error";
+  message: string | null;
+  reasonCode: string | null;
+  fieldErrors: Record<string, string>;
+  values: PublicProfileDraftValues | null;
+};
+
+export const initialPublicProfileDraftState: PublicProfileDraftState = {
+  status: "idle",
+  message: null,
+  reasonCode: null,
+  fieldErrors: {},
+  values: null,
+};
+
 type AdultProfileLinkInput = {
   stableId: string;
   label: string;
@@ -66,24 +94,67 @@ function publicProfileSlugValue(value: FormDataEntryValue | null) {
   return slug;
 }
 
-function publicProfileLinks(formData: FormData) {
-  const labels = formData.getAll("linkLabel").map((value) => String(value).replace(/\s+/g, " ").trim());
-  const destinations = formData.getAll("linkDestination").map((value) => String(value).trim());
-  const stableIds = formData.getAll("linkStableId").map((value) => String(value).trim());
-  const links = parseProfileLinkRows({ labels, destinations, stableIds, maximum: 8 }).map((link): PublicProfileLinkInput => {
-    const stableId = link.stableId || crypto.randomUUID();
-    if (!publicProfileId.test(stableId)) throw new Error("A public link identity is invalid. Refresh the page and try again.");
-    return { id: crypto.randomUUID(), stableId, label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder };
-  });
-  return links;
+function submittedPublicProfileDraftValues(formData: FormData): PublicProfileDraftValues {
+  return {
+    slug: String(formData.get("slug") ?? ""),
+    displayName: String(formData.get("displayName") ?? ""),
+    headline: String(formData.get("headline") ?? ""),
+    bio: String(formData.get("bio") ?? ""),
+    bookingPhone: String(formData.get("bookingPhone") ?? ""),
+    bookingEmail: String(formData.get("bookingEmail") ?? ""),
+    linkLabels: formData.getAll("linkLabel").map(String),
+    linkDestinations: formData.getAll("linkDestination").map(String),
+    linkStableIds: formData.getAll("linkStableId").map(String),
+  };
 }
 
-function publicProfileContacts(formData: FormData) {
-  const phone = publicText(formData.get("bookingPhone"), 20, "phone number", { collapseWhitespace: true });
-  const email = publicText(formData.get("bookingEmail"), 254, "email address", { collapseWhitespace: true }).toLowerCase();
-  if (phone && !/^\+[1-9]\d{5,14}$/.test(phone)) throw new Error("Use a phone number in international format, for example +61400000000.");
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email address.");
-  return [phone ? { channel: "sms", value: phone } : null, email ? { channel: "email", value: email } : null].filter(Boolean) as PublicContactInput[];
+function validationError(values: PublicProfileDraftValues, fieldErrors: Record<string, string>): PublicProfileDraftState {
+  return { status: "error", message: "Fix the highlighted fields and save again.", reasonCode: "profile_validation_failed", fieldErrors, values };
+}
+
+function validatePublicProfileDraft(formData: FormData, values: PublicProfileDraftValues) {
+  const fieldErrors: Record<string, string> = {};
+  const validate = <T>(field: string, run: () => T): T | null => {
+    try { return run(); } catch (error) {
+      fieldErrors[field] = error instanceof Error ? error.message : "Enter a valid value.";
+      return null;
+    }
+  };
+  const slug = validate("slug", () => publicProfileSlugValue(values.slug));
+  const requestedDisplayName = validate("displayName", () => publicText(values.displayName, 120, "display name", { collapseWhitespace: true }));
+  const headline = validate("headline", () => publicText(values.headline, 280, "headline"));
+  const bio = validate("bio", () => publicText(values.bio, 2000, "bio"));
+  const phone = validate("bookingPhone", () => publicText(values.bookingPhone, 20, "phone number", { collapseWhitespace: true }));
+  const email = validate("bookingEmail", () => publicText(values.bookingEmail, 254, "email address", { collapseWhitespace: true }).toLowerCase());
+  if (phone && !/^\+[1-9]\d{5,14}$/.test(phone)) fieldErrors.bookingPhone = "Use an international phone number, for example +61400000000.";
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fieldErrors.bookingEmail = "Enter one valid email address.";
+  const labels = values.linkLabels.map((value) => value.replace(/\s+/g, " ").trim());
+  const destinations = values.linkDestinations.map((value) => value.trim());
+  const stableIds = values.linkStableIds.map((value) => value.trim());
+  const links: PublicProfileLinkInput[] = [];
+  if (labels.length !== destinations.length || labels.length !== stableIds.length || labels.length > 8) {
+    fieldErrors.links = "A public profile can contain up to 8 links.";
+  } else {
+    labels.forEach((label, index) => {
+      const destination = destinations[index];
+      if (!label && !destination) return;
+      if (!label) { fieldErrors[`linkLabel.${index}`] = "Enter a label for this link."; return; }
+      if (!destination) { fieldErrors[`linkDestination.${index}`] = "Enter a complete HTTPS destination for this link."; return; }
+      if (label.length > 80) { fieldErrors[`linkLabel.${index}`] = "Use a link label of 80 characters or fewer."; return; }
+      let approved: ReturnType<typeof approvedHttpsDestination>;
+      try { approved = approvedHttpsDestination(destination); } catch (error) {
+        fieldErrors[`linkDestination.${index}`] = error instanceof Error ? error.message : "Enter a complete HTTPS destination.";
+        return;
+      }
+      const stableId = stableIds[index] || crypto.randomUUID();
+      if (!publicProfileId.test(stableId)) { fieldErrors.links = "A public link identity is invalid. Refresh the page and try again."; return; }
+      links.push({ id: crypto.randomUUID(), stableId, label, destinationUrl: approved.destinationUrl, destinationHost: approved.destinationHost, sortOrder: index });
+    });
+  }
+  const appearance = validate("appearance", () => publicProfileAppearance(formData));
+  if (Object.keys(fieldErrors).length || !slug || requestedDisplayName === null || headline === null || bio === null || phone === null || email === null || !appearance) return { error: validationError(values, fieldErrors) };
+  const contacts = [phone ? { channel: "sms" as const, value: phone } : null, email ? { channel: "email" as const, value: email } : null].filter(Boolean) as PublicContactInput[];
+  return { slug, requestedDisplayName, headline, bio, links, contacts, appearance };
 }
 
 function publicProfileAppearance(formData: FormData) {
@@ -1087,17 +1158,14 @@ export async function sendFanslyReplyAction(formData: FormData) {
   redirect(`/messages?platform=fansly&thread=${encodeURIComponent(thread.id)}&saved=fansly_reply_queued`);
 }
 
-export async function savePublicProfileDraftAction(formData: FormData) {
+export async function savePublicProfileDraftAction(_previousState: PublicProfileDraftState, formData: FormData): Promise<PublicProfileDraftState> {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
-  const slug = publicProfileSlugValue(formData.get("slug"));
-  const requestedDisplayName = publicText(formData.get("displayName"), 120, "display name", { collapseWhitespace: true });
+  const values = submittedPublicProfileDraftValues(formData);
+  const validated = validatePublicProfileDraft(formData, values);
+  if ("error" in validated) return validated.error;
+  const { slug, requestedDisplayName, headline, bio, links, contacts, appearance } = validated;
   const displayName = requestedDisplayName || identity.creator.creator_name;
-  const headline = publicText(formData.get("headline"), 280, "headline");
-  const bio = publicText(formData.get("bio"), 2000, "bio");
-  const links = publicProfileLinks(formData);
-  const contacts = publicProfileContacts(formData);
-  const appearance = publicProfileAppearance(formData);
   const checksum = await publicProfileChecksum({ displayName, headline, bio, links });
   const { DB } = cloudflareEnv();
   const [profile, draft, nextVersion] = await Promise.all([
@@ -1152,7 +1220,11 @@ export async function savePublicProfileDraftAction(formData: FormData) {
       VALUES (?,@creator,?,?,?,1)`).bind(crypto.randomUUID(), versionId, contact.channel, contact.value)),
     identityAuditStatement(DB, actor, draft ? "public_profile_draft_updated" : "public_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contactChannels: contacts.map((contact) => contact.channel), contentChecksum: checksum, appearance: appearance.themeKey, publicSurface: true }),
   ];
-  await DB.batch(statements);
+  try {
+    await DB.batch(statements);
+  } catch {
+    return { status: "error", message: "We could not save this profile. Try again.", reasonCode: "profile_save_failed", fieldErrors: {}, values };
+  }
   revalidatePath("/public-profile");
   redirect("/public-profile?notice=draft_saved");
 }
