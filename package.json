@@ -24,6 +24,7 @@
     "d1:production-baseline:check": "node scripts/build-d1-production-baseline.mjs --check",
     "service-principals:plan": "node scripts/service-principal-plan.mjs",
     "services:activate": "node scripts/service-auth-activate.mjs",
+    "services:grant-patch": "node scripts/service-auth-capability-patch.mjs",
     "services:activation-backup": "node scripts/service-auth-activation-backup.mjs",
     "deployment:preflight": "node scripts/deployment-preflight.mjs",
     "cloudflare:compatibility": "node scripts/check-cloudflare-compatibility.mjs",

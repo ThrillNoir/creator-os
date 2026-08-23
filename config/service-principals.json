@@ -57,7 +57,9 @@
       "receiver": "public-links-control",
       "capabilities": [
         "public.profile.publish",
-        "public.profile.withdraw"
+        "public.profile.withdraw",
+        "adult.profile.publish",
+        "adult.profile.withdraw"
       ]
     }
   ]

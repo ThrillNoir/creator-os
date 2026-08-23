@@ -92,7 +92,7 @@ test("service-auth activation plan is redacted, deterministic, staging-only, and
   assert.equal(plan.compatibilityReady, false);
   assert.equal(plan.activationReady, false);
   assert.equal(plan.principals.length, 5);
-  assert.equal(plan.grants.length, 17);
+  assert.equal(plan.grants.length, 19);
   assert.equal(plan.operationsIfApplied.d1CredentialHashes, 5);
   assert.equal(plan.operationsIfApplied.legacyAuthenticationRemoved, false);
   assert.equal(plan.confirmation, activationConfirmation(plan.activationId, plan.planSha256));
@@ -180,7 +180,7 @@ test("structured D1 activation status reads only safe state and makes a satisfie
   assert.equal(status.state, "SATISFIED");
   assert.equal(status.counts.activationRuns, 1);
   assert.equal(status.counts.canonicalCredentialCount, 5);
-  assert.equal(status.counts.canonicalGrantCount, 17);
+  assert.equal(status.counts.canonicalGrantCount, 19);
   assert.equal(calls.length, 6);
   assert.ok(calls.every((call) => call.target.databaseId === activation.expected.databaseId));
   assert.ok(calls.every((call) => !/token_hash|\bdetail\b|operator_identity/i.test(call.statement)));
@@ -349,7 +349,7 @@ test("OAuth/D1 preflight failure stops before credential generation, secret stag
 test("confirmed explicit recovery uses only deterministic revoke SQL and verifies REVOKED state", async () => {
   const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
   const basePlan = buildActivationPlan({ activation, contract, registry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
-  const plan = withActivationStatus(basePlan, { state: "SATISFIED", activationRunPresent: true, canonicalRecordsPresent: true, counts: { activationRuns: 1, activationSteps: 3, canonicalPrincipals: 5, canonicalCredentialCount: 5, canonicalGrantCount: 17, canonicalAuditEventCount: 5 } });
+  const plan = withActivationStatus(basePlan, { state: "SATISFIED", activationRunPresent: true, canonicalRecordsPresent: true, counts: { activationRuns: 1, activationSteps: 3, canonicalPrincipals: 5, canonicalCredentialCount: 5, canonicalGrantCount: 19, canonicalAuditEventCount: 5 } });
   assert.equal(assertRevokeGates({ plan, confirmation: revokeConfirmation(plan.activationId, plan.planSha256), registry }), true);
   assert.throws(() => assertRevokeGates({ plan, confirmation: plan.confirmation, registry }), /confirmation/i);
   const statements = [];
@@ -362,7 +362,7 @@ test("confirmed explicit recovery uses only deterministic revoke SQL and verifie
     d1Client: {},
     releaseAttemptId: "sa-release-00000000-0000-4000-8000-000000000000",
     executeD1: (_target, _database, statement) => statements.push(statement),
-    readStatus: async () => ({ state: "REVOKED", activationRunPresent: true, canonicalRecordsPresent: true, counts: { activationRuns: 1, activationSteps: 4, canonicalPrincipals: 5, canonicalCredentialCount: 5, canonicalGrantCount: 17, canonicalAuditEventCount: 10 } }),
+    readStatus: async () => ({ state: "REVOKED", activationRunPresent: true, canonicalRecordsPresent: true, counts: { activationRuns: 1, activationSteps: 4, canonicalPrincipals: 5, canonicalCredentialCount: 5, canonicalGrantCount: 19, canonicalAuditEventCount: 10 } }),
     writeReceipt: (_output, value) => receipts.push(value),
   });
   assert.equal(receipt.result, "REVOKED");

@@ -50,6 +50,9 @@ export function validateContract(contract) {
   for (const principal of contract.principals) {
     if (!principal?.id || !principal?.principalName || !principal?.secretName || !Array.isArray(principal.capabilities) || !principal.capabilities.length) throw new Error("Each service principal requires an id, name, secret name, and capabilities.");
     if (ids.has(principal.id) || names.has(principal.principalName) || secrets.has(principal.secretName)) throw new Error("Service principal ids, names, and secret names must be unique.");
+    if (!principal.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9_.-]{1,119}$/i.test(capability)) || new Set(principal.capabilities).size !== principal.capabilities.length) {
+      throw new Error("Service principal capabilities must be valid and unique.");
+    }
     ids.add(principal.id);
     names.add(principal.principalName);
     secrets.add(principal.secretName);
