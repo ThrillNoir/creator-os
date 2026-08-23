@@ -1,9 +1,10 @@
-import { publishAdultProfileAction, saveAdultProfileDraftAction, withdrawAdultProfileAction } from "@/app/actions";
+import { withdrawAdultProfileAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
-import { ProfileAppearanceEditor, type ProfileImageAttachment } from "@/components/profile-appearance-editor";
+import { type ProfileImageAttachment } from "@/components/profile-appearance-editor";
+import { AdultProfileEditor } from "@/components/adult-profile-editor";
 import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
 
@@ -75,22 +76,10 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
   return <AppShell active="18+ profile"><PageHeader title="18+ profile" subtitle="Design, preview and publish this creator’s age-gated profile." eyebrow="ADULT-GATED CONTENT" />
     {notice && <div className="success">{notice}</div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">PROTECTED PROFILE</span><h2>18+ profile and links</h2><p>Content and destinations stay out of the safe public page. The live profile remains behind the separate age gate.</p></div><span>{published ? "Published" : draft ? `Draft v${draft.version_number}` : approved ? `Saved v${approved.version_number}` : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
-      {canEdit ? <form action={saveAdultProfileDraftAction} className="inline-form public-profile-form" id="adult-profile-editor">
-        <label className="wide">Adult bio <small>(optional)</small><textarea name="adultBio" maxLength={2000} defaultValue={authoring?.adult_bio ?? ""} /></label>
-        <div className="section-divider wide"><b>Creator links</b><span>Use generic labels and final HTTPS destinations. Fansly, OnlyFans, and future platforms are values, not schema fields.</span></div>
-        {slots.map((link, index) => <div className="public-link-fields" key={link?.id ?? `new-${index}`}><input type="hidden" name="adultLinkStableId" value={link?.stable_link_id ?? ""} /><label>Label<input name="adultLinkLabel" maxLength={80} defaultValue={link?.label ?? ""} placeholder="Creator page" /></label><label>HTTPS destination<input name="adultLinkDestination" type="url" defaultValue={link?.destination_url ?? ""} placeholder="https://example.com" /></label></div>)}
-        <ProfileAppearanceEditor surface="adult" initialAppearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName={context.creator.creator_name} sampleLinks={authoringLinks.map((link) => link.label)} versionId={draft?.id} initialImages={authoringImages} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
-      </form> : <div className="empty"><b>Read-only adult-profile view</b><span>Your role can inspect this creator’s private version history but cannot change protected content or destinations.</span></div>}
-      {canEdit && <div className="profile-action-bar wide" aria-label="18+ profile actions">
-        <div><b>{published ? draft ? "Unpublished changes" : "Live" : versionForPublish ? "Saved privately" : "Not saved yet"}</b><span>{published && !draft ? "Your protected 18+ profile is live." : "Save your changes, then publish when ready."}</span></div>
-        <div className="profile-action-buttons">
-          <button className="secondary-action" type="submit" form="adult-profile-editor">Save</button>
-          {canApprove && versionForPublish && <form action={publishAdultProfileAction}><input type="hidden" name="adultVersionId" value={versionForPublish.id} /><button className="primary" type="submit" disabled={!publishingConfigured}>Publish</button></form>}
-          {published && canApprove && <form action={withdrawAdultProfileAction}><input type="hidden" name="adultVersionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form>}
-        </div>
-        {!publishingConfigured && canApprove && <small>Publishing will become available when the protected staging release service is configured.</small>}
-        {!canApprove && <small>Save changes here. An agency administrator can publish them.</small>}
-      </div>}
+      {canEdit ? <AdultProfileEditor bio={authoring?.adult_bio ?? ""} links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
+        appearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName={context.creator.creator_name} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} published={Boolean(published)} canApprove={canApprove} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
+        : <div className="empty"><b>Read-only adult-profile view</b><span>Your role can inspect this creator’s private version history but cannot change protected content or destinations.</span></div>}
+      {published && canApprove && <div className="profile-action-bar wide"><form action={withdrawAdultProfileAction}><input type="hidden" name="adultVersionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form></div>}
     </section>
 
     <details className="panel profile-history-panel"><summary>History ({versions.results.length} version{versions.results.length === 1 ? "" : "s"})</summary>

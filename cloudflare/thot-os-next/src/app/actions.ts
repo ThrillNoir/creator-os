@@ -9,7 +9,7 @@ import { requireCreatorContext } from "@/lib/identity";
 import { destinations, type Destination } from "@/lib/library";
 import { issueFanslyBridgePairing } from "@/lib/fansly-pairing";
 import { fetchInternalService } from "@/lib/internal-service";
-import { approvedHttpsDestination, parseProfileLinkRows } from "@/lib/profile-link-input";
+import { approvedHttpsDestination } from "@/lib/profile-link-input";
 import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
 
 function values(formData: FormData, key: string) {
@@ -45,6 +45,21 @@ export type PublicProfileDraftState = {
   reasonCode: string | null;
   fieldErrors: Record<string, string>;
   values: PublicProfileDraftValues | null;
+};
+
+export type AdultProfileDraftValues = {
+  bio: string;
+  linkLabels: string[];
+  linkDestinations: string[];
+  linkStableIds: string[];
+};
+
+export type AdultProfileDraftState = {
+  status: "idle" | "error";
+  message: string | null;
+  reasonCode: string | null;
+  fieldErrors: Record<string, string>;
+  values: AdultProfileDraftValues | null;
 };
 
 type AdultProfileLinkInput = {
@@ -190,15 +205,64 @@ function adultProfileAppearance(formData: FormData) {
   }, { adult: true });
 }
 
-function adultProfileLinks(formData: FormData) {
-  const labels = formData.getAll("adultLinkLabel").map((value) => String(value).replace(/\s+/g, " ").trim());
-  const destinations = formData.getAll("adultLinkDestination").map((value) => String(value).trim());
-  const stableIds = formData.getAll("adultLinkStableId").map((value) => String(value).trim());
-  return parseProfileLinkRows({ labels, destinations, stableIds, maximum: 12, adult: true }).map((link): AdultProfileLinkInput => {
-    const stableId = link.stableId || crypto.randomUUID();
-    if (!publicProfileId.test(stableId)) throw new Error("An adult link identity is invalid. Refresh the page and try again.");
-    return { stableId, label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder };
-  });
+function submittedAdultProfileDraftValues(formData: FormData): AdultProfileDraftValues {
+  return {
+    bio: String(formData.get("adultBio") ?? ""),
+    linkLabels: formData.getAll("adultLinkLabel").map(String),
+    linkDestinations: formData.getAll("adultLinkDestination").map(String),
+    linkStableIds: formData.getAll("adultLinkStableId").map(String),
+  };
+}
+
+function adultValidationError(values: AdultProfileDraftValues, fieldErrors: Record<string, string>): AdultProfileDraftState {
+  return { status: "error", message: "Fix the highlighted fields and save again.", reasonCode: "adult_profile_validation_failed", fieldErrors, values };
+}
+
+type ValidAdultProfileDraft = {
+  bio: string;
+  links: AdultProfileLinkInput[];
+  appearance: ReturnType<typeof adultProfileAppearance>;
+};
+
+type AdultProfileDraftValidation =
+  | { error: AdultProfileDraftState }
+  | ValidAdultProfileDraft;
+
+function validateAdultProfileDraft(formData: FormData, values: AdultProfileDraftValues): AdultProfileDraftValidation {
+  const fieldErrors: Record<string, string> = {};
+  const validate = <T>(field: string, run: () => T): T | null => {
+    try { return run(); } catch (error) {
+      fieldErrors[field] = error instanceof Error ? error.message : "Enter a valid value.";
+      return null;
+    }
+  };
+  const bio = validate("adultBio", () => publicText(values.bio, 2000, "adult bio"));
+  const labels = values.linkLabels.map((value) => value.replace(/\s+/g, " ").trim());
+  const destinations = values.linkDestinations.map((value) => value.trim());
+  const stableIds = values.linkStableIds.map((value) => value.trim());
+  const links: AdultProfileLinkInput[] = [];
+  if (labels.length !== destinations.length || labels.length !== stableIds.length || labels.length > 12) {
+    fieldErrors.links = "An 18+ profile can contain up to 12 links.";
+  } else {
+    labels.forEach((label, index) => {
+      const destination = destinations[index];
+      if (!label && !destination) return;
+      if (!label) { fieldErrors[`adultLinkLabel.${index}`] = "Enter a label for this link."; return; }
+      if (!destination) { fieldErrors[`adultLinkDestination.${index}`] = "Enter a complete HTTPS destination for this link."; return; }
+      if (label.length > 80) { fieldErrors[`adultLinkLabel.${index}`] = "Use a link label of 80 characters or fewer."; return; }
+      let approved: ReturnType<typeof approvedHttpsDestination>;
+      try { approved = approvedHttpsDestination(destination); } catch (error) {
+        fieldErrors[`adultLinkDestination.${index}`] = error instanceof Error ? error.message : "Enter a complete HTTPS destination.";
+        return;
+      }
+      const stableId = stableIds[index] || crypto.randomUUID();
+      if (!publicProfileId.test(stableId)) { fieldErrors.links = "An adult link identity is invalid. Refresh the page and try again."; return; }
+      links.push({ stableId, label, destinationUrl: approved.destinationUrl, destinationHost: approved.destinationHost, sortOrder: index });
+    });
+  }
+  const appearance = validate("appearance", () => adultProfileAppearance(formData));
+  if (Object.keys(fieldErrors).length || bio === null || !appearance) return { error: adultValidationError(values, fieldErrors) };
+  return { bio, links, appearance };
 }
 
 async function adultProfileChecksum(content: { bio: string; links: AdultProfileLinkInput[] }) {
@@ -1325,12 +1389,13 @@ export async function withdrawPublicProfileAction(formData: FormData) {
   redirect("/public-profile?notice=withdrawal_started");
 }
 
-export async function saveAdultProfileDraftAction(formData: FormData) {
+export async function saveAdultProfileDraftAction(_previousState: AdultProfileDraftState, formData: FormData): Promise<AdultProfileDraftState> {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
-  const bio = publicText(formData.get("adultBio"), 2000, "adult bio");
-  const links = adultProfileLinks(formData);
-  const appearance = adultProfileAppearance(formData);
+  const values = submittedAdultProfileDraftValues(formData);
+  const validated = validateAdultProfileDraft(formData, values);
+  if ("error" in validated) return validated.error;
+  const { bio, links, appearance } = validated;
   const checksum = await adultProfileChecksum({ bio, links });
   const { DB } = cloudflareEnv();
   const [profile, draft, nextVersion] = await Promise.all([

@@ -7,8 +7,9 @@ const root = path.resolve(import.meta.dirname, "..");
 const source = (file) => readFile(path.join(root, file), "utf8");
 
 test("release configuration remains source-only and profile editors expose a simple save-publish flow", async () => {
-  const [publicEditor, adultPage, migration, contactLocal, adultLocal] = await Promise.all([
+  const [publicEditor, adultEditor, adultPage, migration, contactLocal, adultLocal] = await Promise.all([
     source("src/components/public-profile-editor.tsx"),
+    source("src/components/adult-profile-editor.tsx"),
     source("src/app/adult-profile/page.tsx"),
     source("../thot-os-app/migrations/0040_creator_profile_interactions.sql"),
     source("../thot-os-public-contact/wrangler.local.example.jsonc"),
@@ -17,8 +18,8 @@ test("release configuration remains source-only and profile editors expose a sim
   assert.match(publicEditor, /"Save"/);
   assert.match(publicEditor, />Publish<\/button>/);
   assert.doesNotMatch(publicEditor, /approvalNote|publishConfirmed|withdrawConfirmed|SEPARATE APPROVAL|PUBLICATION GATE/);
-  for (const page of [adultPage]) {
-    assert.match(page, />Save<\/button>/);
+  for (const page of [adultEditor]) {
+    assert.match(page, /"Save"/);
     assert.match(page, />Publish<\/button>/);
     assert.doesNotMatch(page, /approvalNote|publishConfirmed|withdrawConfirmed|SEPARATE APPROVAL|PUBLICATION GATE/);
   }
@@ -98,9 +99,10 @@ test("creator authoring is draft-only and private image reads use the preview de
 });
 
 test("public-profile save validation returns structured field errors without leaking values", async () => {
-  const [actions, editor] = await Promise.all([
+  const [actions, editor, adultEditor] = await Promise.all([
     source("src/app/actions.ts"),
     source("src/components/public-profile-editor.tsx"),
+    source("src/components/adult-profile-editor.tsx"),
   ]);
   assert.match(actions, /type PublicProfileDraftState/);
   assert.match(actions, /reasonCode: "profile_validation_failed"/);
@@ -112,4 +114,8 @@ test("public-profile save validation returns structured field errors without lea
   assert.match(editor, /Review the/);
   assert.match(editor, /slugLocked/);
   assert.doesNotMatch(editor, /new URLSearchParams|profile_validation_failed.*values/);
+  assert.match(actions, /reasonCode: "adult_profile_validation_failed"/);
+  assert.match(actions, /fieldErrors\[`adultLinkDestination\.\$\{index\}`\]/);
+  assert.match(adultEditor, /useActionState\(saveAdultProfileDraftAction/);
+  assert.match(adultEditor, /aria-invalid/);
 });
