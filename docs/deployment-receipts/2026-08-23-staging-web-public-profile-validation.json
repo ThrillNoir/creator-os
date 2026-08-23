@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "web",
+  "service": "thot-os-web",
+  "environment": "staging",
+  "gitSha": "ee01b6f663632a0d23c0731173fb66412f397db3",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T10:12:00Z",
+  "worker": "thot-os-staging",
+  "workerVersion": "ed3f3431-5a79-4479-92f9-2be53597aa35",
+  "deploymentTimestamp": "2026-08-23T10:12:59.800Z",
+  "migrationState": "No D1 migration applied; existing staging baseline retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "verified",
+    "detail": "The authenticated staging editor loaded with Save and Publish controls and no browser-console errors. No creator content was submitted or published during this smoke test."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}
