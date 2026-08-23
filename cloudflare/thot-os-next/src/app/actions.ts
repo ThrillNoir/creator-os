@@ -47,14 +47,6 @@ export type PublicProfileDraftState = {
   values: PublicProfileDraftValues | null;
 };
 
-export const initialPublicProfileDraftState: PublicProfileDraftState = {
-  status: "idle",
-  message: null,
-  reasonCode: null,
-  fieldErrors: {},
-  values: null,
-};
-
 type AdultProfileLinkInput = {
   stableId: string;
   label: string;
@@ -112,7 +104,21 @@ function validationError(values: PublicProfileDraftValues, fieldErrors: Record<s
   return { status: "error", message: "Fix the highlighted fields and save again.", reasonCode: "profile_validation_failed", fieldErrors, values };
 }
 
-function validatePublicProfileDraft(formData: FormData, values: PublicProfileDraftValues) {
+type ValidPublicProfileDraft = {
+  slug: string;
+  requestedDisplayName: string;
+  headline: string;
+  bio: string;
+  links: PublicProfileLinkInput[];
+  contacts: PublicContactInput[];
+  appearance: ReturnType<typeof publicProfileAppearance>;
+};
+
+type PublicProfileDraftValidation =
+  | { error: PublicProfileDraftState }
+  | ValidPublicProfileDraft;
+
+function validatePublicProfileDraft(formData: FormData, values: PublicProfileDraftValues): PublicProfileDraftValidation {
   const fieldErrors: Record<string, string> = {};
   const validate = <T>(field: string, run: () => T): T | null => {
     try { return run(); } catch (error) {

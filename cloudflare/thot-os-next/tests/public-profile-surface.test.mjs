@@ -110,5 +110,6 @@ test("public-profile save validation returns structured field errors without lea
   assert.match(editor, /useActionState\(savePublicProfileDraftAction/);
   assert.match(editor, /aria-invalid/);
   assert.match(editor, /Review the/);
+  assert.match(editor, /slugLocked/);
   assert.doesNotMatch(editor, /new URLSearchParams|profile_validation_failed.*values/);
 });

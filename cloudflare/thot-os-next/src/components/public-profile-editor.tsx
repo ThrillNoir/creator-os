@@ -1,11 +1,19 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { initialPublicProfileDraftState, publishPublicProfileAction, savePublicProfileDraftAction, type PublicProfileDraftValues } from "@/app/actions";
+import { publishPublicProfileAction, savePublicProfileDraftAction, type PublicProfileDraftState, type PublicProfileDraftValues } from "@/app/actions";
 import { ProfileAppearanceEditor, type ProfileImageAttachment } from "@/components/profile-appearance-editor";
 import type { ProfileAppearance } from "@/lib/profile-appearance-contract";
 
 type LinkValue = { id: string; label: string; destination: string; stableId: string };
+
+const initialPublicProfileDraftState: PublicProfileDraftState = {
+  status: "idle",
+  message: null,
+  reasonCode: null,
+  fieldErrors: {},
+  values: null,
+};
 
 type Props = {
   defaultSlug: string;
@@ -22,6 +30,7 @@ type Props = {
   canApprove: boolean;
   publishingConfigured: boolean;
   imageUploadsEnabled: boolean;
+  slugLocked: boolean;
 };
 
 function initialValues(props: Props): PublicProfileDraftValues {
@@ -61,7 +70,11 @@ export function PublicProfileEditor(props: Props) {
       <b>{state.message}</b>{state.reasonCode && <span> Reference: {state.reasonCode}.</span>}{errorCount > 0 && <span> Review the {errorCount === 1 ? "highlighted field" : "highlighted fields"} below.</span>}
     </div>}
     <form action={formAction} className="inline-form public-profile-form" id={formId} noValidate>
-      <label>Public URL slug<input name="slug" required maxLength={80} value={values.slug} onChange={(event) => update("slug", event.target.value)} autoComplete="off" {...fieldProps("slug")} /><small>Lowercase letters, numbers and single hyphens only.</small>{error("slug") && <span className="field-error" id={errorId("slug")}>{error("slug")}</span>}</label>
+      <label>Public URL slug
+        {props.slugLocked && <input type="hidden" name="slug" value={values.slug} />}
+        <input name={props.slugLocked ? undefined : "slug"} required maxLength={80} value={values.slug} onChange={(event) => update("slug", event.target.value)} autoComplete="off" disabled={props.slugLocked} {...fieldProps("slug")} />
+        <small>{props.slugLocked ? "Published public URL slugs are stable. Unpublish the current profile before changing its URL." : "Lowercase letters, numbers and single hyphens only."}</small>{error("slug") && <span className="field-error" id={errorId("slug")}>{error("slug")}</span>}
+      </label>
       <label>Display name <small>(optional)</small><input name="displayName" maxLength={120} value={values.displayName} onChange={(event) => update("displayName", event.target.value)} {...fieldProps("displayName")} />{error("displayName") && <span className="field-error" id={errorId("displayName")}>{error("displayName")}</span>}</label>
       <label className="wide">Headline<input name="headline" maxLength={280} value={values.headline} onChange={(event) => update("headline", event.target.value)} {...fieldProps("headline")} />{error("headline") && <span className="field-error" id={errorId("headline")}>{error("headline")}</span>}</label>
       <label className="wide">Bio<textarea name="bio" maxLength={2000} value={values.bio} onChange={(event) => update("bio", event.target.value)} {...fieldProps("bio")} />{error("bio") && <span className="field-error" id={errorId("bio")}>{error("bio")}</span>}</label>
