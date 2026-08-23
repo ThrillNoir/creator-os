@@ -14,5 +14,6 @@ test("staging adult gateway has only protected adult bindings", async () => {
   assert.equal(config.d1_databases, undefined);
   assert.equal(config.services, undefined);
   assert.deepEqual(config.secrets.required, ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"]);
+  assert.match(config.vars.TURNSTILE_SITE_KEY, /^0x4A[A-Za-z0-9_-]+$/);
   assert.equal(config.vars.TURNSTILE_EXPECTED_HOSTNAME, "more-staging.thathuboverthere.com");
 });

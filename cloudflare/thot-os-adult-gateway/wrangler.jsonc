@@ -32,7 +32,7 @@
     }
   ],
   "vars": {
-    "TURNSTILE_SITE_KEY": "REQUIRES_STAGING_TURNSTILE_SITE_KEY",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAEZL1cy4h2SV62cN",
     "TURNSTILE_EXPECTED_HOSTNAME": "more-staging.thathuboverthere.com"
   },
   "secrets": {
