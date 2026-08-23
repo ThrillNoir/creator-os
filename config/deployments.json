@@ -142,7 +142,7 @@
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-staging",
           "deployable": true,
-          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured synthetic creator and must never bind operational D1 or private R2. Adult and booking-contact publication remain disabled.",
+          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured staging allowlist (the synthetic fixture and the explicitly approved Adelaide SFW test) and must never bind operational D1 or private R2. Adult and booking-contact publication remain disabled.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],
@@ -178,7 +178,7 @@
           "deployable": true,
           "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
           "publicationPolicy": {
-            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator"] },
+            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator", "adelaide"] },
             "adultProfile": { "mode": "disabled", "syntheticCreatorIds": [] }
           },
           "requiredSecrets": [],

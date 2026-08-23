@@ -14,5 +14,6 @@ test("staging publication control has isolated SFW media bindings and keeps adul
   assert.equal(config.vars.PUBLIC_MEDIA_DELIVERY_ENABLED, "1");
   assert.equal(config.vars.PUBLIC_MEDIA_BASE_URL, "https://public-profile-staging.thathuboverthere.com");
   assert.equal(config.vars.PUBLIC_PROFILE_PUBLICATION_MODE, "synthetic-only");
+  assert.equal(config.vars.PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS, "staging-synthetic-creator,adelaide");
   assert.equal(config.vars.ADULT_PROFILE_PUBLICATION_MODE, "disabled");
 });
