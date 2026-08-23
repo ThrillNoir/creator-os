@@ -5,7 +5,7 @@
   "environment": "staging",
   "gitSha": "ca0274404f6a04e741466f475bec85bcc53a0537",
   "gitBranch": "codex/creator-profile-staging",
-  "buildTime": "2026-08-23T11:22:32.000Z",
+  "buildTime": "2026-08-23T11:22:16.752Z",
   "worker": "thot-os-staging",
   "workerVersion": "0f5e17ff-d93c-4551-b6f2-f61d5bcfd6da",
   "deploymentTimestamp": "2026-08-23T11:30:45.832Z",
