@@ -35,13 +35,13 @@ test("redirect-handler links are ordinary anchors, preventing Next RSC navigatio
     source("src/app/public-profile/preview/page.tsx"),
     source("src/app/public-profile/preview/adult/[versionId]/page.tsx"),
   ]);
-  assert.match(safePreview, /<a className="public-preview-link" href=\{`\/public-profile\/preview\/go\//);
+  assert.match(safePreview, /<a className=\{linkClass\} href=\{`\/public-profile\/preview\/go\//);
   assert.match(adultPreview, /<a className="public-preview-link" href=\{`\/public-profile\/preview\/adult\//);
   assert.doesNotMatch(safePreview, /<Link className="public-preview-link"/);
   assert.doesNotMatch(adultPreview, /<Link className="public-preview-link"/);
 });
 
-test("publish is one explicit admin action while protected release and image mutations fail closed", async () => {
+test("publish is one explicit creator-scoped action while protected release and image mutations fail closed", async () => {
   const [actions, publicPage, publicEditor, adultPage, wrangler, uploadRoute, imageRoute] = await Promise.all([
     source("src/app/actions.ts"),
     source("src/app/public-profile/page.tsx"),
@@ -57,7 +57,8 @@ test("publish is one explicit admin action while protected release and image mut
   assert.doesNotMatch(adultPage, /name="(?:approval|publish|withdraw)Confirmed"/);
   assert.match(actions, /v\.status IN \('draft','approved'\)/);
   assert.match(actions, /approvalSource: "publish_button"/);
-  assert.match(actions, /identity\.creator\.role === "creator"/);
+  assert.match(actions, /publishPublicProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /publishAdultProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
   assert.match(actions, /String\(env\.ADULT_PROFILE_PUBLISHING_ENABLED\) !== "1"/);
   assert.match(adultPage, /String\(env\.ADULT_PROFILE_PUBLISHING_ENABLED\) === "1"/);
   assert.match(wrangler, /"ADULT_PROFILE_PUBLISHING_ENABLED": "0"/);
@@ -74,28 +75,37 @@ test("image uploads process before attachment and compensate failed persistence"
   assert.match(uploadRoute, /SET status='rejected'/);
 });
 
-test("creator authoring is draft-only and private image reads use the preview derivative", async () => {
-  const [authorization, publicPage, publicEditor, adultPage, imageRoute, appearanceEditor] = await Promise.all([
+test("creator profile publishing remains tenant-scoped and private image reads use the preview derivative", async () => {
+  const [authorization, actions, publicPage, publicEditor, adultPage, adultEditor, imageRoute, appearanceEditor, safePreview] = await Promise.all([
     source("src/lib/authorization.ts"),
+    source("src/app/actions.ts"),
     source("src/app/public-profile/page.tsx"),
     source("src/components/public-profile-editor.tsx"),
     source("src/app/adult-profile/page.tsx"),
+    source("src/components/adult-profile-editor.tsx"),
     source("src/app/api/profile-image/[attachmentId]/route.ts"),
     source("src/components/profile-appearance-editor.tsx"),
+    source("src/app/public-profile/preview/page.tsx"),
   ]);
   assert.match(authorization, /creator: new Set\(\["view", "mutate"\]\)/);
   assert.doesNotMatch(authorization, /creator: new Set\(\[[^\]]*"approve"/);
   for (const page of [publicPage, adultPage]) {
     assert.match(page, /const canEdit = roleCan\(context\.creator\.role, "mutate"\)/);
-    assert.match(page, /const canApprove = roleCan\(context\.creator\.role, "approve"\) && context\.creator\.role !== "creator"/);
+    assert.match(page, /const canPublish = canEdit/);
     assert.match(page, /imageUploadsEnabled=\{profileImageProcessorAvailable\(env\)\}/);
   }
-  assert.match(publicEditor, /Save changes here\. An agency administrator can publish them\./);
+  for (const editor of [publicEditor, adultEditor]) assert.match(editor, /props\.canPublish/);
+  assert.match(actions, /publishPublicProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /publishAdultProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
   assert.match(imageRoute, /preview\.upload_id=display\.upload_id/);
   assert.match(imageRoute, /preview\.derivative_kind='preview'/);
   assert.match(imageRoute, /"cache-control": "private, no-store"/);
   assert.match(appearanceEditor, /disabled=\{isDisabled\}>Remove<\/button>/);
   assert.match(appearanceEditor, /Save a draft before changing its images\./);
+  assert.ok(appearanceEditor.indexOf('name="appearanceThemeKey"') < appearanceEditor.indexOf('activePanel === "design"'));
+  assert.match(safePreview, /creator_public_profile_details/);
+  assert.match(safePreview, /appearanceCss\(appearance\)/);
+  assert.match(safePreview, /previewButtonClass\(appearance\.buttonStyle\)/);
 });
 
 test("public-profile save validation returns structured field errors without leaking values", async () => {

@@ -58,7 +58,7 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
     DB.prepare("SELECT id,image_role,adult_profile_version_id AS profile_version_id FROM creator_profile_image_attachments WHERE creator_id=? AND surface='adult_profile' AND status='attached'").bind(creatorId).all<ImageRow>(),
   ]);
   const canEdit = roleCan(context.creator.role, "mutate");
-  const canApprove = roleCan(context.creator.role, "approve") && context.creator.role !== "creator";
+  const canPublish = canEdit;
   const draft = versions.results.find((version) => version.status === "draft") ?? null;
   const approved = versions.results.find((version) => version.status === "approved") ?? null;
   const published = profile?.published_version_id ? versions.results.find((version) => version.id === profile.published_version_id) ?? null : null;
@@ -77,13 +77,13 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
     {notice && <div className="success">{notice}</div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">PROTECTED PROFILE</span><h2>18+ profile and links</h2><p>Content and destinations stay out of the safe public page. The live profile remains behind the separate age gate.</p></div><span>{published ? "Published" : draft ? `Draft v${draft.version_number}` : approved ? `Saved v${approved.version_number}` : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
       {canEdit ? <AdultProfileEditor bio={authoring?.adult_bio ?? ""} links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
-        appearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName={context.creator.creator_name} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} published={Boolean(published)} canApprove={canApprove} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
+        appearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName={context.creator.creator_name} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} published={Boolean(published)} canPublish={canPublish} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
         : <div className="empty"><b>Read-only adult-profile view</b><span>Your role can inspect this creator’s private version history but cannot change protected content or destinations.</span></div>}
-      {published && canApprove && <div className="profile-action-bar wide"><form action={withdrawAdultProfileAction}><input type="hidden" name="adultVersionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form></div>}
+      {published && canPublish && <div className="profile-action-bar wide"><form action={withdrawAdultProfileAction}><input type="hidden" name="adultVersionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form></div>}
     </section>
 
     <details className="panel profile-history-panel"><summary>History ({versions.results.length} version{versions.results.length === 1 ? "" : "s"})</summary>
-      {versions.results.length ? <div className="public-profile-history">{versions.results.map((version) => <article key={version.id}><span className="post-state">v{version.version_number}</span><div><strong>{stateLabel(version.status)}</strong><small>created {formatDate(version.created_at)}{version.approved_at ? ` · approved ${formatDate(version.approved_at)}` : ""}</small></div><span>{version.approved_by ?? "Awaiting separate approval"}</span></article>)}</div> : <div className="empty"><b>No adult-profile versions</b><span>Creating a private draft does not put anything on a public hostname.</span></div>}
+      {versions.results.length ? <div className="public-profile-history">{versions.results.map((version) => <article key={version.id}><span className="post-state">v{version.version_number}</span><div><strong>{stateLabel(version.status)}</strong><small>created {formatDate(version.created_at)}{version.approved_at ? ` · published by selection ${formatDate(version.approved_at)}` : ""}</small></div><span>{version.approved_by ?? "Saved privately"}</span></article>)}</div> : <div className="empty"><b>No adult-profile versions</b><span>Creating a private draft does not put anything on a public hostname.</span></div>}
       {publications.results.length ? <div className="public-profile-history public-publications">{publications.results.map((publication) => <article key={publication.id}><span className="post-state">{stateLabel(publication.status)}</span><div><strong>Protected release receipt</strong><small>{publication.adult_snapshot_key} · {formatDate(publication.created_at)}</small></div><span>{publication.version_id}</span></article>)}</div> : null}
     </details>
   </AppShell>;

@@ -1330,8 +1330,7 @@ export async function approvePublicProfileVersionAction(formData: FormData) {
 }
 
 export async function publishPublicProfileAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must publish a public release.");
+  const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
   const env = cloudflareEnv();
@@ -1370,8 +1369,7 @@ export async function publishPublicProfileAction(formData: FormData) {
 }
 
 export async function withdrawPublicProfileAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must withdraw a public release.");
+  const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
   const env = cloudflareEnv();
@@ -1462,8 +1460,7 @@ export async function approveAdultProfileVersionAction(formData: FormData) {
 }
 
 export async function publishAdultProfileAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must publish an adult release.");
+  const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedAdultProfileVersionId(formData);
   const env = cloudflareEnv();
@@ -1501,8 +1498,7 @@ export async function publishAdultProfileAction(formData: FormData) {
 }
 
 export async function withdrawAdultProfileAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must withdraw an adult release.");
+  const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedAdultProfileVersionId(formData);
   const env = cloudflareEnv();

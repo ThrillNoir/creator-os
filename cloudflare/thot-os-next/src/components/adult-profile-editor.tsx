@@ -17,7 +17,7 @@ type Props = {
   draftVersionId?: string;
   versionForPublishId?: string;
   published: boolean;
-  canApprove: boolean;
+  canPublish: boolean;
   publishingConfigured: boolean;
   imageUploadsEnabled: boolean;
 };
@@ -77,10 +77,9 @@ export function AdultProfileEditor(props: Props) {
       <div><b>{props.published ? props.draftVersionId ? "Unpublished changes" : "Live" : props.versionForPublishId ? "Saved privately" : "Not saved yet"}</b><span>{props.published && !props.draftVersionId ? "Your protected 18+ profile is live." : "Save your changes, then publish when ready."}</span></div>
       <div className="profile-action-buttons">
         <button className="secondary-action" type="submit" form={formId} disabled={isPending}>{isPending ? "Saving…" : "Save"}</button>
-        {props.canApprove && props.versionForPublishId && <form action={publishAdultProfileAction}><input type="hidden" name="adultVersionId" value={props.versionForPublishId} /><button className="primary" type="submit" disabled={!props.publishingConfigured || isPending}>Publish</button></form>}
+        {props.canPublish && props.versionForPublishId && <form action={publishAdultProfileAction}><input type="hidden" name="adultVersionId" value={props.versionForPublishId} /><button className="primary" type="submit" disabled={!props.publishingConfigured || isPending}>Publish</button></form>}
       </div>
-      {!props.publishingConfigured && props.canApprove && <small>Publishing will become available when the protected staging release service is configured.</small>}
-      {!props.canApprove && <small>Save changes here. An agency administrator can publish them.</small>}
+      {!props.publishingConfigured && props.canPublish && <small>Publishing will become available when the protected staging release service is configured.</small>}
     </div>
   </>;
 }

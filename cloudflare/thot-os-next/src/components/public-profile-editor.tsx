@@ -27,7 +27,7 @@ type Props = {
   images: ProfileImageAttachment[];
   draftVersionId?: string;
   versionForPublishId?: string;
-  canApprove: boolean;
+  canPublish: boolean;
   publishingConfigured: boolean;
   imageUploadsEnabled: boolean;
   slugLocked: boolean;
@@ -96,10 +96,9 @@ export function PublicProfileEditor(props: Props) {
       <div><b>{props.versionForPublishId ? "Saved privately" : "Not saved yet"}</b><span>Save changes here, then publish when ready.</span></div>
       <div className="profile-action-buttons">
         <button className="secondary-action" type="submit" form={formId} disabled={isPending}>{isPending ? "Saving…" : "Save"}</button>
-        {props.canApprove && props.versionForPublishId && <form action={publishPublicProfileAction}><input type="hidden" name="versionId" value={props.versionForPublishId} /><button className="primary" type="submit" disabled={!props.publishingConfigured || isPending}>Publish</button></form>}
+        {props.canPublish && props.versionForPublishId && <form action={publishPublicProfileAction}><input type="hidden" name="versionId" value={props.versionForPublishId} /><button className="primary" type="submit" disabled={!props.publishingConfigured || isPending}>Publish</button></form>}
       </div>
-      {!props.publishingConfigured && props.canApprove && <small>Publishing will become available when the staging release service is configured.</small>}
-      {!props.canApprove && <small>Save changes here. An agency administrator can publish them.</small>}
+      {!props.publishingConfigured && props.canPublish && <small>Publishing will become available when the staging release service is configured.</small>}
     </div>
   </>;
 }

@@ -66,7 +66,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
       WHERE creator_id=? AND surface='public_sfw' AND status='attached'`).bind(creatorId).all<ImageRow>(),
   ]);
   const canEdit = roleCan(context.creator.role, "mutate");
-  const canApprove = roleCan(context.creator.role, "approve") && context.creator.role !== "creator";
+  const canPublish = canEdit;
   const draft = versions.results.find((version) => version.status === "draft") ?? null;
   const published = profile?.published_version_id ? versions.results.find((version) => version.id === profile.published_version_id) ?? null : null;
   const approved = versions.results.find((version) => version.status === "approved") ?? null;
@@ -90,13 +90,13 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Save changes privately, preview the page, then publish when it is ready.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Saved" : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
       {canEdit ? <PublicProfileEditor defaultSlug={defaultSlug} displayName={authoring?.display_name ?? context.creator.creator_name} headline={authoring?.headline ?? ""} bio={authoring?.bio ?? ""} phone={phone} email={email}
         links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
-        appearance={authoringAppearance} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} canApprove={canApprove} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} slugLocked={Boolean(profile?.published_version_id)} />
+        appearance={authoringAppearance} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} canPublish={canPublish} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} slugLocked={Boolean(profile?.published_version_id)} />
         : <div className="empty"><b>Read-only public profile view</b><span>Your role can inspect profile history but cannot alter text, destinations, approvals, or publication.</span></div>}
-      {published && canApprove && <div className="profile-action-bar wide"><form action={withdrawPublicProfileAction}><input type="hidden" name="versionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form></div>}
+      {published && canPublish && <div className="profile-action-bar wide"><form action={withdrawPublicProfileAction}><input type="hidden" name="versionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form></div>}
     </section>
 
     <details className="panel profile-history-panel"><summary>History ({versions.results.length} version{versions.results.length === 1 ? "" : "s"})</summary>
-      {versions.results.length ? <div className="public-profile-history">{versions.results.map((version) => <article key={version.id}><span className="post-state">v{version.version_number}</span><div><strong>{version.display_name}</strong><small>{stateLabel(version.status)} · created {formatDate(version.created_at)}{version.approved_at ? ` · approved ${formatDate(version.approved_at)}` : ""}</small></div><span>{version.approved_by ?? "Awaiting explicit approval"}</span></article>)}</div> : <div className="empty"><b>No public-profile versions</b><span>Creating a draft does not publish anything.</span></div>}
+      {versions.results.length ? <div className="public-profile-history">{versions.results.map((version) => <article key={version.id}><span className="post-state">v{version.version_number}</span><div><strong>{version.display_name}</strong><small>{stateLabel(version.status)} · created {formatDate(version.created_at)}{version.approved_at ? ` · published by selection ${formatDate(version.approved_at)}` : ""}</small></div><span>{version.approved_by ?? "Saved privately"}</span></article>)}</div> : <div className="empty"><b>No public-profile versions</b><span>Creating a draft does not publish anything.</span></div>}
       {publications.results.length ? <div className="public-profile-history public-publications">{publications.results.map((publication) => <article key={publication.id}><span className="post-state">{stateLabel(publication.status)}</span><div><strong>Version receipt</strong><small>{publication.public_snapshot_key} · {formatDate(publication.created_at)}</small></div><span>{publication.version_id}</span></article>)}</div> : null}
     </details>
   </AppShell>;
