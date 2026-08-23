@@ -7,6 +7,12 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "vars": {
+    "PUBLIC_PROFILE_PUBLICATION_MODE": "synthetic-only",
+    "PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS": "staging-synthetic-creator",
+    "ADULT_PROFILE_PUBLICATION_MODE": "disabled",
+    "ADULT_PROFILE_SYNTHETIC_CREATOR_IDS": ""
+  },
   "d1_databases": [
     {
       "binding": "DB",

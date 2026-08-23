@@ -14,6 +14,8 @@ import {
 } from "@/lib/profile-appearance-contract";
 
 type Surface = "sfw" | "adult";
+type ImageRole = "avatar" | "background";
+type ImageOperation = { role: ImageRole; action: "uploading" | "removing" } | null;
 
 type Props = {
   initialAppearance: ProfileAppearance;
@@ -26,6 +28,28 @@ type Props = {
   imageUploadsEnabled?: boolean;
 };
 export type ProfileImageAttachment = { id: string; role: "avatar" | "background"; previewUrl: string };
+
+const PROFILE_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
+const PROFILE_IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,image/avif";
+
+function imageRoleLabel(role: ImageRole) {
+  return role === "avatar" ? "Profile image" : "Background image";
+}
+
+function imageErrorMessage(reason: string | undefined) {
+  const messages: Record<string, string> = {
+    animated_not_supported: "Animated images are not supported. Choose a still image instead.",
+    draft_required: "Save this profile as a draft before changing its images.",
+    file_too_large: "This image is larger than the 12 MB limit.",
+    image_processing_failed: "This image could not be processed. Try another image.",
+    image_too_large: "This image is too large. Choose a smaller image.",
+    invalid_upload_request: "This image upload could not be accepted. Try again.",
+    profile_image_processing_unavailable: "Image uploads are unavailable in this environment.",
+    same_origin_required: "Image uploads must be started from this profile editor.",
+    unsupported_image_type: "Choose a JPEG, PNG, WebP, or AVIF image.",
+  };
+  return messages[reason ?? ""] ?? "Image upload failed. Try again.";
+}
 
 const buttonLabels: Record<ProfileButtonStyle, string> = {
   "solid-rounded": "Solid rounded",
@@ -50,12 +74,58 @@ export function ProfileAppearanceEditor({ initialAppearance, inheritedAppearance
   const [inheritSfwTheme, setInheritSfwTheme] = useState(initialAppearance.inheritSfwTheme);
   const [activePanel, setActivePanel] = useState<"design" | "images" | "preview">("design");
   const [images, setImages] = useState(initialImages);
-  const [uploading, setUploading] = useState<"avatar" | "background" | null>(null);
+  const [imageOperation, setImageOperation] = useState<ImageOperation>(null);
+  const [draggingRole, setDraggingRole] = useState<ImageRole | null>(null);
   const [imageError, setImageError] = useState("");
   const effectiveAppearance = inheritSfwTheme && inheritedAppearance ? { ...inheritedAppearance, inheritSfwTheme: true } : appearance;
   const css = useMemo(() => appearanceCss(effectiveAppearance), [effectiveAppearance]);
   const update = <K extends keyof ProfileAppearance>(key: K, value: ProfileAppearance[K]) => setAppearance((current) => ({ ...current, [key]: value }));
   const selectTheme = (themeKey: ProfileThemeKey) => setAppearance({ ...appearanceForTheme(themeKey), inheritSfwTheme: false });
+
+  const uploadImage = async (role: ImageRole, file: File) => {
+    if (!versionId || !imageUploadsEnabled || imageOperation) return;
+    if (file.type && !PROFILE_IMAGE_ACCEPT.split(",").includes(file.type)) {
+      setImageError("Choose a JPEG, PNG, WebP, or AVIF image.");
+      return;
+    }
+    if (file.size > PROFILE_IMAGE_MAX_BYTES) {
+      setImageError("This image is larger than the 12 MB limit.");
+      return;
+    }
+
+    setImageError("");
+    setImageOperation({ role, action: "uploading" });
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("surface", surface === "sfw" ? "public_sfw" : "adult_profile");
+      form.set("role", role);
+      form.set("versionId", versionId);
+      const response = await fetch("/api/profile-image", { method: "POST", body: form });
+      const result = await response.json().catch(() => null) as { ok?: boolean; error?: string; attachment?: ProfileImageAttachment } | null;
+      if (!response.ok || !result?.ok || !result.attachment) throw new Error(result?.error ?? "image_processing_failed");
+      setImages((current) => [...current.filter((item) => item.role !== role), result.attachment!]);
+    } catch (error) {
+      setImageError(imageErrorMessage(error instanceof Error ? error.message : undefined));
+    } finally {
+      setImageOperation(null);
+    }
+  };
+
+  const removeImage = async (image: ProfileImageAttachment) => {
+    if (imageOperation) return;
+    setImageError("");
+    setImageOperation({ role: image.role, action: "removing" });
+    try {
+      const response = await fetch(`/api/profile-image/${image.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("image_remove_failed");
+      setImages((current) => current.filter((item) => item.id !== image.id));
+    } catch {
+      setImageError("Image could not be removed from this draft. Try again.");
+    } finally {
+      setImageOperation(null);
+    }
+  };
 
   return <section className="profile-design-editor wide" aria-labelledby={`${surface}-design-title`}>
     <div className="section-divider"><b id={`${surface}-design-title`}>Profile design</b><span>Choose from fixed, readable design tokens. Custom CSS, embeds, tracking parameters, and external image URLs are not accepted.</span></div>
@@ -74,7 +144,37 @@ export function ProfileAppearanceEditor({ initialAppearance, inheritedAppearance
       </div>
       <PhonePreview appearance={effectiveAppearance} css={css} displayName={displayName} sampleLinks={sampleLinks} surface={surface} images={images} />
     </div>}
-    {activePanel === "images" && <div className="profile-image-adapter"><b>Private images</b><p>{imageUploadsEnabled ? "Images are decoded, stripped, and re-encoded before a private derivative is attached to this draft. Saving the draft does not publish an image." : "Image uploads are unavailable in this environment until a Workers-compatible private image processor is approved."}</p>{(["avatar", "background"] as const).map((role) => { const image = images.find((item) => item.role === role); return <label className="profile-upload-card" key={role}><span><b>{role === "avatar" ? "Profile image" : "Background image"}</b><small>{image ? "Ready for private preview" : !imageUploadsEnabled ? "Unavailable in this environment" : versionId ? "JPEG, PNG, WebP, or AVIF · 12 MB max" : "Save a draft before uploading images."}</small></span>{image ? <><img src={image.previewUrl} alt="" /><button type="button" className="profile-image-remove" onClick={async () => { const response = await fetch(`/api/profile-image/${image.id}`, { method: "DELETE" }); if (response.ok) setImages((current) => current.filter((item) => item.id !== image.id)); else setImageError("Image could not be removed from this draft."); }}>Remove</button></> : null}<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" disabled={!imageUploadsEnabled || !versionId || uploading !== null} onChange={async (event) => { const input = event.currentTarget; const file = input.files?.[0]; if (!file || !versionId || !imageUploadsEnabled) return; setImageError(""); setUploading(role); try { const form = new FormData(); form.set("file", file); form.set("surface", surface === "sfw" ? "public_sfw" : "adult_profile"); form.set("role", role); form.set("versionId", versionId); const response = await fetch("/api/profile-image", { method: "POST", body: form }); const result = await response.json() as { ok: boolean; error?: string; attachment?: ProfileImageAttachment }; if (!result.ok || !result.attachment) throw new Error(result.error ?? "image_processing_failed"); setImages((current) => [...current.filter((item) => item.role !== role), result.attachment!]); } catch (error) { setImageError(error instanceof Error ? error.message.replaceAll("_", " ") : "Image upload failed"); } finally { setUploading(null); input.value = ""; } }} /></label>; })}{uploading && <span>Uploading and processing {uploading}…</span>}{imageError && <span role="alert">{imageError}</span>}<span>Original files, metadata, and storage keys are never included in public snapshots or returned to the browser.</span></div>}
+    {activePanel === "images" && <div className="profile-image-adapter">
+      <b>Private images</b>
+      <p>{imageUploadsEnabled ? "Images are decoded, stripped, and re-encoded before a private derivative is attached to this draft. Saving the draft does not publish an image." : "Image uploads are unavailable in this environment until a Workers-compatible private image processor is approved."}</p>
+      {(["avatar", "background"] as const).map((role) => {
+        const image = images.find((item) => item.role === role);
+        const inputId = `${surface}-${role}-image`;
+        const isBusy = imageOperation?.role === role;
+        const isDisabled = !imageUploadsEnabled || !versionId || imageOperation !== null;
+        const helperText = !imageUploadsEnabled
+            ? "Unavailable in this environment"
+            : !versionId
+              ? "Save a draft before changing its images."
+              : image
+                ? "Ready for private preview"
+                : "JPEG, PNG, WebP, or AVIF · 12 MB max";
+        return <div className={`profile-upload-card${draggingRole === role ? " is-dragging" : ""}`} key={role} onDragOver={(event) => { if (!isDisabled) { event.preventDefault(); setDraggingRole(role); } }} onDragLeave={() => setDraggingRole((current) => current === role ? null : current)} onDrop={(event) => { event.preventDefault(); setDraggingRole(null); if (isDisabled) return; const file = event.dataTransfer.files.item(0); if (file) void uploadImage(role, file); }}>
+          <div className="profile-upload-copy">
+            <b>{imageRoleLabel(role)}</b>
+            <small>{isBusy ? imageOperation?.action === "uploading" ? "Uploading and processing…" : "Removing image…" : helperText}</small>
+          </div>
+          {image && <img src={image.previewUrl} alt="" />}
+          {image && <button type="button" className="profile-image-remove" onClick={() => void removeImage(image)} disabled={isDisabled}>Remove</button>}
+          <input id={inputId} className="profile-image-input" type="file" accept={PROFILE_IMAGE_ACCEPT} disabled={isDisabled} onChange={(event) => { const input = event.currentTarget; const file = input.files?.[0]; if (file) void uploadImage(role, file); input.value = ""; }} />
+          <button type="button" className="profile-image-select" disabled={isDisabled} onClick={() => document.getElementById(inputId)?.click()}>{image ? "Replace image" : "Choose image"}</button>
+          <small className="profile-image-drop-hint">or drag an image here</small>
+        </div>;
+      })}
+      {imageOperation && <span role="status" aria-live="polite">{imageOperation.action === "uploading" ? `Uploading and processing the ${imageRoleLabel(imageOperation.role).toLowerCase()}…` : `Removing the ${imageRoleLabel(imageOperation.role).toLowerCase()}…`}</span>}
+      {imageError && <span role="alert">{imageError}</span>}
+      <span>Original files, metadata, and storage keys are never included in public snapshots or returned to the browser.</span>
+    </div>}
     {activePanel === "preview" && <div className="profile-preview-panel"><PhonePreview appearance={effectiveAppearance} css={css} displayName={displayName} sampleLinks={sampleLinks} surface={surface} images={images} /></div>}
   </section>;
 }

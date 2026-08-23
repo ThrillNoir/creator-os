@@ -1190,14 +1190,32 @@ export async function approvePublicProfileVersionAction(formData: FormData) {
 export async function publishPublicProfileAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
   if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must publish a public release.");
-  if (formData.get("publishConfirmed") !== "yes") throw new Error("Confirm that this explicitly approved profile should be made public.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
   const env = cloudflareEnv();
-  const version = await creatorPrepare(env.DB, creatorId, `SELECT v.id,v.profile_id,v.version_number
+  const version = await creatorPrepare(env.DB, creatorId, `SELECT v.id,v.profile_id,v.creator_id,p.slug,p.published_version_id,v.version_number,v.display_name,v.headline,v.bio,v.content_checksum,v.status
     FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
-    WHERE v.id=? AND v.creator_id=@creator AND v.status='approved'`).bind(versionId).first<{ id: string; profile_id: string; version_number: number }>();
-  if (!version) throw new Error("Only an explicitly approved profile version can be published.");
+    WHERE v.id=? AND v.creator_id=@creator AND v.status IN ('draft','approved')`).bind(versionId).first<PublicProfileVersionRow>();
+  if (!version) throw new Error("Only this creator’s saved draft can be published.");
+  const linkRows = await creatorPrepare(env.DB, creatorId, `SELECT label,destination_url,destination_host,sort_order
+    FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=? ORDER BY sort_order ASC`).bind(version.id)
+    .all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes publication validation. Save the profile again before publishing.");
+    return { label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await publicProfileChecksum({ displayName: version.display_name, headline: version.headline, bio: version.bio, links });
+  if (checksum !== version.content_checksum) throw new Error("The profile changed outside the saved workflow. Save it again before publishing.");
+  if (version.status === "draft") {
+    const [approved] = await env.DB.batch([
+      creatorPrepare(env.DB, creatorId, `UPDATE creator_public_profile_versions
+        SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note='Publish selected in profile editor'
+        WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`).bind(identity.email, version.id, version.profile_id),
+      identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_version_approved", version.id, { profileId: version.profile_id, versionNumber: version.version_number, contentChecksum: checksum, destinationCount: links.length, publicSurface: true, approvalSource: "publish_button" }),
+    ]);
+    if (!approved.meta?.changes) throw new Error("This public profile draft is no longer available to publish.");
+  }
   const response = await fetchInternalService(env, "public_links_control", "public.profile.publish", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/publish", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1212,7 +1230,6 @@ export async function publishPublicProfileAction(formData: FormData) {
 export async function withdrawPublicProfileAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
   if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must withdraw a public release.");
-  if (formData.get("withdrawConfirmed") !== "yes") throw new Error("Confirm that this public profile should be withdrawn.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
   const env = cloudflareEnv();
@@ -1304,15 +1321,30 @@ export async function approveAdultProfileVersionAction(formData: FormData) {
 export async function publishAdultProfileAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
   if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must publish an adult release.");
-  if (formData.get("publishConfirmed") !== "yes") throw new Error("Confirm that this approved adult version should be projected to the separately configured age-gated gateway.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedAdultProfileVersionId(formData);
   const env = cloudflareEnv();
-  const profile = await creatorPrepare(env.DB, creatorId, `SELECT p.id,p.published_version_id,v.id AS version_id,v.version_number
+  if (String(env.ADULT_PROFILE_PUBLISHING_ENABLED) !== "1") throw new Error("Adult-profile publishing is not enabled in this environment.");
+  const profile = await creatorPrepare(env.DB, creatorId, `SELECT p.id,p.published_version_id,v.id AS version_id,v.version_number,v.adult_bio,v.content_checksum,v.status AS version_status
     FROM creator_adult_profiles p
     JOIN creator_adult_profile_versions v ON v.id=? AND v.profile_id=p.id AND v.creator_id=p.creator_id
-    WHERE p.creator_id=@creator AND v.status='approved'`).bind(versionId).first<{ id: string; published_version_id: string | null; version_id: string; version_number: number }>();
-  if (!profile) throw new Error("This adult profile version is not approved for a protected release.");
+    WHERE p.creator_id=@creator AND v.status IN ('draft','approved')`).bind(versionId).first<{ id: string; published_version_id: string | null; version_id: string; version_number: number; adult_bio: string; content_checksum: string; version_status: "draft" | "approved" }>();
+  if (!profile) throw new Error("Only this creator’s saved adult-profile draft can be published.");
+  const linkRows = await creatorPrepare(env.DB, creatorId, "SELECT label,destination_url,destination_host,sort_order FROM creator_adult_link_revisions WHERE creator_id=@creator AND profile_version_id=? AND enabled=1 ORDER BY sort_order ASC").bind(profile.version_id).all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved adult destination no longer passes publication validation. Save the profile again before publishing.");
+    return { stableId: "checksum", label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await adultProfileChecksum({ bio: profile.adult_bio, links });
+  if (checksum !== profile.content_checksum) throw new Error("The adult profile changed outside the saved workflow. Save it again before publishing.");
+  if (profile.version_status === "draft") {
+    const [approved] = await env.DB.batch([
+      creatorPrepare(env.DB, creatorId, "UPDATE creator_adult_profile_versions SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note='Publish selected in profile editor' WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'").bind(identity.email, profile.version_id, profile.id),
+      identityAuditStatement(env.DB, humanAuditActor(identity), "adult_profile_version_approved", profile.version_id, { profileId: profile.id, versionNumber: profile.version_number, contentChecksum: checksum, destinationCount: links.length, adultSurface: true, approvalSource: "publish_button" }),
+    ]);
+    if (!approved.meta?.changes) throw new Error("This adult-profile draft is no longer available to publish.");
+  }
   const response = await fetchInternalService(env, "public_links_control", "adult.profile.publish", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/adult/publish", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1328,7 +1360,6 @@ export async function publishAdultProfileAction(formData: FormData) {
 export async function withdrawAdultProfileAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
   if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must withdraw an adult release.");
-  if (formData.get("withdrawConfirmed") !== "yes") throw new Error("Confirm that this adult profile should be withdrawn from the isolated gateway.");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedAdultProfileVersionId(formData);
   const env = cloudflareEnv();

@@ -57,6 +57,46 @@ test("invalid snapshots and unapproved paths fail closed", async () => {
   assert.equal(events.length, 0);
 });
 
+test("safe public snapshots reject arbitrary image material", async () => {
+  for (const mutation of [
+    (value) => { value.creator.avatarUrl = "https://images.example/adelaide.webp"; },
+    (value) => { value.images = [{ id: "attachment-1", objectKey: "profile-private/adelaide/public_sfw/upload/display.webp" }]; },
+    (value) => { value.adultMedia = [{ id: "adult-attachment-1", objectKey: "profile-private/adelaide/adult_profile/upload/display.webp" }]; },
+    (value) => { value.creator.attachmentId = "private-attachment-1"; },
+  ]) {
+    const invalid = structuredClone(snapshot);
+    mutation(invalid);
+    const response = await worker.fetch(new Request("https://links.example/adelaide"), environment(invalid).env);
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+});
+
+test("v4 public image projections contain only an environment-controlled delivery URL", async () => {
+  const v4 = structuredClone(snapshot);
+  v4.schemaVersion = 4;
+  v4.actions = [];
+  v4.appearance = { themeKey: "thot-noir", buttonStyle: "solid-rounded", backgroundMode: "gradient", backgroundColor: "#0d0c10", primaryColor: "#7655f6", textColor: "#f8f6fa", cardColor: "#211a29", radiusScale: "comfortable" };
+  v4.media = [{ id: "avatar-1", href: "https://media.example/media/adelaide/profile-version-1/avatar-1", altText: "Creator portrait", contentType: "image/webp", imageRole: "avatar", checksum: "a".repeat(64) }];
+  const response = await worker.fetch(new Request("https://links.example/adelaide"), environment(v4, { PUBLIC_MEDIA_BASE_URL: "https://media.example" }).env);
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /https:\/\/media\.example\/media\/adelaide\/profile-version-1\/avatar-1/);
+  assert.doesNotMatch(body, /profile-private\//);
+
+  for (const mutation of [
+    (value) => { value.media[0].href = "https://attacker.example/media/adelaide/profile-version-1/avatar-1"; },
+    (value) => { value.media[0].href = "https://media.example/media/adelaide/profile-version-1/avatar-1?objectKey=profile-private"; },
+    (value) => { value.media[0].href = "https://media.example/media/adelaide/another-version/avatar-1"; },
+    (value) => { value.media[0].href = "https://media.example/media/adelaide/profile-version-1/avatar-1"; value.media[0].imageRole = "adult"; },
+  ]) {
+    const invalid = structuredClone(v4);
+    mutation(invalid);
+    assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(invalid, { PUBLIC_MEDIA_BASE_URL: "https://media.example" }).env)).status, 404);
+  }
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v4).env)).status, 404);
+});
+
 test("v2 interaction actions require the exact configured HTTPS protected-service origin", async () => {
   const v2 = structuredClone(snapshot);
   v2.schemaVersion = 2;

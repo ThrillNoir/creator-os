@@ -7,15 +7,41 @@ const profile = {
   publishedVersionId: "adult-v1",
   creator: { slug: "adelaide", displayName: "Adelaide", bio: "A protected profile", safeProfileUrl: "https://thathuboverthere.com/adelaide" },
   links: [{ id: "fans", label: "Creator page", destinationUrl: "https://example.com/creator", destinationHost: "example.com" }],
-  media: [{ id: "cover", objectKey: "adult/adelaide/cover.jpg", altText: "Approved creator portrait" }],
+  media: [],
 };
 
-function environment(snapshot = profile) {
+const protectedImageProfile = {
+  schemaVersion: 4,
+  publishedVersionId: "adult-v3",
+  creator: { slug: "adelaide", displayName: "Adelaide", bio: "A protected profile", safeProfileUrl: "https://thathuboverthere.com/adelaide" },
+  links: [{ id: "fans", label: "Creator page", destinationUrl: "https://example.com/creator", destinationHost: "example.com" }],
+  media: [{
+    id: "5cbf9896-a553-4b3c-8706-3f7c16c4d021",
+    mediaKey: "adult-media/adelaide/adult-v3/5cbf9896-a553-4b3c-8706-3f7c16c4d021.webp",
+    checksum: "a".repeat(64),
+    altText: "",
+    contentType: "image/webp",
+    imageRole: "avatar",
+  }],
+  appearance: { themeKey: "thot-noir", buttonStyle: "solid-rounded", backgroundMode: "gradient", backgroundColor: "#100c16", primaryColor: "#c5a4ff", textColor: "#fbf8fe", cardColor: "#261d30", radiusScale: "comfortable" },
+};
+
+function environment(snapshot = profile, { mediaContentType = "image/jpeg", mediaChecksum = "a".repeat(64), mediaMetadata } = {}) {
   const events = [];
+  const requestedKeys = [];
   return {
     env: {
       ADULT_PROFILES: { get: async () => snapshot },
-      ADULT_MEDIA: { get: async () => ({ body: new Blob(["image"]), httpMetadata: { contentType: "image/jpeg" } }) },
+      ADULT_MEDIA: { get: async (key) => {
+        requestedKeys.push(key);
+        const media = snapshot.media[0];
+        return {
+          body: new Blob(["image"]),
+          httpMetadata: { contentType: mediaContentType },
+          customMetadata: mediaMetadata ?? { creatorId: "adelaide", creatorSlug: snapshot.creator.slug, versionId: snapshot.publishedVersionId, attachmentId: media?.id ?? "", checksum: media?.checksum ?? "", surface: "adult_profile", imageRole: media?.imageRole ?? "" },
+          checksums: { sha256: Uint8Array.from(mediaChecksum.match(/../g) ?? [], (value) => Number.parseInt(value, 16)).buffer },
+        };
+      } },
       ADULT_EVENTS: { writeDataPoint: (event) => events.push(event) },
       TURNSTILE_SECRET: "test-secret",
       TURNSTILE_SITE_KEY: "site-key",
@@ -23,6 +49,7 @@ function environment(snapshot = profile) {
       AGE_SESSION_SECRET: "session-secret",
     },
     events,
+    requestedKeys,
   };
 }
 
@@ -41,7 +68,7 @@ test("the gate is the only response available before confirmation", async () => 
   assert.match(body, /thathuboverthere\.com\/adelaide/);
   assert.doesNotMatch(body, /A protected profile/);
   assert.doesNotMatch(body, /example\.com\/creator/);
-  assert.doesNotMatch(body, /adult\/adelaide\/cover\.jpg/);
+  assert.doesNotMatch(body, /adult-media\//);
   assert.doesNotMatch(body, /publishedVersionId|destinationUrl|objectKey/);
   assert.equal(direct.status, 404);
   assert.equal(media.status, 404);
@@ -87,5 +114,65 @@ test("protected redirects use only the stored credential-free HTTPS destination"
     const denied = await worker.fetch(new Request("https://adult.example/r/adelaide/fans", { headers: { cookie: cookie(confirmed) } }), environment(tampered).env);
     assert.equal(denied.status, 404);
     assert.equal(denied.headers.get("location"), null);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("processed adult image projections remain session-bound, no-store, and do not expose private object keys", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ success: true, hostname: "adult.example", action: "adult_access" });
+  try {
+    const { env, requestedKeys } = environment(protectedImageProfile, { mediaContentType: "image/webp" });
+    const imageId = protectedImageProfile.media[0].id;
+    const denied = await worker.fetch(new Request(`https://adult.example/media/adelaide/${imageId}?objectKey=https://attacker.example`), env);
+    assert.equal(denied.status, 404);
+    assert.equal(requestedKeys.length, 0);
+
+    const form = new FormData(); form.set("cf-turnstile-response", "valid-token");
+    const confirmed = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", { method: "POST", headers: { origin: "https://adult.example" }, body: form }), env);
+    const page = await worker.fetch(new Request("https://adult.example/adelaide", { headers: { cookie: cookie(confirmed) } }), env);
+    const pageBody = await page.text();
+    assert.match(pageBody, new RegExp(`/media/adelaide/${imageId}`));
+    assert.doesNotMatch(pageBody, /adult-media\/adelaide\/adult-v3/);
+    assert.doesNotMatch(pageBody, /profile-private\//);
+
+    const allowed = await worker.fetch(new Request(`https://adult.example/media/adelaide/${imageId}?key=attacker`, { headers: { cookie: cookie(confirmed) } }), env);
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get("content-type"), "image/webp");
+    assert.equal(allowed.headers.get("cache-control"), "no-store");
+    assert.equal(allowed.headers.get("x-content-type-options"), "nosniff");
+    assert.deepEqual(requestedKeys, [protectedImageProfile.media[0].mediaKey]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("adult v4 image snapshots fail closed on a cross-surface key, unexpected metadata, checksum, or R2 content type", async () => {
+  const crossSurface = structuredClone(protectedImageProfile);
+  crossSurface.media[0].mediaKey = "public-media/adelaide/adult-v3/5cbf9896-a553-4b3c-8706-3f7c16c4d021.webp";
+  const invalid = await worker.fetch(new Request("https://adult.example/age/adelaide"), environment(crossSurface).env);
+  assert.equal(invalid.status, 404);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ success: true, hostname: "adult.example", action: "adult_access" });
+  try {
+    const { env } = environment(protectedImageProfile, { mediaContentType: "image/jpeg" });
+    const form = new FormData(); form.set("cf-turnstile-response", "valid-token");
+    const confirmed = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", { method: "POST", headers: { origin: "https://adult.example" }, body: form }), env);
+    const denied = await worker.fetch(new Request(`https://adult.example/media/adelaide/${protectedImageProfile.media[0].id}`, { headers: { cookie: cookie(confirmed) } }), env);
+    assert.equal(denied.status, 404);
+    assert.equal(denied.headers.get("cache-control"), "no-store");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("adult media rejects a checksum or metadata mismatch after session confirmation", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ success: true, hostname: "adult.example", action: "adult_access" });
+  try {
+    const form = new FormData(); form.set("cf-turnstile-response", "valid-token");
+    const badChecksum = environment(protectedImageProfile, { mediaContentType: "image/webp", mediaChecksum: "b".repeat(64) });
+    const confirmed = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", { method: "POST", headers: { origin: "https://adult.example" }, body: form }), badChecksum.env);
+    assert.equal((await worker.fetch(new Request(`https://adult.example/media/adelaide/${protectedImageProfile.media[0].id}`, { headers: { cookie: cookie(confirmed) } }), badChecksum.env)).status, 404);
+
+    const badMetadata = environment(protectedImageProfile, { mediaContentType: "image/webp", mediaMetadata: { creatorSlug: "other", versionId: "adult-v3", attachmentId: protectedImageProfile.media[0].id, checksum: "a".repeat(64), surface: "adult_profile", imageRole: "avatar" } });
+    const confirmedMetadata = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", { method: "POST", headers: { origin: "https://adult.example" }, body: form }), badMetadata.env);
+    assert.equal((await worker.fetch(new Request(`https://adult.example/media/adelaide/${protectedImageProfile.media[0].id}`, { headers: { cookie: cookie(confirmedMetadata) } }), badMetadata.env)).status, 404);
   } finally { globalThis.fetch = originalFetch; }
 });

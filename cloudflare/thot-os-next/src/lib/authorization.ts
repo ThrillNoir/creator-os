@@ -10,7 +10,12 @@ export type CreatorMembership = {
 const permissions: Record<CreatorRole, ReadonlySet<CreatorPermission>> = {
   agency_admin: new Set(["view", "mutate", "approve", "manage_identity"]),
   operator: new Set(["view", "mutate", "approve"]),
-  creator: new Set(["view", "mutate", "approve"]),
+  // Creators may author drafts in their sole creator-portal workspace, but
+  // never approve, publish, or withdraw a profile. Publish actions also make
+  // their own role check, but keeping this false at the permission boundary
+  // means a future action cannot accidentally turn draft editing into release
+  // authority merely by asking for `approve`.
+  creator: new Set(["view", "mutate"]),
   viewer: new Set(["view"]),
 };
 

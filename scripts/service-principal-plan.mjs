@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
+import { registryHasProductionOperationalSurface } from "./service-auth-activation-lib.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultContract = path.join(projectRoot, "config/service-principals.json");
@@ -59,7 +60,7 @@ export function buildServicePrincipalPlan({ environment, contract, registry, gra
   validateContract(contract);
   if (environment !== "staging" || contract.environment !== "staging") throw new Error("Service-principal planning is restricted to the explicit staging contract.");
   const staging = registry?.environments?.staging;
-  if (!staging?.provisioned || !staging?.deployable || registry?.environments?.production?.provisioned) throw new Error("Staging must be the only provisioned deployment target for this plan.");
+  if (!staging?.provisioned || !staging?.deployable || registryHasProductionOperationalSurface(registry)) throw new Error("Staging must be the only provisioned operational target for this plan; an isolated production public-links foundation is permitted.");
   const web = staging.components?.web;
   if (!web || !Array.isArray(web.requiredSecrets)) throw new Error("Canonical web deployment metadata is missing.");
   const expectedSecrets = contract.principals.map((principal) => principal.secretName).sort();

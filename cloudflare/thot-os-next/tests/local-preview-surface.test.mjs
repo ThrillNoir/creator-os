@@ -8,10 +8,12 @@ import { localPreviewRedirect } from "../src/lib/local-preview-redirect.ts";
 const root = path.resolve(import.meta.dirname, "..");
 const source = (file) => readFile(path.join(root, file), "utf8");
 
-test("the adult local-preview action is unavailable outside local Node development", () => {
-  assert.equal(localAdultPreviewAvailable({ nodeEnv: "development", userAgent: "Node.js/22" }), true);
-  assert.equal(localAdultPreviewAvailable({ nodeEnv: "development", userAgent: "Cloudflare-Workers" }), false);
-  assert.equal(localAdultPreviewAvailable({ nodeEnv: "production", userAgent: "Cloudflare-Workers" }), false);
+test("the adult local-preview action is unavailable outside configured local Node development", () => {
+  const signingSecret = "a".repeat(32);
+  assert.equal(localAdultPreviewAvailable({ nodeEnv: "development", userAgent: "Node.js/22", signingSecret }), true);
+  assert.equal(localAdultPreviewAvailable({ nodeEnv: "development", userAgent: "Node.js/22" }), false);
+  assert.equal(localAdultPreviewAvailable({ nodeEnv: "development", userAgent: "Cloudflare-Workers", signingSecret }), false);
+  assert.equal(localAdultPreviewAvailable({ nodeEnv: "production", userAgent: "Cloudflare-Workers", signingSecret }), false);
 });
 
 test("safe preview only renders More when the local age route is available", async () => {

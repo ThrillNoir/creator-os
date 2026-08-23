@@ -3,4 +3,9 @@
 interface Env {
   BOOKING_ACTION_BASE_URL?: string;
   ADULT_GATEWAY_BASE_URL?: string;
+  /**
+   * Origin of the separately deployed public-media Worker. This Worker never
+   * receives an R2 binding and validates only URLs on this exact origin.
+   */
+  PUBLIC_MEDIA_BASE_URL?: string;
 }

@@ -1,4 +1,4 @@
-import { approveAdultProfileVersionAction, publishAdultProfileAction, saveAdultProfileDraftAction, withdrawAdultProfileAction } from "@/app/actions";
+import { publishAdultProfileAction, saveAdultProfileDraftAction, withdrawAdultProfileAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
@@ -9,7 +9,6 @@ import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
 
 type Version = { id: string; version_number: number; adult_bio: string; status: string; approved_by: string | null; approved_at: string | null; created_at: string };
 type Link = { id: string; stable_link_id: string; profile_version_id: string; label: string; destination_url: string; sort_order: number };
-type Media = { id: string; profile_version_id: string; asset_id: string; alt_text: string; sort_order: number; status: string };
 type Profile = { id: string; status: string; published_version_id: string | null };
 type Publication = { id: string; version_id: string; status: string; adult_snapshot_key: string; created_at: string };
 type AppearanceRow = { profile_version_id: string; theme_key: string; button_style: string; background_mode: string; background_color: string; primary_color: string; text_color: string; card_color: string; radius_scale: string; inherit_sfw_theme?: number };
@@ -26,10 +25,10 @@ function appearanceFromRow(row: AppearanceRow | undefined): ProfileAppearance {
 }
 
 const notices: Record<string, string> = {
-  draft_saved: "Adult-profile draft saved privately. It is not available on any public hostname.",
-  version_approved: "Adult-profile version approved. It remains private until its separate gateway projection is configured and published.",
-  publication_started: "Adult release was accepted for durable processing. The protected gateway projection is written before the private record is marked published.",
-  withdrawal_started: "Adult withdrawal was accepted for durable processing. The protected gateway projection is removed before the private record is marked paused.",
+  draft_saved: "Saved. Your 18+ changes are private until you publish them.",
+  version_approved: "Saved version is ready to publish.",
+  publication_started: "Publishing started. Refresh shortly to see the live status.",
+  withdrawal_started: "Unpublishing started. The protected page is being removed.",
 };
 
 function formatDate(value: string | null) {
@@ -39,7 +38,7 @@ function formatDate(value: string | null) {
 }
 
 function stateLabel(value: string) {
-  return ({ draft: "Draft", approved: "Approved, private", published: "Published", paused: "Withdrawn/paused", revoked: "Withdrawn", superseded: "Superseded", rolled_back: "Withdrawn" } as Record<string, string>)[value] ?? value.replaceAll("_", " ");
+  return ({ draft: "Draft", approved: "Saved", published: "Published", paused: "Unpublished", revoked: "Unpublished", superseded: "Superseded", rolled_back: "Unpublished" } as Record<string, string>)[value] ?? value.replaceAll("_", " ");
 }
 
 export default async function AdultProfilePage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
@@ -47,14 +46,10 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
   const creatorId = context.creator.creator_id;
   const env = cloudflareEnv();
   const DB = env.DB;
-  const [profile, versions, links, media, publications, appearances, safeVersions, safeAppearances, images] = await Promise.all([
+  const [profile, versions, links, publications, appearances, safeVersions, safeAppearances, images] = await Promise.all([
     DB.prepare("SELECT id,status,published_version_id FROM creator_adult_profiles WHERE creator_id=?").bind(creatorId).first<Profile>(),
     DB.prepare("SELECT id,version_number,adult_bio,status,approved_by,approved_at,created_at FROM creator_adult_profile_versions WHERE creator_id=? ORDER BY version_number DESC").bind(creatorId).all<Version>(),
     DB.prepare("SELECT id,link_id AS stable_link_id,profile_version_id,label,destination_url,sort_order FROM creator_adult_link_revisions WHERE creator_id=? AND enabled=1 ORDER BY profile_version_id,sort_order").bind(creatorId).all<Link>(),
-    DB.prepare(`SELECT m.id,m.profile_version_id,m.asset_id,m.alt_text,m.sort_order,r.status
-      FROM creator_adult_profile_media m
-      JOIN creator_media_release_attestations r ON r.creator_id=m.creator_id AND r.asset_id=m.asset_id AND r.surface='adult_profile'
-      WHERE m.creator_id=? AND m.enabled=1 ORDER BY m.profile_version_id,m.sort_order`).bind(creatorId).all<Media>(),
     DB.prepare("SELECT id,version_id,status,adult_snapshot_key,created_at FROM creator_adult_profile_publications WHERE creator_id=? ORDER BY created_at DESC LIMIT 12").bind(creatorId).all<Publication>(),
     DB.prepare("SELECT profile_version_id,theme_key,button_style,background_mode,background_color,primary_color,text_color,card_color,radius_scale,inherit_sfw_theme FROM creator_adult_profile_appearances WHERE creator_id=?").bind(creatorId).all<AppearanceRow>(),
     DB.prepare("SELECT id,status FROM creator_public_profile_versions WHERE creator_id=? ORDER BY version_number DESC").bind(creatorId).all<SafeVersion>(),
@@ -66,44 +61,41 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
   const draft = versions.results.find((version) => version.status === "draft") ?? null;
   const approved = versions.results.find((version) => version.status === "approved") ?? null;
   const published = profile?.published_version_id ? versions.results.find((version) => version.id === profile.published_version_id) ?? null : null;
-  const publishingConfigured = typeof env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN === "string" && env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN.length >= 40;
-  const authoring = draft ?? approved;
+  const versionForPublish = draft ?? approved;
+  const publishingConfigured = String(env.ADULT_PROFILE_PUBLISHING_ENABLED) === "1" && typeof env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN === "string" && env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN.length >= 40;
+  const authoring = draft ?? approved ?? published;
   const authoringLinks = authoring ? links.results.filter((link) => link.profile_version_id === authoring.id) : [];
-  const authoringMedia = authoring ? media.results.filter((item) => item.profile_version_id === authoring.id) : [];
   const slots = Array.from({ length: Math.max(4, Math.min(12, authoringLinks.length + 1)) }, (_, index) => authoringLinks[index] ?? null);
   const notice = query.notice ? notices[query.notice] : null;
   const authoringAppearance = appearanceFromRow(authoring ? appearances.results.find((appearance) => appearance.profile_version_id === authoring.id) : undefined);
-  const safeVersion = safeVersions.results.find((version) => version.status === "draft") ?? safeVersions.results.find((version) => version.status === "approved") ?? null;
+  const safeVersion = safeVersions.results.find((version) => version.status === "draft") ?? safeVersions.results.find((version) => version.status === "approved") ?? safeVersions.results.find((version) => version.status === "published") ?? null;
   const safeAppearance = safeVersion ? appearanceFromRow(safeAppearances.results.find((appearance) => appearance.profile_version_id === safeVersion.id)) : null;
   const authoringImages: ProfileImageAttachment[] = authoring ? images.results.filter((image) => image.profile_version_id === authoring.id).map((image) => ({ id: image.id, role: image.image_role, previewUrl: `/api/profile-image/${image.id}` })) : [];
 
-  return <AppShell active="18+ profile"><PageHeader title="18+ profile" subtitle="Private authoring for a separately age-gated surface. Nothing here is included in the safe public profile, its markup, redirects, metadata, or public KV projection." eyebrow="ADULT-GATED CONTENT" />
+  return <AppShell active="18+ profile"><PageHeader title="18+ profile" subtitle="Design, preview and publish this creator’s age-gated profile." eyebrow="ADULT-GATED CONTENT" />
     {notice && <div className="success">{notice}</div>}
-    <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">PRIVATE DRAFT</span><h2>Adult profile and links</h2><p>These destinations use stable link identities and are validated as credential-free HTTPS URLs. A draft cannot become public without separate approval and a deliberately configured age-gated publication flow.</p></div><span>{published ? "Published" : draft ? `Draft v${draft.version_number}` : approved ? `Approved, private v${approved.version_number}` : profile?.status === "paused" ? "Withdrawn/paused" : "No draft"}</span></div>
-      {canEdit ? <form action={saveAdultProfileDraftAction} className="inline-form public-profile-form">
+    <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">PROTECTED PROFILE</span><h2>18+ profile and links</h2><p>Content and destinations stay out of the safe public page. The live profile remains behind the separate age gate.</p></div><span>{published ? "Published" : draft ? `Draft v${draft.version_number}` : approved ? `Saved v${approved.version_number}` : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
+      {canEdit ? <form action={saveAdultProfileDraftAction} className="inline-form public-profile-form" id="adult-profile-editor">
         <label className="wide">Adult bio <small>(optional)</small><textarea name="adultBio" maxLength={2000} defaultValue={authoring?.adult_bio ?? ""} /></label>
         <div className="section-divider wide"><b>Creator links</b><span>Use generic labels and final HTTPS destinations. Fansly, OnlyFans, and future platforms are values, not schema fields.</span></div>
         {slots.map((link, index) => <div className="public-link-fields" key={link?.id ?? `new-${index}`}><input type="hidden" name="adultLinkStableId" value={link?.stable_link_id ?? ""} /><label>Label<input name="adultLinkLabel" maxLength={80} defaultValue={link?.label ?? ""} placeholder="Creator page" /></label><label>HTTPS destination<input name="adultLinkDestination" type="url" defaultValue={link?.destination_url ?? ""} placeholder="https://example.com" /></label></div>)}
-        <ProfileAppearanceEditor surface="adult" initialAppearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName="Creator" sampleLinks={authoringLinks.map((link) => link.label)} versionId={draft?.id} initialImages={authoringImages} imageUploadsEnabled={profileImageProcessorAvailable()} />
-        <button className="primary" type="submit">Save private adult draft</button>
+        <ProfileAppearanceEditor surface="adult" initialAppearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName={context.creator.creator_name} sampleLinks={authoringLinks.map((link) => link.label)} versionId={draft?.id} initialImages={authoringImages} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
       </form> : <div className="empty"><b>Read-only adult-profile view</b><span>Your role can inspect this creator’s private version history but cannot change protected content or destinations.</span></div>}
+      {canEdit && <div className="profile-action-bar wide" aria-label="18+ profile actions">
+        <div><b>{published ? draft ? "Unpublished changes" : "Live" : versionForPublish ? "Saved privately" : "Not saved yet"}</b><span>{published && !draft ? "Your protected 18+ profile is live." : "Save your changes, then publish when ready."}</span></div>
+        <div className="profile-action-buttons">
+          <button className="secondary-action" type="submit" form="adult-profile-editor">Save</button>
+          {canApprove && versionForPublish && <form action={publishAdultProfileAction}><input type="hidden" name="adultVersionId" value={versionForPublish.id} /><button className="primary" type="submit" disabled={!publishingConfigured}>Publish</button></form>}
+          {published && canApprove && <form action={withdrawAdultProfileAction}><input type="hidden" name="adultVersionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form>}
+        </div>
+        {!publishingConfigured && canApprove && <small>Publishing will become available when the protected staging release service is configured.</small>}
+        {!canApprove && <small>Save changes here. An agency administrator can publish them.</small>}
+      </div>}
     </section>
 
-    <div className="two-column public-profile-actions"><section className="panel"><div className="section-heading"><div><span className="eyebrow">MEDIA RELEASES</span><h2>Approved carousel media</h2><p>Only an explicit approved release may be attached to this version. Source Dropbox media and ordinary private previews are not eligible for public delivery.</p></div><span>{authoringMedia.length} attached</span></div>
-      {authoringMedia.length ? <div className="public-profile-history">{authoringMedia.map((item) => <article key={item.id}><span className="post-state">{item.status}</span><div><strong>Approved derivative</strong><small>Asset {item.asset_id} · position {item.sort_order + 1}{item.alt_text ? ` · ${item.alt_text}` : ""}</small></div></article>)}</div> : <div className="empty"><b>No carousel media attached</b><span>Derivative creation and release approval are intentionally separate from source-media selection. An unreleased asset cannot be attached here.</span></div>}
-    </section><section className="panel"><div className="section-heading"><div><span className="eyebrow">SEPARATE APPROVAL</span><h2>Approve protected draft</h2><p>A creator may author a draft, but a separate operator or agency administrator must approve it.</p></div><span>{draft ? `Version ${draft.version_number}` : "No draft"}</span></div>
-      {draft && canApprove ? <form action={approveAdultProfileVersionAction} className="confirmed-action"><input type="hidden" name="adultVersionId" value={draft.id} /><label>Approval note <small>(optional)</small><input name="approvalNote" maxLength={500} placeholder="Recorded with this immutable approval" /></label><button className="secondary-action" type="submit">Approve version {draft.version_number}</button></form> : <div className="empty"><b>{draft ? "Separate approval required" : "No draft awaiting approval"}</b><span>{draft ? "A separate operator or agency administrator must make this explicit decision." : "Save a private draft before approval can be recorded."}</span></div>}
-    </section></div>
-
-    <section className="panel"><div className="section-heading"><div><span className="eyebrow">PUBLICATION GATE</span><h2>Gateway release</h2><p>The durable release workflow writes the isolated adult gateway projection before marking a version published, and deletes that projection before recording withdrawal. This local environment intentionally has no gateway or contact service configuration.</p></div><span>{published ? `Live version ${published.version_number}` : approved ? `Ready version ${approved.version_number}` : "Private"}</span></div>
-      {approved && canApprove && (publishingConfigured ? <form action={publishAdultProfileAction} className="confirmed-action"><input type="hidden" name="adultVersionId" value={approved.id} /><label><input type="checkbox" name="publishConfirmed" value="yes" required /> I approve projecting this exact approved version to the separately configured age-gated gateway.</label><button className="primary" type="submit">Publish protected version {approved.version_number}</button></form> : <div className="empty"><b>Protected gateway publishing isn&apos;t configured here</b><span>You can save and approve adult drafts locally. Hostnames, KV/R2 bindings, Turnstile, service grants, and legal/policy approval are required before a remote release can be activated.</span></div>)}
-      {published && canApprove && <form action={withdrawAdultProfileAction} className="confirmed-action public-withdraw"><input type="hidden" name="adultVersionId" value={published.id} /><label><input type="checkbox" name="withdrawConfirmed" value="yes" required /> I approve withdrawing this protected profile now.</label><button className="secondary-action" type="submit">Withdraw protected profile</button></form>}
-      {!approved && !published && <div className="empty"><b>Release is unavailable</b><span>Approve a private draft before the protected projection workflow can receive it.</span></div>}
-    </section>
-
-    <section className="panel"><div className="section-heading"><div><span className="eyebrow">IMMUTABLE HISTORY</span><h2>Adult-profile versions</h2></div><span>{versions.results.length} version{versions.results.length === 1 ? "" : "s"}</span></div>
+    <details className="panel profile-history-panel"><summary>History ({versions.results.length} version{versions.results.length === 1 ? "" : "s"})</summary>
       {versions.results.length ? <div className="public-profile-history">{versions.results.map((version) => <article key={version.id}><span className="post-state">v{version.version_number}</span><div><strong>{stateLabel(version.status)}</strong><small>created {formatDate(version.created_at)}{version.approved_at ? ` · approved ${formatDate(version.approved_at)}` : ""}</small></div><span>{version.approved_by ?? "Awaiting separate approval"}</span></article>)}</div> : <div className="empty"><b>No adult-profile versions</b><span>Creating a private draft does not put anything on a public hostname.</span></div>}
       {publications.results.length ? <div className="public-profile-history public-publications">{publications.results.map((publication) => <article key={publication.id}><span className="post-state">{stateLabel(publication.status)}</span><div><strong>Protected release receipt</strong><small>{publication.adult_snapshot_key} · {formatDate(publication.created_at)}</small></div><span>{publication.version_id}</span></article>)}</div> : null}
-    </section>
+    </details>
   </AppShell>;
 }

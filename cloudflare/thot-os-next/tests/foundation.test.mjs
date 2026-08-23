@@ -10,6 +10,7 @@ test("OpenNext worker keeps the existing private D1 and R2 bindings", async () =
   assert.match(config, /"name": "thot-os-staging"/);
   assert.match(config, /174532e8-5ada-4e30-abba-1276b3540b3f/);
   assert.match(config, /thot-os-previews-staging/);
+  assert.match(config, /"images":\s*\{\s*"binding":\s*"IMAGES"/);
   assert.match(config, /ACCESS_ALLOWED_EMAIL/);
 });
 

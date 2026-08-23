@@ -21,6 +21,21 @@ export function sha256Bytes(value) {
 export const ACTIVATION_BACKUP_MAX_AGE_MS = 15 * 60 * 1000;
 const SHA256 = /^[a-f0-9]{64}$/;
 
+export function registryHasProductionOperationalSurface(registry) {
+  const production = registry?.environments?.production;
+  if (!production?.provisioned && !production?.deployable) return false;
+  const componentNames = Object.keys(production.components ?? {});
+  const publicLinks = production.components?.publicLinks;
+  return componentNames.length !== 1
+    || componentNames[0] !== "publicLinks"
+    || !publicLinks?.deployable
+    || (publicLinks.requiredSecrets?.length ?? 0) !== 0
+    || (publicLinks.resources?.d1?.length ?? 0) !== 0
+    || (publicLinks.resources?.r2?.length ?? 0) !== 0
+    || (publicLinks.resources?.queues?.length ?? 0) !== 0
+    || Object.keys(publicLinks.resources?.services ?? {}).length !== 0;
+}
+
 function sameArray(left, right) {
   return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -139,7 +154,7 @@ export function validateActivation({ activation, contract, registry }) {
   if (activation?.schemaVersion !== 1 || activation.environment !== "staging") throw new Error("Activation is restricted to staging.");
   if (!/^[a-z0-9][a-z0-9-]{2,100}$/i.test(activation.activationId ?? "")) throw new Error("Activation id is invalid.");
   const staging = registry?.environments?.staging;
-  if (!staging?.provisioned || !staging?.deployable || registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Only the explicit staging target may be activated.");
+  if (!staging?.provisioned || !staging?.deployable || registryHasProductionOperationalSurface(registry)) throw new Error("Only staging may contain an operational service-auth surface; an isolated production public-links foundation is permitted.");
   const d1 = staging.resources?.d1?.[activation.expected?.databaseName];
   if (!d1 || d1.id !== activation.expected.databaseId) throw new Error("Activation D1 identity does not match the deployment registry.");
   const principals = new Map((contract?.principals ?? []).map((entry) => [entry.principalName, entry]));
@@ -217,7 +232,7 @@ export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, bac
   if (confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) throw new Error("Activation confirmation does not match the approved plan.");
   if (!cleanGit || currentGit?.sha !== plan.git?.sha || currentGit?.branch !== plan.git?.branch) throw new Error("Activation apply requires the exact clean Git identity used for the plan.");
   assertActivationBackupReceipt({ backupReceipt, plan, registry });
-  if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for activation.");
+  if (registryHasProductionOperationalSurface(registry)) throw new Error("Production must not contain an operational surface during staging activation.");
   return true;
 }
 
@@ -227,7 +242,7 @@ export function assertRevokeGates({ plan, confirmation, registry }) {
   if (!["SATISFIED", "CONFLICT"].includes(plan?.activationStatus?.state) || !plan.activationStatus.activationRunPresent) {
     throw new Error("Recovery requires a structured status showing this activation run is present and requires revocation.");
   }
-  if (registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) throw new Error("Production must remain unprovisioned for recovery.");
+  if (registryHasProductionOperationalSurface(registry)) throw new Error("Production must not contain an operational surface during staging recovery.");
   return true;
 }
 

@@ -9,14 +9,18 @@ export async function GET(_: Request, { params }: { params: Promise<{ attachment
   const { attachmentId } = await params;
   if (!ATTACHMENT_ID.test(attachmentId)) return new Response("Not found", { status: 404 });
   const { DB, MEDIA } = cloudflareEnv();
-  const item = await DB.prepare(`SELECT d.object_key,d.content_type,d.sha256
+  // Attachments intentionally reference the display derivative because that
+  // is the only derivative eligible for a future publication projection. An
+  // authenticated editor/preview must instead serve its smaller sibling.
+  const item = await DB.prepare(`SELECT preview.object_key,preview.content_type,preview.sha256
     FROM creator_profile_image_attachments a
-    JOIN creator_profile_image_derivatives d ON d.id=a.derivative_id AND d.creator_id=a.creator_id
+    JOIN creator_profile_image_derivatives display ON display.id=a.derivative_id AND display.creator_id=a.creator_id AND display.derivative_kind='display'
+    JOIN creator_profile_image_derivatives preview ON preview.upload_id=display.upload_id AND preview.creator_id=display.creator_id AND preview.derivative_kind='preview'
     WHERE a.id=? AND a.creator_id=? AND a.status='attached'`).bind(attachmentId, context.creator.creator_id).first<{ object_key: string; content_type: string; sha256: string }>();
   if (!item) return new Response("Not found", { status: 404 });
   const object = await MEDIA.get(item.object_key);
   if (!object) return new Response("Not found", { status: 404 });
-  return new Response(object.body, { headers: { "content-type": item.content_type, "cache-control": "private, max-age=300", etag: `"${item.sha256}"`, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } });
+  return new Response(object.body, { headers: { "content-type": item.content_type, "cache-control": "private, no-store", etag: `"${item.sha256}"`, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } });
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ attachmentId: string }> }) {

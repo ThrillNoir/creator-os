@@ -1,4 +1,4 @@
-import { approvePublicProfileVersionAction, publishPublicProfileAction, savePublicProfileDraftAction, withdrawPublicProfileAction } from "@/app/actions";
+import { publishPublicProfileAction, savePublicProfileDraftAction, withdrawPublicProfileAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
@@ -26,10 +26,10 @@ function appearanceFromRow(row: AppearanceRow | undefined): ProfileAppearance {
 }
 
 const notices: Record<string, string> = {
-  draft_saved: "Draft saved. It is private until a separate human approval and publish action complete.",
-  version_approved: "Profile version explicitly approved. It is still private until publishing is requested.",
-  publication_started: "Publication was accepted for durable processing. Refresh this page to see its recorded result.",
-  withdrawal_started: "Withdrawal was accepted for durable processing. The public KV projection will be removed before the private record is marked paused.",
+  draft_saved: "Saved. Your changes are private until you publish them.",
+  version_approved: "Saved version is ready to publish.",
+  publication_started: "Publishing started. Refresh shortly to see the live status.",
+  withdrawal_started: "Unpublishing started. The public page is being removed.",
 };
 
 function formatDate(value: string | null) {
@@ -39,7 +39,7 @@ function formatDate(value: string | null) {
 }
 
 function stateLabel(value: string) {
-  return ({ draft: "Draft", approved: "Approved, private", published: "Published", paused: "Withdrawn/paused", revoked: "Withdrawn", superseded: "Superseded" } as Record<string, string>)[value] ?? value.replaceAll("_", " ");
+  return ({ draft: "Draft", approved: "Saved", published: "Published", paused: "Unpublished", revoked: "Unpublished", superseded: "Superseded" } as Record<string, string>)[value] ?? value.replaceAll("_", " ");
 }
 
 export default async function PublicProfilePage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
@@ -70,6 +70,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const draft = versions.results.find((version) => version.status === "draft") ?? null;
   const published = profile?.published_version_id ? versions.results.find((version) => version.id === profile.published_version_id) ?? null : null;
   const approved = versions.results.find((version) => version.status === "approved") ?? null;
+  const versionForPublish = draft ?? approved;
   // An approved version remains the editing baseline until it is published or replaced by a draft.
   // Without this, an approval that has not yet been published appears blank and its links can be lost.
   const authoring = draft ?? approved ?? published;
@@ -83,11 +84,11 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const authoringAppearance = appearanceFromRow(authoring ? appearances.results.find((appearance) => appearance.profile_version_id === authoring.id) : undefined);
   const authoringImages: ProfileImageAttachment[] = authoring ? images.results.filter((image) => image.profile_version_id === authoring.id).map((image) => ({ id: image.id, role: image.image_role, previewUrl: `/api/profile-image/${image.id}` })) : [];
 
-  return <AppShell active="Public profile"><PageHeader title="Public profile" subtitle="Author, explicitly approve, and publish this creator’s public link page without exposing private media, notes, Dropbox sources, or platform credentials." eyebrow="PUBLIC LINKS" />
+  return <AppShell active="Public profile"><PageHeader title="Public profile" subtitle="Build, preview and publish this creator’s public link page." eyebrow="PUBLIC LINKS" />
     {notice && <div className="success">{notice}</div>}
     {authoring && <Link className="preview-link" href="/public-profile/preview">Open private local preview</Link>}
-    <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Only an approved text-and-link snapshot is copied to the public Worker. A social handle is never treated as consent, and no private preview or source media can be selected here.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Approved, private" : profile?.status === "paused" ? "Withdrawn/paused" : "No profile"}</span></div>
-      {canEdit ? <form action={savePublicProfileDraftAction} className="inline-form public-profile-form">
+    <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Save changes privately, preview the page, then publish when it is ready.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Saved" : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
+      {canEdit ? <form action={savePublicProfileDraftAction} className="inline-form public-profile-form" id="public-profile-editor">
         <label>Public URL slug<input name="slug" required maxLength={80} defaultValue={defaultSlug} disabled={Boolean(profile?.published_version_id)} autoComplete="off" /><small>{profile?.published_version_id ? "Published public URL slugs are stable. Withdraw the current profile before changing its URL." : "Lowercase letters, numbers and single hyphens only."}</small></label>
         <label>Display name <small>(optional)</small><input name="displayName" maxLength={120} defaultValue={authoring?.display_name ?? context.creator.creator_name} /></label>
         <label className="wide">Headline<input name="headline" maxLength={280} defaultValue={authoring?.headline ?? ""} /></label>
@@ -97,26 +98,23 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
         <label>Email <small>(optional)</small><input name="bookingEmail" type="email" maxLength={254} defaultValue={email} placeholder="bookings@example.com" autoComplete="email" /></label>
         <div className="section-divider wide"><b>Links</b><span>Add social or other public destinations. Blank rows are not shown, and only approved HTTPS links can be published.</span></div>
         {slots.map((link, index) => <div className="public-link-fields" key={link?.id ?? `new-${index}`}><input type="hidden" name="linkStableId" value={link?.stable_link_id ?? ""} /><label>Label<input name="linkLabel" maxLength={80} defaultValue={link?.label ?? ""} placeholder="Official site" /></label><label>HTTPS destination<input name="linkDestination" type="url" defaultValue={link?.destination_url ?? ""} placeholder="https://example.com" /></label></div>)}
-        <ProfileAppearanceEditor surface="sfw" initialAppearance={authoringAppearance} displayName={authoring?.display_name ?? context.creator.creator_name} sampleLinks={authoringLinks.map((link) => link.label)} versionId={draft?.id} initialImages={authoringImages} imageUploadsEnabled={profileImageProcessorAvailable()} />
-        <div className="section-divider wide"><span>Saving changes only a private draft. It creates a new version after a prior version has been approved or published.</span></div>
-        <button className="primary" type="submit">Save private draft</button>
+        <ProfileAppearanceEditor surface="sfw" initialAppearance={authoringAppearance} displayName={authoring?.display_name ?? context.creator.creator_name} sampleLinks={authoringLinks.map((link) => link.label)} versionId={draft?.id} initialImages={authoringImages} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
       </form> : <div className="empty"><b>Read-only public profile view</b><span>Your role can inspect profile history but cannot alter text, destinations, approvals, or publication.</span></div>}
+      {canEdit && <div className="profile-action-bar wide" aria-label="Profile actions">
+        <div><b>{published ? draft ? "Unpublished changes" : "Live" : versionForPublish ? "Saved privately" : "Not saved yet"}</b><span>{published && !draft ? "Your public profile is live." : "Save your changes, then publish when ready."}</span></div>
+        <div className="profile-action-buttons">
+          <button className="secondary-action" type="submit" form="public-profile-editor">Save</button>
+          {canApprove && versionForPublish && <form action={publishPublicProfileAction}><input type="hidden" name="versionId" value={versionForPublish.id} /><button className="primary" type="submit" disabled={!publishingConfigured}>Publish</button></form>}
+          {published && canApprove && <form action={withdrawPublicProfileAction}><input type="hidden" name="versionId" value={published.id} /><button className="profile-unpublish" type="submit">Unpublish</button></form>}
+        </div>
+        {!publishingConfigured && canApprove && <small>Publishing will become available when the staging release service is configured.</small>}
+        {!canApprove && <small>Save changes here. An agency administrator can publish them.</small>}
+      </div>}
     </section>
 
-    <div className="two-column public-profile-actions">
-      <section className="panel"><div className="section-heading"><div><span className="eyebrow">HUMAN APPROVAL</span><h2>Approve draft</h2><p>Approval freezes the displayed text and destination list. Editing after this point requires a fresh draft version.</p></div><span>{draft ? `Version ${draft.version_number}` : "No draft"}</span></div>
-        {draft && canApprove ? <form action={approvePublicProfileVersionAction} className="confirmed-action"><input type="hidden" name="versionId" value={draft.id} /><label>Approval note <small>(optional)</small><input name="approvalNote" maxLength={500} placeholder="Recorded with this immutable approval" /></label><button className="secondary-action" type="submit">Approve version {draft.version_number}</button></form> : <div className="empty"><b>{draft ? "Separate approval required" : "No draft awaiting approval"}</b><span>{draft ? "A separate operator or agency administrator must make this explicit release decision." : "Save a private draft before approval can be recorded."}</span></div>}
-      </section>
-      <section className="panel"><div className="section-heading"><div><span className="eyebrow">DURABLE RELEASE</span><h2>Publish or withdraw</h2><p>Publishing uses a private service binding and Workflow. Withdrawal removes the public KV snapshot before the private profile record is paused.</p></div><span>{published ? `Live version ${published.version_number}` : approved ? `Ready version ${approved.version_number}` : "No approved version"}</span></div>
-        {approved && canApprove && (publishingConfigured ? <form action={publishPublicProfileAction} className="confirmed-action"><input type="hidden" name="versionId" value={approved.id} /><label><input type="checkbox" name="publishConfirmed" value="yes" required /> I approve making this exact version publicly accessible on the configured public domain.</label><button className="primary" type="submit">Publish version {approved.version_number}</button></form> : <div className="empty"><b>Public publishing control isn&apos;t configured here</b><span>You can save and approve drafts locally. Publishing is intentionally unavailable until this environment has the separate public-link control credential.</span></div>)}
-        {published && canApprove && <form action={withdrawPublicProfileAction} className="confirmed-action public-withdraw"><input type="hidden" name="versionId" value={published.id} /><label><input type="checkbox" name="withdrawConfirmed" value="yes" required /> I approve withdrawing this public page now.</label><button className="secondary-action" type="submit">Withdraw public profile</button></form>}
-        {!approved && !published && <div className="empty"><b>Release is unavailable</b><span>Approve a draft before the publication Workflow can receive it. Public media remains unavailable until its separate SFW derivative pipeline is released.</span></div>}
-      </section>
-    </div>
-
-    <section className="panel"><div className="section-heading"><div><span className="eyebrow">IMMUTABLE HISTORY</span><h2>Profile versions and public receipts</h2><p>Publication records are separate from authoring records, so a requested publish or withdrawal is never mistaken for a completed public change.</p></div><span>{versions.results.length} version{versions.results.length === 1 ? "" : "s"}</span></div>
+    <details className="panel profile-history-panel"><summary>History ({versions.results.length} version{versions.results.length === 1 ? "" : "s"})</summary>
       {versions.results.length ? <div className="public-profile-history">{versions.results.map((version) => <article key={version.id}><span className="post-state">v{version.version_number}</span><div><strong>{version.display_name}</strong><small>{stateLabel(version.status)} · created {formatDate(version.created_at)}{version.approved_at ? ` · approved ${formatDate(version.approved_at)}` : ""}</small></div><span>{version.approved_by ?? "Awaiting explicit approval"}</span></article>)}</div> : <div className="empty"><b>No public-profile versions</b><span>Creating a draft does not publish anything.</span></div>}
       {publications.results.length ? <div className="public-profile-history public-publications">{publications.results.map((publication) => <article key={publication.id}><span className="post-state">{stateLabel(publication.status)}</span><div><strong>Version receipt</strong><small>{publication.public_snapshot_key} · {formatDate(publication.created_at)}</small></div><span>{publication.version_id}</span></article>)}</div> : null}
-    </section>
+    </details>
   </AppShell>;
 }

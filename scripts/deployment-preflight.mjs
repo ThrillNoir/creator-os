@@ -61,6 +61,7 @@ function configResources(config) {
   return {
     d1: (config.d1_databases ?? []).map((binding) => ({ name: binding.database_name, id: binding.database_id, migrationsDir: binding.migrations_dir })),
     r2: (config.r2_buckets ?? []).map((binding) => binding.bucket_name),
+    images: config.images?.binding ? [config.images.binding] : [],
     analytics: (config.analytics_engine_datasets ?? []).map((binding) => binding.dataset),
     queues: [
       ...(config.queues?.producers ?? []).map((binding) => binding.queue),
@@ -85,6 +86,41 @@ function resourceNames(environment) {
 function addExactListError(errors, label, actual, expected) {
   if (!listsMatch(actual, expected)) {
     errors.push(`${label} mismatch: expected [${sorted(expected).join(", ")}], found [${sorted(actual).join(", ")}].`);
+  }
+}
+
+const publicationModes = new Set(["disabled", "synthetic-only", "enabled"]);
+const creatorIdPattern = /^[a-z0-9][a-z0-9_-]{0,79}$/i;
+
+function validPublicationPolicy(policy) {
+  return policy
+    && publicationModes.has(policy.mode)
+    && Array.isArray(policy.syntheticCreatorIds)
+    && policy.syntheticCreatorIds.every((creatorId) => typeof creatorId === "string" && creatorIdPattern.test(creatorId));
+}
+
+function validatePublicationPolicyConfig(errors, componentName, component, config) {
+  if (componentName !== "publicLinksControl") return;
+  const policy = component.publicationPolicy;
+  if (!policy || !validPublicationPolicy(policy.publicProfile) || !validPublicationPolicy(policy.adultProfile)) {
+    errors.push("publicLinksControl requires valid publicProfile and adultProfile publication policies.");
+    return;
+  }
+  const vars = config.vars ?? {};
+  const expected = {
+    PUBLIC_PROFILE_PUBLICATION_MODE: policy.publicProfile.mode,
+    PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS: policy.publicProfile.syntheticCreatorIds.join(","),
+    ADULT_PROFILE_PUBLICATION_MODE: policy.adultProfile.mode,
+    ADULT_PROFILE_SYNTHETIC_CREATOR_IDS: policy.adultProfile.syntheticCreatorIds.join(","),
+  };
+  for (const [name, value] of Object.entries(expected)) {
+    if (vars[name] !== value) errors.push(`Publication policy var ${name} does not match the ${componentName} registry policy.`);
+  }
+  if (policy.publicProfile.mode === "synthetic-only" && policy.publicProfile.syntheticCreatorIds.length === 0) {
+    errors.push("Synthetic-only public profile publication requires at least one configured synthetic creator ID.");
+  }
+  if (policy.adultProfile.mode !== "disabled") {
+    errors.push("Adult publication must remain disabled until protected-service configuration is separately approved.");
   }
 }
 
@@ -130,6 +166,9 @@ export function validateRegistry(registry) {
       if (typeof component.deployable !== "boolean") errors.push(`${environmentName}/${componentName} has no deployable state.`);
       if (!component.resources) errors.push(`${environmentName}/${componentName} has no resource ownership declaration.`);
       if (!Array.isArray(component.requiredSecrets)) errors.push(`${environmentName}/${componentName} has no required secret-name declaration.`);
+      if (componentName === "publicLinksControl" && (!component.publicationPolicy || !validPublicationPolicy(component.publicationPolicy.publicProfile) || !validPublicationPolicy(component.publicationPolicy.adultProfile))) {
+        errors.push(`${environmentName}/${componentName} has no valid publication policy declaration.`);
+      }
       const existing = owners.get(component.worker);
       if (existing) errors.push(`Duplicate Worker ownership in ${environmentName}: ${existing} and ${componentName} both own ${component.worker}.`);
       owners.set(component.worker, componentName);
@@ -178,10 +217,12 @@ export function validateDeployment({ registry, environmentName, componentName, c
     if (environment.accountId && config.account_id !== environment.accountId) errors.push(`Account mismatch for ${environmentName}/${componentName}.`);
     addExactListError(errors, "D1 bindings", resources.d1.map((binding) => binding.name), component.resources?.d1 ?? []);
     addExactListError(errors, "R2 bindings", resources.r2, component.resources?.r2 ?? []);
+    addExactListError(errors, "Images bindings", resources.images, component.resources?.images ?? []);
     addExactListError(errors, "Queue bindings", [...new Set(resources.queues)], component.resources?.queues ?? []);
     const expectedServices = component.resources?.services ?? {};
     if (JSON.stringify(resources.services) !== JSON.stringify(expectedServices)) errors.push(`Service bindings mismatch for ${environmentName}/${componentName}.`);
     addExactListError(errors, "Required secret names", resources.secrets, component.requiredSecrets ?? []);
+    validatePublicationPolicyConfig(errors, componentName, component, config);
 
     const d1Registry = environment.resources?.d1 ?? {};
     for (const binding of resources.d1) {

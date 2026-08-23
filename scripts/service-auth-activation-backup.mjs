@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wri
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { activationBackupReceiptDigest, activationConfirmation, planDigest, sha256, sha256Bytes } from "./service-auth-activation-lib.mjs";
+import { activationBackupReceiptDigest, activationConfirmation, planDigest, registryHasProductionOperationalSurface, sha256, sha256Bytes } from "./service-auth-activation-lib.mjs";
 import { checkD1Integrity } from "./cloudflare-d1-read.mjs";
 import { createActivationD1ReadClient, mutationWranglerEnvironment } from "./service-auth-activate.mjs";
 
@@ -67,7 +67,7 @@ export function assertApprovedActivationPlan(plan, activation, registry) {
   if (plan?.schemaVersion !== 1 || plan.mode !== "plan" || plan.environment !== "staging" || plan.activationId !== activation?.activationId || plan?.database?.databaseName !== activation?.expected?.databaseName || plan?.database?.databaseId !== activation?.expected?.databaseId) {
     throw new Error("Approved activation plan does not match the reviewed staging activation manifest.");
   }
-  if (staging?.accountId == null || staging.resources?.d1?.[plan.database.databaseName]?.id !== plan.database.databaseId || registry?.environments?.production?.provisioned || registry?.environments?.production?.deployable) {
+  if (staging?.accountId == null || staging.resources?.d1?.[plan.database.databaseName]?.id !== plan.database.databaseId || registryHasProductionOperationalSurface(registry)) {
     throw new Error("Approved activation plan does not match the staging-only deployment registry.");
   }
   if (plan.activationStatus?.state !== "ABSENT" || !plan.expandReady || !plan.compatibilityReady || !plan.activationReady || plan.blockingPrecondition !== null || plan.planSha256 !== planDigest(plan) || plan.confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) {

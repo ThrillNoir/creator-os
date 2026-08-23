@@ -321,6 +321,18 @@ addProfileCheck("adult profile publications", ["creator_adult_profile_publicatio
   LEFT JOIN creator_adult_profile_versions v ON v.id=r.version_id
   WHERE p.id IS NULL OR v.id IS NULL OR p.creator_id<>r.creator_id OR v.creator_id<>r.creator_id OR v.profile_id<>r.profile_id
 `);
+addProfileCheck("profile projection deliveries", ["creator_profile_projection_deliveries", "operation_outbox", "creator_public_profiles", "creator_public_profile_versions", "creator_adult_profiles", "creator_adult_profile_versions"], `
+  SELECT d.id FROM creator_profile_projection_deliveries d
+  LEFT JOIN operation_outbox o ON o.id=d.operation_id
+  LEFT JOIN creator_public_profiles pp ON d.surface='public_sfw' AND pp.id=d.profile_id
+  LEFT JOIN creator_public_profile_versions pv ON d.surface='public_sfw' AND pv.id=d.version_id
+  LEFT JOIN creator_adult_profiles ap ON d.surface='adult_profile' AND ap.id=d.profile_id
+  LEFT JOIN creator_adult_profile_versions av ON d.surface='adult_profile' AND av.id=d.version_id
+  WHERE o.id IS NULL OR o.creator_id<>d.creator_id
+    OR d.surface NOT IN ('public_sfw','adult_profile') OR d.action NOT IN ('publish','withdraw')
+    OR (d.surface='public_sfw' AND (pp.id IS NULL OR pv.id IS NULL OR pp.creator_id<>d.creator_id OR pv.creator_id<>d.creator_id OR pv.profile_id<>d.profile_id))
+    OR (d.surface='adult_profile' AND (ap.id IS NULL OR av.id IS NULL OR ap.creator_id<>d.creator_id OR av.creator_id<>d.creator_id OR av.profile_id<>d.profile_id))
+`);
 addProfileCheck("adult profile appearances", ["creator_adult_profile_appearances", "creator_adult_profile_versions"], `
   SELECT a.profile_version_id FROM creator_adult_profile_appearances a
   LEFT JOIN creator_adult_profile_versions v ON v.id=a.profile_version_id
@@ -342,7 +354,7 @@ addProfileCheck("profile image attachments", ["creator_profile_image_attachments
   LEFT JOIN creator_profile_image_uploads u ON u.id=d.upload_id
   LEFT JOIN creator_public_profile_versions pv ON pv.id=a.public_profile_version_id
   LEFT JOIN creator_adult_profile_versions av ON av.id=a.adult_profile_version_id
-  WHERE d.id IS NULL OR u.id IS NULL OR d.creator_id<>a.creator_id OR u.creator_id<>a.creator_id
+  WHERE d.id IS NULL OR u.id IS NULL OR d.creator_id<>a.creator_id OR d.derivative_kind<>'display' OR u.creator_id<>a.creator_id
     OR u.surface<>a.surface OR u.image_role<>a.image_role
     OR (a.status='attached' AND u.status<>'processed')
     OR (a.surface='public_sfw' AND (a.public_profile_version_id IS NULL OR a.adult_profile_version_id IS NOT NULL OR pv.id IS NULL OR pv.creator_id<>a.creator_id))

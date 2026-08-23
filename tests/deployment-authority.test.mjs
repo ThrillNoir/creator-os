@@ -32,6 +32,7 @@ function fixtureRegistry() {
             resources: {
               d1: ["thot-os-staging"],
               r2: ["thot-os-media-staging"],
+              images: ["IMAGES"],
               queues: ["thot-os-jobs-staging"],
               services: {},
             },
@@ -75,6 +76,7 @@ function fixtureConfig({ environment = "staging", secretNames } = {}) {
     account_id: production ? "account-production" : "account-staging",
     d1_databases: [{ database_name: production ? "thot-os-production" : "thot-os-staging", database_id: production ? "d1-production" : "d1-staging", migrations_dir: "migrations" }],
     r2_buckets: [{ bucket_name: production ? "thot-os-media-production" : "thot-os-media-staging" }],
+    images: { binding: "IMAGES" },
     queues: { producers: [{ queue: production ? "thot-os-jobs-production" : "thot-os-jobs-staging" }] },
     services: [],
     secrets: { required: secretNames ?? [production ? "PRODUCTION_KEY" : "STAGING_KEY"] },
@@ -144,6 +146,15 @@ test("missing required deployment configuration fails closed", () => {
   });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /Required secret names mismatch/);
+});
+
+test("an undeclared Images binding fails deployment preflight", () => {
+  const registry = fixtureRegistry();
+  const config = fixtureConfig();
+  config.images = { binding: "UNDECLARED_IMAGES" };
+  const result = validateDeployment({ registry, environmentName: "staging", componentName: "web", config });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /Images bindings mismatch/);
 });
 
 test("missing Wrangler configuration fails closed", () => {

@@ -44,7 +44,8 @@
 -- 0039_production_environment_audit_contract.sql 132aca9a09b09bfb349bb4c5bcef7923e975a732f1eecdd3d018dbd45953ad9c
 -- 0040_creator_profile_interactions.sql d79b782e42cc7a7924caa2d2c3ee435dd62f9b6de43f238a52b4cf5d73284df3
 -- 0041_creator_profile_appearance.sql 88e3e139d41bf64285a334ac9731bee70fd7e50af7ab85232d62bfba9db37977
--- 0042_creator_profile_image_derivatives.sql fd69bc61b238a7bb9d5653c260b9a9c07184dd3012f4180590dcfdbeb62957e0
+-- 0042_creator_profile_image_derivatives.sql 5c727792884d1eca6919be804633e0b20d7f911433b013492b7464abde09f352
+-- 0043_creator_profile_projection_delivery.sql 64d84accfe04a9c968c1121f6a6750ee69dbb24b8ebd2fa6656973629004063e
 
 PRAGMA foreign_keys = ON;
 
@@ -91,6 +92,7 @@ INSERT INTO d1_migrations (id, name) VALUES (39, '0039_production_environment_au
 INSERT INTO d1_migrations (id, name) VALUES (40, '0040_creator_profile_interactions.sql');
 INSERT INTO d1_migrations (id, name) VALUES (41, '0041_creator_profile_appearance.sql');
 INSERT INTO d1_migrations (id, name) VALUES (42, '0042_creator_profile_image_derivatives.sql');
+INSERT INTO d1_migrations (id, name) VALUES (43, '0043_creator_profile_projection_delivery.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -442,6 +444,24 @@ CREATE TABLE creator_profile_image_uploads (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(id, creator_id)
+);
+
+CREATE TABLE creator_profile_projection_deliveries (
+  id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL UNIQUE REFERENCES operation_outbox(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  surface TEXT NOT NULL CHECK(surface IN ('public_sfw','adult_profile')),
+  action TEXT NOT NULL CHECK(action IN ('publish','withdraw')),
+  profile_id TEXT NOT NULL,
+  version_id TEXT NOT NULL,
+  snapshot_key TEXT NOT NULL CHECK(length(snapshot_key) BETWEEN 1 AND 512),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+  last_error_code TEXT,
+  projected_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(surface, action, profile_id, version_id)
 );
 
 CREATE TABLE creator_public_contact_methods (
@@ -1350,6 +1370,9 @@ CREATE UNIQUE INDEX creator_profile_image_attachment_active_public_role
   ON creator_profile_image_attachments(creator_id,public_profile_version_id,image_role)
   WHERE status='attached' AND surface='public_sfw';
 
+CREATE INDEX creator_profile_projection_deliveries_pending
+  ON creator_profile_projection_deliveries(status, updated_at);
+
 CREATE INDEX creator_public_link_revisions_redirect
   ON creator_public_link_revisions(profile_version_id, link_id, enabled);
 
@@ -1783,8 +1806,8 @@ BEFORE INSERT ON creator_profile_image_attachments
 WHEN NOT EXISTS (
   SELECT 1 FROM creator_profile_image_derivatives d
   JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
-  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND u.surface=NEW.surface
-    AND u.image_role=NEW.image_role AND u.status='processed'
+  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND d.derivative_kind='display'
+    AND u.surface=NEW.surface AND u.image_role=NEW.image_role AND u.status='processed'
 )
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
 
@@ -1794,10 +1817,36 @@ ON creator_profile_image_attachments
 WHEN NOT EXISTS (
   SELECT 1 FROM creator_profile_image_derivatives d
   JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
-  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND u.surface=NEW.surface
-    AND u.image_role=NEW.image_role AND u.status='processed'
+  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND d.derivative_kind='display'
+    AND u.surface=NEW.surface AND u.image_role=NEW.image_role AND u.status='processed'
 )
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
+
+CREATE TRIGGER creator_profile_projection_delivery_scope_insert
+BEFORE INSERT ON creator_profile_projection_deliveries
+WHEN (NEW.surface='public_sfw' AND NOT EXISTS (
+  SELECT 1 FROM creator_public_profiles p
+  JOIN creator_public_profile_versions v ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+)) OR (NEW.surface='adult_profile' AND NOT EXISTS (
+  SELECT 1 FROM creator_adult_profiles p
+  JOIN creator_adult_profile_versions v ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+))
+BEGIN SELECT RAISE(ABORT,'creator_profile_projection_delivery_scope_invalid'); END;
+
+CREATE TRIGGER creator_profile_projection_delivery_scope_update
+BEFORE UPDATE OF creator_id, surface, profile_id, version_id ON creator_profile_projection_deliveries
+WHEN (NEW.surface='public_sfw' AND NOT EXISTS (
+  SELECT 1 FROM creator_public_profiles p
+  JOIN creator_public_profile_versions v ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+)) OR (NEW.surface='adult_profile' AND NOT EXISTS (
+  SELECT 1 FROM creator_adult_profiles p
+  JOIN creator_adult_profile_versions v ON v.id=NEW.version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+  WHERE p.id=NEW.profile_id AND p.creator_id=NEW.creator_id
+))
+BEGIN SELECT RAISE(ABORT,'creator_profile_projection_delivery_scope_invalid'); END;
 
 CREATE TRIGGER creator_public_contact_method_draft_only
 BEFORE INSERT ON creator_public_contact_methods

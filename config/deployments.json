@@ -66,6 +66,7 @@
           "resources": {
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
+            "images": ["IMAGES"],
             "queues": [],
             "services": {
               "WORKER_SELF_REFERENCE": "thot-os-staging",
@@ -157,6 +158,10 @@
           "worker": "thot-os-public-links-control-staging",
           "deployable": true,
           "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
+          "publicationPolicy": {
+            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator"] },
+            "adultProfile": { "mode": "disabled", "syntheticCreatorIds": [] }
+          },
           "requiredSecrets": [],
           "resources": {
             "d1": ["thot-os-staging"],

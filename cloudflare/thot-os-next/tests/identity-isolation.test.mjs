@@ -43,6 +43,8 @@ test("viewer memberships cannot mutate", () => {
   assert.equal(roleCan("legacy", "view"), false);
   assert.equal(roleCan("legacy", "mutate"), false);
   assert.equal(roleCan("operator", "approve"), true);
+  assert.equal(roleCan("creator", "approve"), false);
+  assert.deepEqual(authorizeCreatorScope([adelaide], "approve", "adelaide", null), { ok: false, status: 404 });
   assert.equal(roleCan("agency_admin", "manage_identity"), true);
   assert.deepEqual(authorizeCreatorScope([secondCreator], "mutate", "second", null), { ok: false, status: 404 });
 });

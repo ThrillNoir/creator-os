@@ -23,6 +23,9 @@ test("service-principal provisioning plans require explicit, allowed creator cap
   assert.doesNotMatch(JSON.stringify(plan), /token_hash|Bearer|credential value/i);
   assert.throws(() => buildServicePrincipalPlan({ environment: "staging", contract, registry, grants: ["thot-os-web-reddit:adelaide:reddit.publish.execute:extra"] }), /grant/i);
   assert.throws(() => buildServicePrincipalPlan({ environment: "production", contract, registry, grants: [] }), /staging/i);
+  const registryWithProductionWeb = structuredClone(registry);
+  registryWithProductionWeb.environments.production.components.web = structuredClone(registry.environments.staging.components.web);
+  assert.throws(() => buildServicePrincipalPlan({ environment: "staging", contract, registry: registryWithProductionWeb, grants: [] }), /operational target/i);
 });
 
 test("service-principal tooling refuses apply mode", () => {

@@ -1,9 +1,11 @@
 type AdultProfile = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3 | 4;
   publishedVersionId: string;
   creator: { slug: string; displayName: string; bio: string; safeProfileUrl: string };
   links: Array<{ id: string; label: string; destinationUrl: string; destinationHost: string }>;
-  media: Array<{ id: string; objectKey: string; altText: string }>;
+  // Version 4 contains only a key from the isolated ADULT_MEDIA bucket. It
+  // never accepts an authoring-bucket key and is never copied to the safe hub.
+  media: Array<{ id: string; mediaKey?: string; checksum?: string; altText: string; contentType?: "image/webp"; imageRole?: "avatar" | "background" }>;
   appearance?: { themeKey: string; buttonStyle: string; backgroundMode: string; backgroundColor: string; primaryColor: string; textColor: string; cardColor: string; radiusScale: string };
 };
 
@@ -14,6 +16,7 @@ const ITEM_ID = /^[A-Za-z0-9_-]{1,120}$/;
 const HEX = /^#[0-9a-f]{6}$/i;
 const SESSION_COOKIE = "__Host-thot-age";
 const SESSION_MAX_AGE_SECONDS = 60 * 60;
+const SHA256 = /^[a-f0-9]{64}$/i;
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
@@ -31,6 +34,10 @@ function fromBase64(value: string) {
 }
 
 function profileKey(slug: string) { return `adult-profile:${slug}`; }
+
+function hasOnlyKeys(value: object, keys: readonly string[]) {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
 
 function securityHeaders() {
   return {
@@ -73,13 +80,29 @@ function validAppearance(value: unknown) {
     && ["solid-rounded", "full-pill", "minimal-outline", "soft-card-icon", "elevated-shadow-tile"].includes(String(appearance.buttonStyle));
 }
 
+function validAdultMediaKey(value: unknown, slug: string, versionId: string, attachmentId: string) {
+  return typeof value === "string" && value === `adult-media/${slug}/${versionId}/${attachmentId}.webp`;
+}
+
 function validProfile(value: unknown, slug: string): value is AdultProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const profile = value as Partial<AdultProfile>;
-  if ((profile.schemaVersion !== 1 && profile.schemaVersion !== 2) || typeof profile.publishedVersionId !== "string" || !ITEM_ID.test(profile.publishedVersionId) || !profile.creator || profile.creator.slug !== slug || !SLUG.test(slug) || typeof profile.creator.displayName !== "string" || typeof profile.creator.bio !== "string" || !safePublicProfileUrl(profile.creator.safeProfileUrl) || !Array.isArray(profile.links) || !Array.isArray(profile.media) || profile.creator.displayName.length > 120 || profile.creator.bio.length > 2000) return false;
-  if (profile.schemaVersion === 2 && !validAppearance(profile.appearance)) return false;
-  return profile.links.every((link) => Boolean(link && ITEM_ID.test(link.id) && typeof link.label === "string" && link.label.length > 0 && link.label.length <= 80 && typeof link.destinationUrl === "string" && typeof link.destinationHost === "string" && safeHttpsUrl(link.destinationUrl, link.destinationHost)))
-    && profile.media.every((media) => Boolean(media && ITEM_ID.test(media.id) && typeof media.objectKey === "string" && /^adult\/[a-z0-9][a-z0-9/_.-]{0,1000}$/i.test(media.objectKey) && typeof media.altText === "string" && media.altText.length <= 500));
+  const versionId = profile.publishedVersionId;
+  const mediaItems = profile.media;
+  if (!hasOnlyKeys(profile, ["schemaVersion", "publishedVersionId", "creator", "links", "media", "appearance"]) || (profile.schemaVersion !== 1 && profile.schemaVersion !== 2 && profile.schemaVersion !== 3 && profile.schemaVersion !== 4) || typeof versionId !== "string" || !ITEM_ID.test(versionId) || !profile.creator || !hasOnlyKeys(profile.creator, ["slug", "displayName", "bio", "safeProfileUrl"]) || profile.creator.slug !== slug || !SLUG.test(slug) || typeof profile.creator.displayName !== "string" || typeof profile.creator.bio !== "string" || !safePublicProfileUrl(profile.creator.safeProfileUrl) || !Array.isArray(profile.links) || !Array.isArray(mediaItems) || profile.creator.displayName.length > 120 || profile.creator.bio.length > 2000) return false;
+  if ((profile.schemaVersion === 2 || profile.schemaVersion === 3 || profile.schemaVersion === 4) && !validAppearance(profile.appearance)) return false;
+  if (profile.schemaVersion === 1 && profile.appearance !== undefined) return false;
+  const imageRoles = new Set<string>();
+  return profile.links.every((link) => Boolean(link && typeof link === "object" && hasOnlyKeys(link, ["id", "label", "destinationUrl", "destinationHost"]) && ITEM_ID.test(link.id) && typeof link.label === "string" && link.label.length > 0 && link.label.length <= 80 && typeof link.destinationUrl === "string" && typeof link.destinationHost === "string" && safeHttpsUrl(link.destinationUrl, link.destinationHost)))
+    && mediaItems.every((media) => {
+      if (!media || typeof media !== "object" || !ITEM_ID.test(media.id) || typeof media.altText !== "string" || media.altText.length > 500) return false;
+      // Older projections remain readable only if they contain no media. A
+      // legacy private authoring key must never be served by this gateway.
+      if (profile.schemaVersion !== 4) return mediaItems.length === 0;
+      if (!hasOnlyKeys(media, ["id", "mediaKey", "checksum", "altText", "contentType", "imageRole"]) || media.contentType !== "image/webp" || (media.imageRole !== "avatar" && media.imageRole !== "background") || imageRoles.has(media.imageRole) || !SHA256.test(String(media.checksum)) || !validAdultMediaKey(media.mediaKey, slug, versionId, media.id)) return false;
+      imageRoles.add(media.imageRole);
+      return true;
+    });
 }
 
 async function loadProfile(env: Env, slug: string) {
@@ -134,6 +157,22 @@ function event(env: Env, profile: AdultProfile, name: string, item = "") {
   try { env.ADULT_EVENTS.writeDataPoint({ indexes: [profile.creator.slug], blobs: [name, item], doubles: [1] }); } catch { /* never block a visitor or log protected data */ }
 }
 
+function hexChecksum(value: ArrayBuffer | undefined) {
+  return value ? Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join("") : null;
+}
+
+function validAdultMediaObject(object: R2ObjectBody, profile: AdultProfile, media: AdultProfile["media"][number]) {
+  const metadata = object.customMetadata;
+  return object.httpMetadata?.contentType === "image/webp"
+    && metadata?.creatorSlug === profile.creator.slug
+    && metadata.versionId === profile.publishedVersionId
+    && metadata.attachmentId === media.id
+    && metadata.surface === "adult_profile"
+    && metadata.imageRole === media.imageRole
+    && metadata.checksum === media.checksum
+    && hexChecksum(object.checksums.sha256) === media.checksum;
+}
+
 function gate(profile: AdultProfile, siteKey: string) {
   const name = profile.creator.displayName ? `More from ${escapeHtml(profile.creator.displayName)}` : "More from this creator";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name}</title><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><style>body{font:16px/1.5 system-ui,sans-serif;background:#100c16;color:#fbf8fe;margin:0}.card{max-width:32rem;margin:3rem auto;padding:1.25rem}button,a{font:inherit;padding:.8rem 1rem;border-radius:.55rem}.yes{border:0;background:#c5a4ff;color:#170c24;font-weight:700;width:100%}.no{display:block;color:inherit;text-align:center;margin-top:.8rem}</style></head><body><main class="card"><h1>Are you 18 or older?</h1><p>This area may contain adult-oriented creator links and images.</p><form method="post" action="/age/${encodeURIComponent(profile.creator.slug)}/confirm"><div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="adult_access"></div><button class="yes" type="submit">Yes, continue</button></form><a class="no" href="${escapeHtml(profile.creator.safeProfileUrl)}">No, go back</a></main></body></html>`;
@@ -179,10 +218,11 @@ export default {
       const profile = await loadProfile(env, parts[1]);
       const media = profile?.media.find((item) => item.id === parts[2]);
       if (!profile || !media || !await validSession(request, profile, env)) return page("Not found", 404);
-      const object = await env.ADULT_MEDIA.get(media.objectKey);
-      if (!object) return page("Not found", 404);
+      // validProfile accepts media only in the v4 isolated-media shape.
+      const object = await env.ADULT_MEDIA.get(media.mediaKey!);
+      if (!object || profile.schemaVersion !== 4 || !validAdultMediaObject(object, profile, media)) return page("Not found", 404);
       event(env, profile, "adult_media_view", media.id);
-      return new Response(object.body, { headers: { ...securityHeaders(), "content-type": object.httpMetadata?.contentType ?? "image/jpeg" } });
+      return new Response(object.body, { headers: { ...securityHeaders(), "content-type": "image/webp", etag: `"${media.checksum}"` } });
     }
     if (request.method === "GET" && parts.length === 3 && parts[0] === "r" && SLUG.test(parts[1]) && ITEM_ID.test(parts[2])) {
       const profile = await loadProfile(env, parts[1]);

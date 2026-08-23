@@ -100,6 +100,9 @@ test("service-auth activation plan is redacted, deterministic, staging-only, and
   assert.doesNotThrow(() => redactActivationReceipt(plan));
   assert.doesNotMatch(JSON.stringify(plan), /Bearer|token_hash|credential value/i);
   assert.throws(() => buildActivationPlan({ activation: { ...activation, environment: "production" }, contract, registry, observedMigrations: baseline, git: {} }), /staging/i);
+  const registryWithProductionWeb = structuredClone(registry);
+  registryWithProductionWeb.environments.production.components.web = structuredClone(registry.environments.staging.components.web);
+  assert.throws(() => buildActivationPlan({ activation, contract, registry: registryWithProductionWeb, observedMigrations: baseline, git: {} }), /operational service-auth surface/i);
 });
 
 test("activation requires COMPATIBILITY after EXPAND and then fail-closes on other gates", async () => {

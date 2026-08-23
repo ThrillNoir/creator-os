@@ -1,0 +1,13 @@
+// Source-only template. This is deliberately not deployable: a separately
+// approved public route, PUBLIC_MEDIA bucket and PUBLIC_LINKS KV binding are
+// required before a release configuration may be created.
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "REQUIRES_APPROVED_PUBLIC_MEDIA",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "kv_namespaces": [{ "binding": "PUBLIC_LINKS", "id": "REQUIRES_APPROVED_PUBLIC_LINKS_KV" }],
+  "r2_buckets": [{ "binding": "PUBLIC_MEDIA", "bucket_name": "REQUIRES_APPROVED_PUBLIC_MEDIA_BUCKET" }]
+}

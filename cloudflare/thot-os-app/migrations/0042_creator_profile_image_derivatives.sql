@@ -72,8 +72,8 @@ BEFORE INSERT ON creator_profile_image_attachments
 WHEN NOT EXISTS (
   SELECT 1 FROM creator_profile_image_derivatives d
   JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
-  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND u.surface=NEW.surface
-    AND u.image_role=NEW.image_role AND u.status='processed'
+  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND d.derivative_kind='display'
+    AND u.surface=NEW.surface AND u.image_role=NEW.image_role AND u.status='processed'
 )
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
 
@@ -88,8 +88,8 @@ ON creator_profile_image_attachments
 WHEN NOT EXISTS (
   SELECT 1 FROM creator_profile_image_derivatives d
   JOIN creator_profile_image_uploads u ON u.id=d.upload_id AND u.creator_id=d.creator_id
-  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND u.surface=NEW.surface
-    AND u.image_role=NEW.image_role AND u.status='processed'
+  WHERE d.id=NEW.derivative_id AND d.creator_id=NEW.creator_id AND d.derivative_kind='display'
+    AND u.surface=NEW.surface AND u.image_role=NEW.image_role AND u.status='processed'
 )
 BEGIN SELECT RAISE(ABORT,'profile_image_attachment_scope_invalid'); END;
 
