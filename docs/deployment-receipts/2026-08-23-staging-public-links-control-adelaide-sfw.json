@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "publicLinksControl",
+  "service": "thot-os-public-links-control",
+  "environment": "staging",
+  "gitSha": "786fc283480d37320c6ece75d64ed8a6c085afcf",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T09:27:50Z",
+  "worker": "thot-os-public-links-control-staging",
+  "workerVersion": "4dfe5f3f-bc5c-47c7-a2f2-8b1e87da26b8",
+  "deploymentTimestamp": "2026-08-23T09:27:56.749Z",
+  "migrationState": "No D1 migration applied; existing staging baseline 0040-0043 retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "not-verified",
+    "detail": "Adelaide is enabled only for SFW staging publication. The authenticated Save and Publish browser test is pending Cloudflare Access sign-in."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}
