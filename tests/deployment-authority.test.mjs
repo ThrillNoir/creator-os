@@ -30,6 +30,14 @@ function fixtureRegistry() {
             worker: "thot-os-staging-web",
             deployable: true,
             requiredSecrets: ["STAGING_KEY"],
+            bindings: {
+              d1: ["DB"],
+              r2: ["MEDIA"],
+              kv: ["KV"],
+              images: ["IMAGES"],
+              queues: ["JOBS"],
+              services: [],
+            },
             resources: {
               d1: ["thot-os-staging"],
               r2: ["thot-os-media-staging"],
@@ -59,6 +67,14 @@ function fixtureRegistry() {
             worker: "thot-os-production-web",
             deployable: true,
             requiredSecrets: ["PRODUCTION_KEY"],
+            bindings: {
+              d1: ["DB"],
+              r2: ["MEDIA"],
+              kv: ["KV"],
+              images: ["IMAGES"],
+              queues: ["JOBS"],
+              services: [],
+            },
             resources: {
               d1: ["thot-os-production"],
               r2: ["thot-os-media-production"],
@@ -78,11 +94,11 @@ function fixtureConfig({ environment = "staging", secretNames } = {}) {
   return {
     name: production ? "thot-os-production-web" : "thot-os-staging-web",
     account_id: production ? "account-production" : "account-staging",
-    d1_databases: [{ database_name: production ? "thot-os-production" : "thot-os-staging", database_id: production ? "d1-production" : "d1-staging", migrations_dir: "migrations" }],
-    r2_buckets: [{ bucket_name: production ? "thot-os-media-production" : "thot-os-media-staging" }],
-    kv_namespaces: [{ id: production ? "kv-production" : "kv-staging" }],
+    d1_databases: [{ binding: "DB", database_name: production ? "thot-os-production" : "thot-os-staging", database_id: production ? "d1-production" : "d1-staging", migrations_dir: "migrations" }],
+    r2_buckets: [{ binding: "MEDIA", bucket_name: production ? "thot-os-media-production" : "thot-os-media-staging" }],
+    kv_namespaces: [{ binding: "KV", id: production ? "kv-production" : "kv-staging" }],
     images: { binding: "IMAGES" },
-    queues: { producers: [{ queue: production ? "thot-os-jobs-production" : "thot-os-jobs-staging" }] },
+    queues: { producers: [{ binding: "JOBS", queue: production ? "thot-os-jobs-production" : "thot-os-jobs-staging" }] },
     services: [],
     secrets: { required: secretNames ?? [production ? "PRODUCTION_KEY" : "STAGING_KEY"] },
   };
@@ -169,6 +185,31 @@ test("an undeclared Images binding fails deployment preflight", () => {
   const result = validateDeployment({ registry, environmentName: "staging", componentName: "web", config });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /Images bindings mismatch/);
+});
+
+test("a renamed logical D1 binding fails even when it points at the staging database", () => {
+  const result = validateDeployment({
+    registry: fixtureRegistry(),
+    environmentName: "staging",
+    componentName: "web",
+    config: { ...fixtureConfig(), d1_databases: [{ ...fixtureConfig().d1_databases[0], binding: "DATABASE" }] },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /d1 logical bindings mismatch/);
+});
+
+test("missing and unexpected logical resource bindings fail deployment preflight", () => {
+  const missing = fixtureConfig();
+  missing.r2_buckets = [];
+  const missingResult = validateDeployment({ registry: fixtureRegistry(), environmentName: "staging", componentName: "web", config: missing });
+  assert.equal(missingResult.ok, false);
+  assert.match(missingResult.errors.join("\n"), /r2 logical bindings mismatch/);
+
+  const unexpected = fixtureConfig();
+  unexpected.r2_buckets.push({ binding: "EXTRA", bucket_name: "thot-os-media-staging" });
+  const unexpectedResult = validateDeployment({ registry: fixtureRegistry(), environmentName: "staging", componentName: "web", config: unexpected });
+  assert.equal(unexpectedResult.ok, false);
+  assert.match(unexpectedResult.errors.join("\n"), /r2 logical bindings mismatch/);
 });
 
 test("missing Wrangler configuration fails closed", () => {

@@ -94,7 +94,7 @@ npm run deployment:preflight -- --environment staging --all
 npm run deployment:preflight -- --environment staging --component vault --require-clean
 ```
 
-The preflight fails closed when any of these differ from the registry: component Worker name, account, D1 binding/identifier/migration directory, R2 bindings, queue bindings, service bindings, or required secret **names**. It also rejects duplicate Worker ownership, unprovisioned/disabled environments, disabled components, missing configuration, ambiguous arguments, and resource names owned by a different environment. It validates only committed local configuration; it cannot prove that a secret exists remotely or that a remote binding has already been applied.
+The preflight fails closed when any of these differ from the registry: component Worker name, account, logical binding names, D1 binding/identifier/migration directory, R2 bindings, queue bindings, service bindings, or required secret **names**. Logical names are checked separately from physical resources, so a configuration that changes `DB` to `DATABASE` while retaining the same D1 database fails before deployment. It also rejects duplicate Worker ownership, unprovisioned/disabled environments, disabled components, missing configuration, ambiguous arguments, and resource names owned by a different environment. It validates only committed local configuration; it cannot prove that a secret exists remotely or that a remote binding has already been applied.
 
 The two historic remote mutation scripts now also require `--environment staging --execute` before they can perform an R2 upload or remote D1 migration. That guard does not authorise their use: each remains subject to the runbooks and Phase approval below.
 
@@ -131,26 +131,25 @@ flowchart LR
 
 Normal application deployment must not apply a migration. A migration requires a fresh export/snapshot, an explicit target and migration review, a checked migration state, and post-migration smoke testing. The current Phase 1A work does not apply migrations.
 
-After an actually successful deployment, generate a durable, versioned receipt only from a clean tree and a passing preflight, for example:
+After an actually successful deployment, generate a durable, versioned receipt only from a clean tree, a verified artifact manifest, and remote-observed evidence. The evidence bundle is created by the approved release runbook from Cloudflare version/deployment observations, D1 migration observations, and authenticated smoke output; it is not assembled from command-line claims.
 
 ```sh
 npm run deployment:receipt -- \
   --environment staging --component web \
-  --git-sha '<commit>' --git-branch '<branch>' --build-time '<ISO-8601>' \
-  --worker-version '<Cloudflare-version-id>' \
-  --migration-state '0001-0027 applied' \
-  --smoke-status verified --operator '<operator-or-tool>' \
+  --artifact-manifest cloudflare/thot-os-next/.open-next/staging-artifact-manifest.json \
+  --evidence '<remote-observed-evidence.json>' \
+  --operator '<operator-or-tool>' \
   --receipt docs/deployment-receipts/2026-08-15-staging-web.json
 ```
 
-The receipt records component, environment, Git SHA, Git branch, build timestamp, Worker/version, receipt timestamp, migration state, static registry/config binding verification, smoke-test state, and operator/tool. `resourceBindingsVerified` means the registry and local configuration matched; remote verification must be stated in the smoke-test detail. Receipts never contain secret values.
+The receipt records component, environment, Git SHA, Git branch, artifact and lockfile identity, Worker/version and traffic allocation, migration state, smoke-test state, and operator/tool. It rejects a source, artifact, Worker, environment, component, migration, or smoke mismatch. Receipts never contain secret values.
 
 ## Smoke tests and rollback
 
 “Deployed” means Cloudflare reports the expected Worker version after an approved deployment. “Verified” additionally requires an authenticated, protected smoke test that checks:
 
 1. The expected Worker/version and Access protection are present.
-2. `/health` returns the intended component/environment/Git SHA/build timestamp and D1 connectivity.
+2. An unauthenticated `/health` request is denied by Access, while the authenticated request returns the intended component/environment/Git SHA/build timestamp and D1 connectivity.
 3. A creator-scoped request cannot read another creator's asset or data.
 4. The required R2 binding can perform the appropriate non-destructive read/metadata check.
 5. Declared service bindings point to the registered Workers.

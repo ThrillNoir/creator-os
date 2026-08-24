@@ -58,19 +58,35 @@ export function readDeploymentRegistry(registryPath = path.join(projectRoot, "co
 }
 
 function configResources(config) {
+  const d1 = config.d1_databases ?? [];
+  const r2 = config.r2_buckets ?? [];
+  const analytics = config.analytics_engine_datasets ?? [];
+  const kv = config.kv_namespaces ?? [];
+  const queueProducers = config.queues?.producers ?? [];
+  const services = config.services ?? [];
   return {
-    d1: (config.d1_databases ?? []).map((binding) => ({ name: binding.database_name, id: binding.database_id, migrationsDir: binding.migrations_dir })),
-    r2: (config.r2_buckets ?? []).map((binding) => binding.bucket_name),
+    d1: d1.map((binding) => ({ name: binding.database_name, id: binding.database_id, migrationsDir: binding.migrations_dir })),
+    r2: r2.map((binding) => binding.bucket_name),
     images: config.images?.binding ? [config.images.binding] : [],
-    analytics: (config.analytics_engine_datasets ?? []).map((binding) => binding.dataset),
-    kv: (config.kv_namespaces ?? []).map((binding) => binding.id),
+    analytics: analytics.map((binding) => binding.dataset),
+    kv: kv.map((binding) => binding.id),
     queues: [
-      ...(config.queues?.producers ?? []).map((binding) => binding.queue),
+      ...queueProducers.map((binding) => binding.queue),
       ...(config.queues?.consumers ?? []).map((binding) => binding.queue),
       ...(config.queues?.consumers ?? []).map((binding) => binding.dead_letter_queue).filter(Boolean),
     ],
-    services: Object.fromEntries((config.services ?? []).map((binding) => [binding.binding, binding.service])),
+    services: Object.fromEntries(services.map((binding) => [binding.binding, binding.service])),
     secrets: config.secrets?.required ?? [],
+    bindingNames: {
+      d1: d1.map((binding) => binding.binding),
+      r2: r2.map((binding) => binding.binding),
+      assets: config.assets?.binding ? [config.assets.binding] : [],
+      images: config.images?.binding ? [config.images.binding] : [],
+      analytics: analytics.map((binding) => binding.binding),
+      kv: kv.map((binding) => binding.binding),
+      queues: queueProducers.map((binding) => binding.binding),
+      services: services.map((binding) => binding.binding),
+    },
   };
 }
 
@@ -182,6 +198,7 @@ export function validateRegistry(registry) {
       if (!component.config) errors.push(`${environmentName}/${componentName} has no Wrangler configuration path.`);
       if (typeof component.deployable !== "boolean") errors.push(`${environmentName}/${componentName} has no deployable state.`);
       if (!component.resources) errors.push(`${environmentName}/${componentName} has no resource ownership declaration.`);
+      if (component.bindings !== undefined && (typeof component.bindings !== "object" || Array.isArray(component.bindings))) errors.push(`${environmentName}/${componentName} binding contract must be an object when declared.`);
       if (!Array.isArray(component.requiredSecrets)) errors.push(`${environmentName}/${componentName} has no required secret-name declaration.`);
       if (componentName === "publicLinksControl" && (!component.publicationPolicy || !validPublicationPolicy(component.publicationPolicy.publicProfile) || !validPublicationPolicy(component.publicationPolicy.adultProfile))) {
         errors.push(`${environmentName}/${componentName} has no valid publication policy declaration.`);
@@ -240,6 +257,18 @@ export function validateDeployment({ registry, environmentName, componentName, c
     const expectedServices = component.resources?.services ?? {};
     if (JSON.stringify(resources.services) !== JSON.stringify(expectedServices)) errors.push(`Service bindings mismatch for ${environmentName}/${componentName}.`);
     addExactListError(errors, "Required secret names", resources.secrets, component.requiredSecrets ?? []);
+    for (const [resourceType, expectedBindings] of Object.entries(component.bindings ?? {})) {
+      if (!Array.isArray(expectedBindings)) {
+        errors.push(`${environmentName}/${componentName} binding contract ${resourceType} must be an array.`);
+        continue;
+      }
+      const actualBindings = resources.bindingNames[resourceType];
+      if (!actualBindings) {
+        errors.push(`${environmentName}/${componentName} binding contract has unsupported resource type ${resourceType}.`);
+        continue;
+      }
+      addExactListError(errors, `${resourceType} logical bindings`, actualBindings, expectedBindings);
+    }
     validatePublicationPolicyConfig(errors, componentName, component, config);
 
     const d1Registry = environment.resources?.d1 ?? {};

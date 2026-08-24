@@ -103,5 +103,7 @@ test("the non-browser health checker requires Access authentication and never pr
   assert.match(checker, /https:\/\/thot-os-staging\.thot-os\.workers\.dev\/health/);
   assert.doesNotMatch(checker, /THOT_OS_HEALTH_BASE_URL/);
   assert.doesNotMatch(checker, /console\.log\([^\n]*(?:accessToken|accessCookie)/);
-  assert.match(checker, /response\.status !== 200/);
+  assert.match(checker, /assertUnauthenticatedHealthDenied/);
+  assert.match(checker, /validateAuthenticatedHealth/);
+  assert.match(checker, /artifact-manifest/);
 });

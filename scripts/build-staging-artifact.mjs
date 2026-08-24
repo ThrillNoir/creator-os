@@ -1,13 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runPreflight, projectRoot } from "./deployment-preflight.mjs";
-import { assertCompiledHealthMetadata, validateStagingArtifactMetadata } from "./staging-artifact-lib.mjs";
+import { assertCompiledHealthMetadata, createStagingArtifactManifest, stagingArtifactManifestFilename, validateStagingArtifactMetadata, verifyStagingArtifactManifest } from "./staging-artifact-lib.mjs";
 
 const webDirectory = path.join(projectRoot, "cloudflare/thot-os-next");
 const nextBinary = path.join(webDirectory, "node_modules/.bin/next");
 const openNextBinary = path.join(webDirectory, "node_modules/.bin/opennextjs-cloudflare");
 const healthArtifact = path.join(webDirectory, ".open-next/server-functions/default/index.mjs");
+const artifactDirectory = path.join(webDirectory, ".open-next");
+const artifactManifest = path.join(artifactDirectory, stagingArtifactManifestFilename);
+const lockfilePath = path.join(webDirectory, "package-lock.json");
 
 function usage() {
   return "Usage: node scripts/build-staging-artifact.mjs [--component web]";
@@ -58,7 +61,10 @@ export function buildStagingArtifact() {
   execFileSync(process.execPath, [nextBinary, "build"], { cwd: webDirectory, env, stdio: "inherit" });
   execFileSync(process.execPath, [openNextBinary, "build"], { cwd: webDirectory, env, stdio: "inherit" });
   assertCompiledHealthMetadata({ artifactPath: healthArtifact, metadata });
-  return { metadata, healthArtifact };
+  const manifest = createStagingArtifactManifest({ artifactDirectory, lockfilePath, metadata });
+  writeFileSync(artifactManifest, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  verifyStagingArtifactManifest({ artifactDirectory, lockfilePath, manifest, expectedMetadata: metadata });
+  return { metadata, healthArtifact, artifactManifest, artifactDigest: manifest.artifact.sha256 };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -67,7 +73,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (options.help) console.log(usage());
     else {
       const outcome = buildStagingArtifact();
-      console.log(`Staging artifact verified: ${outcome.metadata.component}/${outcome.metadata.environment} at ${outcome.metadata.gitSha}.`);
+      console.log(`Staging artifact verified: ${outcome.metadata.component}/${outcome.metadata.environment} at ${outcome.metadata.gitSha} (${outcome.artifactDigest}).`);
     }
   } catch (error) {
     console.error(`Staging artifact build failed: ${error instanceof Error ? error.message : String(error)}`);
