@@ -1,63 +1,6 @@
 @import "tailwindcss";
-
-@custom-variant dark (&:is(.dark *));
-
-:root {
-  color-scheme: dark;
-  --bg: #0c0911;
-  --panel: #17131e;
-  --panel2: #211a29;
-  --line: #352a42;
-  --ink: #f8f5ff;
-  --muted: #aaa1b5;
-  --purple: #7655f6;
-  --purple2: #c2b1ff;
-  --green: #78d7a5;
-  --background: #0c0911;
-  --foreground: #f8f5ff;
-  --card: #17131e;
-  --card-foreground: #f8f5ff;
-  --popover: #211a29;
-  --popover-foreground: #f8f5ff;
-  --primary: #7655f6;
-  --primary-foreground: #ffffff;
-  --secondary: #211a29;
-  --secondary-foreground: #f8f5ff;
-  --muted: #211a29;
-  --muted-foreground: #aaa1b5;
-  --accent: #2b2135;
-  --accent-foreground: #f8f5ff;
-  --destructive: #b74e65;
-  --border: #352a42;
-  --input: #352a42;
-  --ring: #c2b1ff;
-  --radius: 0.75rem;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) * 0.75);
-  --radius-md: calc(var(--radius) * 0.875);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.5);
-}
+@import "tw-animate-css";
+@import "./boldkit-theme.css";
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
 a { color: inherit; text-decoration: none; }

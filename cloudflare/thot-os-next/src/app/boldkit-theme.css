@@ -1,0 +1,134 @@
+/* THOT OS BoldKit theme. Palette values mirror the approved Creator OS export. */
+@custom-variant dark (&:where(html.dark, html.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted-surface);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+  --radius: 0px;
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+}
+
+:root {
+  color-scheme: light;
+  --background: hsl(344 14% 97%);
+  --foreground: hsl(344 12% 11%);
+  --primary: hsl(344 100% 82%);
+  --primary-foreground: hsl(240 10% 10%);
+  --secondary: hsl(154 56% 78%);
+  --secondary-foreground: hsl(240 10% 10%);
+  --accent: hsl(260 53% 80%);
+  --accent-foreground: hsl(240 10% 10%);
+  --muted-surface: hsl(344 11% 91%);
+  --muted: hsl(344 7% 38%);
+  --muted-foreground: hsl(344 7% 38%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(344 12% 11%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(344 12% 11%);
+  --destructive: hsl(0 84% 60%);
+  --destructive-foreground: hsl(240 10% 10%);
+  --success: hsl(152 69% 69%);
+  --success-foreground: hsl(240 10% 10%);
+  --warning: hsl(49 100% 60%);
+  --warning-foreground: hsl(240 10% 10%);
+  --info: hsl(212 100% 73%);
+  --info-foreground: hsl(240 10% 10%);
+  --border: hsl(344 12% 11%);
+  --input: hsl(344 12% 11%);
+  --ring: hsl(344 12% 11%);
+  --shadow-color: hsl(344 12% 11%);
+  --shadow-offset: 8px;
+  --border-width: 3px;
+  --bg: var(--background);
+  --panel: var(--card);
+  --panel2: var(--muted-surface);
+  --line: var(--border);
+  --ink: var(--foreground);
+  --purple: var(--primary);
+  --purple2: hsl(271 76% 38%);
+  --green: hsl(152 55% 34%);
+}
+
+html.dark {
+  color-scheme: dark;
+  --background: hsl(344 14% 10%);
+  --foreground: hsl(344 14% 97%);
+  --primary: hsl(344 100% 82%);
+  --primary-foreground: hsl(240 10% 10%);
+  --secondary: hsl(154 56% 78%);
+  --secondary-foreground: hsl(240 10% 10%);
+  --accent: hsl(260 53% 80%);
+  --accent-foreground: hsl(240 10% 10%);
+  --muted-surface: hsl(344 14% 20%);
+  --muted: hsl(344 7% 65%);
+  --muted-foreground: hsl(344 7% 65%);
+  --card: hsl(240 10% 14%);
+  --card-foreground: hsl(344 14% 97%);
+  --popover: hsl(240 10% 14%);
+  --popover-foreground: hsl(344 14% 97%);
+  --destructive: hsl(0 84% 60%);
+  --destructive-foreground: hsl(240 10% 10%);
+  --success: hsl(152 69% 69%);
+  --success-foreground: hsl(240 10% 10%);
+  --warning: hsl(49 100% 60%);
+  --warning-foreground: hsl(240 10% 10%);
+  --info: hsl(212 100% 73%);
+  --info-foreground: hsl(240 10% 10%);
+  --border: hsl(344 14% 97%);
+  --input: hsl(344 14% 97%);
+  --ring: hsl(344 14% 97%);
+  --shadow-color: hsl(0 0% 0%);
+  --bg: var(--background);
+  --panel: var(--card);
+  --panel2: var(--muted-surface);
+  --line: var(--border);
+  --ink: var(--foreground);
+  --purple: var(--primary);
+  --purple2: var(--accent);
+  --green: var(--success);
+}
+
+.bk-border { border-color: var(--foreground); border-width: var(--border-width); }
+.bk-border-compact { border-color: var(--foreground); border-width: calc(var(--border-width) / 2); }
+.bk-shadow { box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--shadow-color); }
+.bk-press { transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
+.bk-press:not(:disabled):is(:hover, :active) { box-shadow: none; transform: translate(var(--shadow-offset), var(--shadow-offset)); }
+.bk-divider-b { border-bottom: var(--border-width) solid var(--foreground); }
+.bk-divider-t { border-top: var(--border-width) solid var(--foreground); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-press { transition: none; }
+  .bk-press:not(:disabled):is(:hover, :active) { transform: none; }
+}
