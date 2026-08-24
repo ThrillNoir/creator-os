@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { HandoffActions } from "@/components/handoff-actions";
 import { getPostPackage, getPostPackageAssets } from "@/lib/db";
 import { getActiveCreator } from "@/lib/current-creator";
@@ -29,8 +29,7 @@ export default async function HandoffPage({ params }: { params: Promise<{ id: st
   const actionLabel = post.platform === "myroomz" && myRoomz.ready ? "Open MyRoomz Vault" : `Open ${post.platform}`;
 
   return (
-    <main className="app-shell">
-      <AppNav active="Approvals" />
+    <AppShell active="Approvals">
       <section className="workspace form-workspace">
         <Link className="back-link" href={`/approvals/${post.id}`}>← Back to approval</Link>
         <header className="form-header">
@@ -61,6 +60,6 @@ export default async function HandoffPage({ params }: { params: Promise<{ id: st
           </section>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

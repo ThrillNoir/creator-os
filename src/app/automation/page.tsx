@@ -1,4 +1,4 @@
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getRecentAutomationEvents, getRecentWorkflowReceipts } from "@/lib/db";
 import { retryAutomationEventAction } from "./actions";
@@ -20,7 +20,7 @@ export default async function AutomationPage(){
     running:events.filter((event)=>event.status==="running").length,
     failed:events.filter((event)=>["failed","dispatch_failed"].includes(event.status)).length,
     completed:events.filter((event)=>event.status==="completed").length};
-  return <main className="app-shell"><AppNav active="Automation"/><section className="workspace automation-workspace">
+  return <AppShell active="Automation"><section className="workspace automation-workspace">
     <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · CONTROL PLANE</span><h1>Automation</h1><p className="page-subtitle">Creator-scoped events, Cloudflare queue state, failures and verified workflow receipts.</p></div></header>
     <section className="automation-summary">
       {Object.entries(counts).map(([label,count])=><article key={label}><strong>{count}</strong><span>{label}</span></article>)}
@@ -39,5 +39,5 @@ export default async function AutomationPage(){
         {!receipts.length&&<div className="mini-empty">Receipts will appear after a worker acknowledges an event.</div>}
       </aside>
     </section>
-  </section></main>;
+  </section></AppShell>;
 }

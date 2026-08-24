@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { approveCreatorReminderAction, markPostPublishedAction, reschedulePostAction, saveCreatorReminderRuleAction, scheduleAtRecommendedTimeAction, sendCreatorReminderAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getCreatorReminderRule, getCreatorReminders, getInstagramAnalyticsData, getPostPackages, getScheduledPosts } from "@/lib/db";
 import { calculateInstagramTiming } from "@/lib/instagram-timing";
@@ -17,8 +17,7 @@ export default async function SchedulePage({searchParams}:{searchParams:Promise<
   const reminderRule=getCreatorReminderRule(creator.id);
   const reminders=getCreatorReminders(creator.id);
   return (
-    <main className="app-shell">
-      <AppNav active="Schedule" />
+    <AppShell active="Schedule">
       <section className="workspace library-workspace">
         <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · CONSISTENCY</span><h1>Publishing schedule</h1><p className="page-subtitle">Changing an approved posting time returns the variant to approval.</p></div><Link className="primary-button button-link" href="/content/new">＋ Prepare content</Link></header>
         {timing.recommendations.length > 0 && <section className="schedule-intelligence">
@@ -68,6 +67,6 @@ export default async function SchedulePage({searchParams}:{searchParams:Promise<
           </div>
         </section>
       </section>
-    </main>
+    </AppShell>
   );
 }

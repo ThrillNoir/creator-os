@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { RedditHandoffActions } from "@/components/reddit-handoff-actions";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getPostPackage, getPostPackageAssets, getRedditTarget } from "@/lib/db";
@@ -21,8 +21,7 @@ export default async function RedditHandoffPage({ params }: { params: Promise<{ 
   }));
   const submitUrl = `https://www.reddit.com/r/${encodeURIComponent(target.community_name)}/submit?type=IMAGE`;
   return (
-    <main className="app-shell">
-      <AppNav active="Reddit operations" />
+    <AppShell active="Reddit operations">
       <section className="workspace form-workspace">
         <Link className="back-link" href="/reddit">← Back to Reddit operations</Link>
         <header className="form-header"><span className="eyebrow">APPROVED REDDIT TARGET #{target.id}</span><h1>Finish in r/{target.community_name}</h1><p>Browser assistance prepares the exact package and stops before Reddit&apos;s Submit button.</p></header>
@@ -39,6 +38,6 @@ export default async function RedditHandoffPage({ params }: { params: Promise<{ 
           </section>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

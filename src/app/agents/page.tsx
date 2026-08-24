@@ -3,6 +3,7 @@ import { runCaptionTaskAction } from "@/app/actions";
 import { getAgentTasks } from "@/lib/db";
 import { getActiveCreator } from "@/lib/current-creator";
 import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,8 @@ export default async function AgentsPage() {
   const tasks = getAgentTasks(creator.id);
 
   return (
-    <main className="agent-page">
+    <AppShell active="Agent control">
+      <section className="workspace agent-page">
       <div className="agent-wrap">
         <Link className="back-link" href="/">← Back to dashboard</Link>
         <div className="agent-hero">
@@ -78,6 +80,7 @@ export default async function AgentsPage() {
           <p><strong>Connection ready and approval-gated.</strong> Clicking Run is the execution approval. Caption tasks run read-only, write only their result into the matching draft, and never publish.</p>
         </section>
       </div>
-    </main>
+      </section>
+    </AppShell>
   );
 }

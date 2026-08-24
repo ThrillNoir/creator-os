@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { approvePublicationJobAction, executePublicationJobAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getPublicationJobs } from "@/lib/db";
 import { getCreatorInstagramPublishingReadiness } from "@/lib/publishing/composio-instagram";
@@ -14,8 +14,7 @@ export default async function PublishingPage() {
   const instagram = getCreatorInstagramPublishingReadiness(creator.id);
   const xquik = getXQuikConfiguration();
   return (
-    <main className="app-shell">
-      <AppNav active="API publishing" />
+    <AppShell active="API publishing">
       <section className="workspace library-workspace">
         <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · GUARDED EXECUTION</span><h1>API publishing</h1><p className="page-subtitle">Connecting an account never grants blanket publishing authority.</p></div></header>
         <section className="guardrail-strip">
@@ -46,6 +45,6 @@ export default async function PublishingPage() {
         </section>
         <div className="agent-note"><span>i</span><p><strong>{instagram.ready ? "Instagram execution is available." : "Media delivery still needs setup."}</strong> {instagram.ready ? "Validation creates a media container without publishing. Live jobs publish only after the separate final approval." : "Connect Dropbox temporary links or set a public HTTPS THOT OS media origin before Instagram can fetch local assets."}</p></div>
       </section>
-    </main>
+    </AppShell>
   );
 }

@@ -1,4 +1,4 @@
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getMessageSyncSummary, getMessagingAuditEvents, getMessagingConnections, getMessagingThreads, getTelegramCreatorPairing, getTelegramSendLog } from "@/lib/db";
 import { openLocalPlatformAction, sendAgencyMessageToCreatorAction, setMessagingEmergencyPauseAction, updateMessagingConnectionAction } from "@/app/actions";
@@ -23,8 +23,7 @@ export default async function MessagesPage({searchParams}:{searchParams:Promise<
   const telegramPairing = getTelegramCreatorPairing(creator.id);
   const telegramLog = getTelegramSendLog(creator.id, 8);
 
-  return <main className="app-shell">
-    <AppNav active="Messages" />
+  return <AppShell active="Messages">
     <section className="workspace messaging-workspace">
       <header className="topbar">
         <div><span className="eyebrow">UNIFIED INBOX</span><h1>{creator.name} messages</h1><p className="page-subtitle">One creator-scoped inbox with explicit read, drafting and sending authority.</p></div>
@@ -90,5 +89,5 @@ export default async function MessagesPage({searchParams}:{searchParams:Promise<
         {!audit.length && <div className="mini-empty">No messaging actions recorded yet.</div>}
       </section>
     </section>
-  </main>;
+  </AppShell>;
 }

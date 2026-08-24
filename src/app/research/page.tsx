@@ -1,5 +1,5 @@
 import { createResearchFindingAction, queueResearchTaskAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getResearchFindings } from "@/lib/db";
 import { getActiveCreator } from "@/lib/current-creator";
 
@@ -9,8 +9,7 @@ export default async function ResearchPage() {
   const creator = await getActiveCreator();
   const findings = getResearchFindings(creator.id);
   return (
-    <main className="app-shell">
-      <AppNav active="Research" />
+    <AppShell active="Research">
       <section className="workspace library-workspace">
         <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · SOURCE-BACKED SIGNALS</span><h1>Research inbox</h1><p className="page-subtitle">Evidence can influence an angle; it never overrides creator voice.</p></div></header>
         <section className="panel research-agent-brief">
@@ -49,6 +48,6 @@ export default async function ResearchPage() {
           </section>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

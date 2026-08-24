@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { createVaultUploadJobsAction, openLocalPlatformAction, retryVaultUploadJobAction, verifyVaultUploadJobAction } from "@/app/actions";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getLibraryAssets, getMessagingConnections, getVaultUploadJobs } from "@/lib/db";
@@ -29,7 +29,7 @@ export default async function VaultPage({searchParams}:{searchParams:Promise<{no
   const jobs=query.status?allJobs.filter((job)=>job.status===query.status):allJobs;
   const connections=getMessagingConnections(creator.id).filter((item)=>item.platform==="onlyfans"||item.platform==="fansly");
   const connectedPlatforms=new Set(connections.filter((item)=>item.status!=="not_connected").map((item)=>item.platform));
-  return <main className="app-shell"><AppNav active="Vault uploads"/><section className="workspace vault-workspace">
+  return <AppShell active="Vault uploads"><section className="workspace vault-workspace">
     <header className="topbar"><div><span className="eyebrow">PRIVATE MEDIA STAGING</span><h1>{creator.name} vault uploads</h1><p className="page-subtitle">Stage selected source assets in a verified native vault. This does not publish, post or message the media.</p></div></header>
     {query.notice==="already_queued"&&<div className="connection-alert success">That asset is already queued or verified for the selected vault. No duplicate was created.</div>}
     {query.notice==="queued"&&<div className="connection-alert success">The selected vault upload was approved and added to the local queue.</div>}
@@ -52,5 +52,5 @@ export default async function VaultPage({searchParams}:{searchParams:Promise<{no
       {jobs.map((job)=><article key={job.id}><span className={`vault-status ${job.status}`}>{job.status}</span><div><strong>{job.basename}</strong><small>{job.platform==="onlyfans"?"OnlyFans":"Fansly"} · {job.handle.startsWith("@")?job.handle:`@${job.handle}`} · {(job.bytes/1024/1024).toFixed(1)} MB</small><small>{statusCopy[job.status]??job.status}</small>{job.error&&<em>{job.error}</em>}</div><div className="vault-job-actions"><time>{job.completed_at??job.created_at}</time>{job.status==="failed"&&<form action={retryVaultUploadJobAction}><input type="hidden" name="jobId" value={job.id}/><button className="secondary-button" type="submit">Retry</button></form>}{job.status==="staged"&&<form action={verifyVaultUploadJobAction}><input type="hidden" name="jobId" value={job.id}/><button className="primary-button" type="submit">Confirm in vault</button></form>}</div></article>)}
       {!jobs.length&&<div className="mini-empty">No vault uploads have been approved yet.</div>}
     </section>
-  </section></main>;
+  </section></AppShell>;
 }

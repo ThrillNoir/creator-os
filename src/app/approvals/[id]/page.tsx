@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { approvePostAction, confirmInstagramPublicationMatchAction, createPublicationJobAction, queueCaptionTaskAction, sendApprovedPostToTelegramAction, updatePostAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getAccounts, getAgentTasks, getCreatorActivity, getInstagramMatchCandidates, getLatestTelegramHandoff, getPlatformConnections, getPostOutcomeSnapshots, getPostPackage, getPostPackageAssets, getPostPackagePeople, getPublicationMatches, getRecentCaptions, getTelegramCreatorPairing, getVoiceProfile } from "@/lib/db";
 import { getActiveCreator } from "@/lib/current-creator";
 import { evaluateCaption } from "@/lib/caption-quality";
@@ -45,8 +45,7 @@ export default async function ApprovalDetailPage({ params, searchParams }: { par
     allowedHandles: people.map((person)=>handleForPlatform(person.tags,post.platform)).filter(Boolean),
   });
   return (
-    <main className="app-shell">
-      <AppNav active="Approvals" />
+    <AppShell active="Approvals">
       <section className="workspace form-workspace">
         <Link className="back-link" href="/approvals">← Back to approvals</Link>
         <header className="form-header"><span className="eyebrow">APPROVAL PACKAGE #{post.id}</span><h1>Review post</h1><p>Approval applies to this media, copy and destination together.</p></header>
@@ -114,6 +113,6 @@ export default async function ApprovalDetailPage({ params, searchParams }: { par
         </section>}
         <section className="panel package-activity"><div className="panel-heading"><div><h2>Package history</h2><p>Approval, handoff, publication and measurement remain distinct events.</p></div><Link href="/activity">All activity →</Link></div>{activity.slice(0,8).map(item=><article key={item.id}><time>{new Date(item.occurredAt).toLocaleString("en-AU")}</time><div><strong>{item.title}</strong><span>{item.detail}</span></div><b>{item.status}</b></article>)}{!activity.length&&<div className="mini-empty">No package events yet.</div>}</section>
       </section>
-    </main>
+    </AppShell>
   );
 }
