@@ -94,7 +94,12 @@ export default async function NewContentPage({ searchParams }: { searchParams: P
             </CardHeader>
             <CardContent>
               {!assets.length ? <EmptyState description="Clear or adjust the Library filters to continue choosing existing source media. Existing selections remain available below." title="No suitable assets found" /> : null}
-              <MediaPicker assets={assets} creatorId={creator.id} />
+              <MediaPicker
+                key={`${creator.id}:${platform || "all"}`}
+                assets={assets}
+                creatorId={creator.id}
+                selectionScope={platform || "all"}
+              />
             </CardContent>
           </Card>
 

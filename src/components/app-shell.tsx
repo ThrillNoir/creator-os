@@ -12,9 +12,9 @@ export async function AppShell({ active, children }: AppShellProps) {
   const creators = getCreators();
 
   return (
-    <main className="app-shell">
+    <div className="app-shell">
       <AppNavigation active={active} activeCreator={activeCreator} creators={creators} />
-      {children}
-    </main>
+      <main>{children}</main>
+    </div>
   );
 }

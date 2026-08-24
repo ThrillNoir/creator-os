@@ -19,7 +19,7 @@ export default async function AgentsPage() {
   const tasks = getAgentTasks(creator.id);
 
   return (
-    <AppShell active="Agent control"><main className="control-workspace control-agents-workspace">
+    <AppShell active="Agent control"><section className="control-workspace control-agents-workspace">
       <PageHeader eyebrow="Control plane" title="Agent control" description={`Plan, assign, and review bounded work for ${creator.name}.`} actions={<Button asChild variant="outline"><Link href="/approvals">Open approval queue</Link></Button>} />
       <section className="control-runtime-grid" aria-label="Available agent runtimes">{runtimes.map((runtime) => <article className="control-runtime-card" key={runtime.provider}><div className="control-runtime-mark">{runtime.provider === "codex" ? "C" : "A"}</div><div><p><span /> Installed locally</p><h2>{runtime.label}</h2><small>{runtime.version}</small></div></article>)}</section>
 
@@ -37,6 +37,6 @@ export default async function AgentsPage() {
         </CardContent></Card>
       </div>
       <ControlNotice><strong>Connection-ready and approval-gated.</strong> Caption tasks write only their result into the matching local draft and return it to human review. Research tasks return to review; neither task type publishes content.</ControlNotice>
-    </main></AppShell>
+    </section></AppShell>
   );
 }

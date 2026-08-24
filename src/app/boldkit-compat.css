@@ -65,3 +65,103 @@ code, kbd, pre, .font-mono, .os-metric-value { font-family: "Geist Mono", "Geist
   .os-page-description { font-size: 14px; }
   .os-page-actions { margin-top: 18px; }
 }
+
+/* Legacy Creator OS surfaces still use literal light colours in globals.css.
+   Keep them legible while they are incrementally migrated to theme tokens. */
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark :is(
+  .account-card,
+  .account-confirmation,
+  .approval-card,
+  .approval-more,
+  .approval-state,
+  .asset-card,
+  .asset-detail-sidebar,
+  .asset-history-panel,
+  .asset-list-row,
+  .asset-preview-panel,
+  .asset-total-shares,
+  .automation-summary article,
+  .choice-list,
+  .command-connection-card,
+  .connection-summary > div,
+  .connection-summary > p,
+  .csv-schema,
+  .empty-state,
+  .form-panel,
+  .full-button,
+  .gallery-view-toggle a.active,
+  .guardrail-strip > div,
+  .identity-confirm-card,
+  .library-tools,
+  .list-classification-details[open] > summary,
+  .missing-destinations a,
+  .onboarding-checks a,
+  .operation-asset-grid > a,
+  .operations-card,
+  .panel,
+  .platform-switcher,
+  .publication-row button,
+  .quick-grid button,
+  .reddit-handoff-actions a,
+  .reddit-handoff-actions button,
+  .reddit-account-strip,
+  .reddit-asset-strip > a,
+  .reddit-targets a,
+  .reddit-targets button,
+  .round-button,
+  .runtime-card,
+  .small-stat-list > div,
+  .status-strip,
+  .telegram-message-form,
+  .telegram-unpaired,
+  .task-row button,
+  .timeline-row button,
+  .verified-connection-card,
+  .vault-consent-attestation
+) {
+  background: hsl(var(--card)) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+html.dark .agent-page {
+  background: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+html.dark :is(
+  .activity-unavailable,
+  .agency-bot-summary,
+  .command-connection-card > b,
+  .compact-list-classification,
+  .list-classification-details,
+  .media-source-details,
+  .media-source-details article b,
+  .outcome-grid article,
+  .performance-row.head,
+  .reminder-rule-form,
+  .timing-list article
+) {
+  background: hsl(var(--muted)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+html.dark .workspace :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  select option,
+  textarea
+) {
+  background: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+html.dark .workspace :is(input, textarea)::placeholder {
+  color: hsl(var(--muted-foreground));
+}

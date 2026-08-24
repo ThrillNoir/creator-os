@@ -10,11 +10,11 @@ import { isPhotoAsset, mediaUrl, type MediaAsset } from "@/components/media-work
 type SelectionAsset = Pick<MediaAsset, "id" | "basename" | "relative_path" | "extension" | "classification_safety" | "is_teaser" | "is_multi" | "repeated_basename">;
 type StoredSelection = Record<string, SelectionAsset>;
 
-function selectionStorageKey(creatorId: string) {
-  return `thot-os:content-selection:${creatorId}`;
+function selectionStorageKey(creatorId: string, selectionScope: string) {
+  return `thot-os:content-selection:v1:${creatorId}:${selectionScope}`;
 }
 
-export function MediaPicker({ assets, creatorId }: { assets: SelectionAsset[]; creatorId: string }) {
+export function MediaPicker({ assets, creatorId, selectionScope }: { assets: SelectionAsset[]; creatorId: string; selectionScope: string }) {
   const [selection, setSelection] = useState<StoredSelection>({});
   const [hasRestoredSelection, setHasRestoredSelection] = useState(false);
   const currentAssetIds = useMemo(() => new Set(assets.map((asset) => asset.id)), [assets]);
@@ -24,7 +24,7 @@ export function MediaPicker({ assets, creatorId }: { assets: SelectionAsset[]; c
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       try {
-        const stored = window.sessionStorage.getItem(selectionStorageKey(creatorId));
+        const stored = window.sessionStorage.getItem(selectionStorageKey(creatorId, selectionScope));
         if (stored) {
           const parsed = JSON.parse(stored) as StoredSelection;
           if (parsed && typeof parsed === "object") setSelection(parsed);
@@ -36,16 +36,16 @@ export function MediaPicker({ assets, creatorId }: { assets: SelectionAsset[]; c
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [creatorId]);
+  }, [creatorId, selectionScope]);
 
   useEffect(() => {
     if (!hasRestoredSelection) return;
     try {
-      window.sessionStorage.setItem(selectionStorageKey(creatorId), JSON.stringify(selection));
+      window.sessionStorage.setItem(selectionStorageKey(creatorId, selectionScope), JSON.stringify(selection));
     } catch {
       // The current-page checkbox values remain submit-ready when session storage is unavailable.
     }
-  }, [creatorId, hasRestoredSelection, selection]);
+  }, [creatorId, hasRestoredSelection, selection, selectionScope]);
 
   const selectedAssets = Object.values(selection);
   const selectionCount = selectedAssets.length;

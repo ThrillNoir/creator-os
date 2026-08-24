@@ -36,7 +36,7 @@ export default async function AutomationPage() {
   };
 
   return (
-    <AppShell active="Automation"><main className="control-workspace control-automation-workspace">
+    <AppShell active="Automation"><section className="control-workspace control-automation-workspace">
       <PageHeader eyebrow="Control plane" title="Automation" description="Creator-scoped queue state, failures, and verified workflow receipts." />
       <section className="control-metric-grid" aria-label="Automation summary">
         <ControlMetric label="Queued" value={counts.queued} detail="Created, dispatching, or queued" icon={Clock3} tone="info" />
@@ -60,6 +60,6 @@ export default async function AutomationPage() {
           {receipts.length ? <div className="control-receipt-list">{receipts.map((receipt) => <article className="control-receipt-row" key={receipt.id}><p>{receipt.workflow_type}</p><ControlStatusBadge status={receipt.status} /><small>{formatReceiptDetail(receipt.detail)}</small>{receipt.public_url ? <a href={receipt.public_url} target="_blank" rel="noreferrer">Open live result ↗</a> : null}<time>{new Date(receipt.created_at).toLocaleString("en-AU", { timeZone: "Australia/Perth" })}</time></article>)}</div> : <ControlEmptyState title="No workflow receipts" description="Receipts appear after a worker acknowledges an event." />}
         </CardContent></Card>
       </div>
-    </main></AppShell>
+    </section></AppShell>
   );
 }

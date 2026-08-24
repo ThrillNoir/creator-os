@@ -28,7 +28,7 @@ export default async function PublishingPage() {
   const xquik = getXQuikConfiguration();
 
   return (
-    <AppShell active="API publishing"><main className="control-workspace control-publishing-workspace">
+    <AppShell active="API publishing"><section className="control-workspace control-publishing-workspace">
       <PageHeader eyebrow="Guarded execution" title="API publishing" description="Connection is not publishing authority. Every live job remains separately reviewable and receipted." />
 
       <section className="control-execution-path" aria-label="Publishing execution path">
@@ -67,6 +67,6 @@ export default async function PublishingPage() {
       </Card>
 
       <ControlNotice tone={instagram.ready ? "success" : "warning"}><strong>{instagram.ready ? "Instagram execution is available." : "Media delivery still needs setup."}</strong> {instagram.ready ? "Validation creates a media container without publishing. Live jobs publish only after the separate final approval." : "Connect Dropbox temporary links or set a public HTTPS THOT OS media origin before Instagram can fetch local assets."}</ControlNotice>
-    </main></AppShell>
+    </section></AppShell>
   );
 }

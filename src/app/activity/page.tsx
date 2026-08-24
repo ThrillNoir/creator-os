@@ -17,7 +17,7 @@ export default async function ActivityPage() {
   const linkedPackageCount = activity.filter((item) => Boolean(item.postPackageId)).length;
 
   return (
-    <AppShell active="Activity"><main className="control-workspace control-activity-workspace">
+    <AppShell active="Activity"><section className="control-workspace control-activity-workspace">
       <PageHeader eyebrow="Operating memory" title="Activity timeline" description="One creator-scoped history of approvals, handoffs, publication, reminders, and measured outcomes." />
       <section className="control-metric-grid" aria-label="Activity summary">
         <ControlMetric label="Recorded events" value={activity.length} detail="Current creator history" icon={Archive} />
@@ -29,6 +29,6 @@ export default async function ActivityPage() {
         <ControlPanelHeading title="Recorded activity" description={categories.length ? `Categories in this view: ${categories.join(", ")}.` : "Events appear here once a creator-scoped action is recorded."} />
         {activity.length ? <div className="control-activity-list">{activity.map((item) => <article className="control-activity-row" key={item.id}><span className={`control-activity-dot control-activity-${item.category}`} aria-hidden="true" /><time>{new Date(item.occurredAt).toLocaleString("en-AU", { timeZone: "Australia/Perth" })}</time><div><p>{item.category}</p><strong>{item.title}</strong><small>{item.detail}</small></div><ControlStatusBadge status={item.status} />{item.postPackageId ? <Link href={`/approvals/${item.postPackageId}`}>Package #{item.postPackageId} <span aria-hidden="true">→</span></Link> : null}</article>)}</div> : <ControlEmptyState title="No activity recorded" description="There is no creator-scoped activity to show yet." />}
       </CardContent></Card>
-    </main></AppShell>
+    </section></AppShell>
   );
 }

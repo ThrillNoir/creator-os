@@ -76,7 +76,7 @@ export default async function OperationsPage() {
   const connectedCount = accounts.filter((account) => account.connection_status === "connected").length;
 
   return (
-    <AppShell active="Operations"><main className="control-workspace">
+    <AppShell active="Operations"><section className="control-workspace">
       <PageHeader
         eyebrow="Control plane"
         title="Platform operations"
@@ -147,6 +147,6 @@ export default async function OperationsPage() {
       </section>
 
       <p className="control-future-note">This view reports the current operational model. Capability changes remain separate from publishing approval and execution.</p>
-    </main></AppShell>
+    </section></AppShell>
   );
 }

@@ -50,7 +50,7 @@ export default async function PlatformOperationsPage({
   const createHref = config.createHref;
 
   return (
-    <AppShell active="Operations"><main className="control-workspace control-platform-workspace">
+    <AppShell active="Operations"><section className="control-workspace control-platform-workspace">
       <Link className="control-back-link" href="/operations"><ArrowLeft aria-hidden="true" /> Operations overview</Link>
       <PageHeader
         eyebrow="Platform workspace"
@@ -122,6 +122,6 @@ export default async function PlatformOperationsPage({
       </section> : null}
 
       {tab === "tools" ? <div className="control-platform-layout"><Card><CardContent><ControlPanelHeading title="Account tools & permissions" description="Platform-specific controls live here; secrets do not." /><div className="control-link-list"><Link href="/accounts">Connections and permissions <span>→</span></Link>{platform === "reddit" ? <Link href="/reddit?tab=communities">Subreddit onboarding <span>→</span></Link> : null}{platform === "vault" ? <Link href="/vault">Native bridge queue <span>→</span></Link> : null}<Link href="/activity">Receipts and activity <span>→</span></Link></div></CardContent></Card><Card><CardContent><ControlPanelHeading title="Recommendations" description="Human-reviewed operational prompts." /><div className="control-capability-note"><strong>Best-practice reminder</strong><p>{config.bestPractice}</p></div><div className="control-capability-note"><strong>Inventory</strong><p>{assets.length ? `${assets.length} classified assets are available.` : "Classify suitable assets before building the next post."}</p></div></CardContent></Card></div> : null}
-    </main></AppShell>
+    </section></AppShell>
   );
 }
