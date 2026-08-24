@@ -1,5 +1,5 @@
 import { cloudflareEnv } from "@/lib/cloudflare";
-import { identityAuditStatement, rejectClientActorRole, requireServiceAuditActor } from "@/lib/audit-identity";
+import { rejectClientActorRole, requireServiceAuditActor } from "@/lib/audit-identity";
 
 function enabled() {
   return (cloudflareEnv() as CloudflareEnv & { STAGING_QA_ENABLED?: string }).STAGING_QA_ENABLED === "1";
@@ -24,8 +24,14 @@ export async function POST(request: Request) {
   }
   const subject = `authorization-probe:${crypto.randomUUID()}`;
   await DB.batch([
-    DB.prepare("UPDATE service_credentials SET last_seen_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(service.credentialId),
-    identityAuditStatement(DB, service.actor, "staging_qa_service_mutation", subject, { surface: "staging_qa" }),
+    DB.prepare("UPDATE service_principal_credentials SET last_seen_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(service.credentialId),
+    DB.prepare(`INSERT INTO service_principal_audit_events
+      (id,service_principal_id,credential_id,creator_id,event_type,actor_identity,detail)
+      VALUES (?,?,?,?,?,?,?)`).bind(
+        crypto.randomUUID(), service.principalId, service.credentialId, service.actor.creatorId,
+        "staging_qa_service_mutation", service.actor.identity,
+        JSON.stringify({ authPath: "canonical", subject, surface: "staging_qa" }),
+      ),
   ]);
   return Response.json({ ok: true, creatorId: service.actor.creatorId, actorRole: service.actor.role }, { headers: { "cache-control": "no-store" } });
 }

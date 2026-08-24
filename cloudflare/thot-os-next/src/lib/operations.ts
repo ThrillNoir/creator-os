@@ -1,4 +1,5 @@
 import { cloudflareEnv } from "./cloudflare";
+import { fetchInternalService } from "./internal-service";
 import type { AssetRow, Destination } from "./library";
 
 export const operationPlatforms = [
@@ -25,6 +26,7 @@ export interface OperationalAccount {
   publishing_authority: "confirmed" | "blocked" | "device_only" | "not_configured";
   warning_level: "none" | "attention" | "blocked";
   warning_message: string;
+  external_identity_confirmed_at: string | null;
   last_checked_at: string | null;
   last_success_at: string | null;
 }
@@ -33,6 +35,8 @@ export interface SocialPost {
   id: string;
   asset_id: string | null;
   community_id: number | null;
+  reddit_flair_id: string | null;
+  reddit_flair_text: string | null;
   platform: OperationPlatform;
   title: string;
   caption: string;
@@ -68,6 +72,16 @@ export interface RedditCommunity {
   title_guidance: string;
   notes: string;
   last_verified_at: string;
+  flairs_checked_at: string | null;
+}
+
+export interface RedditCommunityFlair {
+  creator_id: string;
+  community_id: number;
+  flair_id: string;
+  flair_text: string;
+  text_editable: number;
+  fetched_at: string;
 }
 
 export interface VaultUploadJob {
@@ -90,13 +104,6 @@ export interface RedditSchedulerStatus {
   connection?: { status: string; display_name: string; identity_confirmed_at: string | null; last_error: string | null; updated_at: string } | null;
   lastRun?: { status: string; started_at: string; completed_at: string | null; claimed_count: number; published_count: number; failed_count: number; error: string | null } | null;
   due?: number;
-}
-
-export interface RedditBridgePairing {
-  status: string;
-  expires_at: string;
-  last_seen_at: string | null;
-  created_at: string;
 }
 
 export type PlatformSchedulerStatus = RedditSchedulerStatus;
@@ -132,6 +139,21 @@ export interface InstagramSyncState {
   updated_at: string;
 }
 
+export interface InstagramAnalyticsCollectionRun {
+  status: "running" | "completed" | "skipped" | "failed";
+  trigger_type: "manual" | "cron";
+  media_count: number;
+  media_insights_attempted: number;
+  media_insights_succeeded: number;
+  complete_metric_media: number;
+  missing_view_media: number;
+  missing_save_media: number;
+  missing_share_media: number;
+  started_at: string;
+  completed_at: string | null;
+  error: string | null;
+}
+
 type EligibleCount = { destination: Destination; assets: number };
 type PostCount = { platform: OperationPlatform; upcoming: number; past: number };
 
@@ -141,7 +163,7 @@ export async function getOperationsOverview(creatorId: string) {
     DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? ORDER BY platform,label").bind(creatorId).all<OperationalAccount>(),
     DB.prepare(`SELECT destination,COUNT(*) AS assets FROM asset_destinations d JOIN assets a ON a.id=d.asset_id WHERE d.creator_id=? AND a.source_available=1 GROUP BY destination`).bind(creatorId).all<EligibleCount>(),
     DB.prepare(`SELECT platform,SUM(CASE WHEN status IN ('draft','scheduled','publishing') THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN status IN ('published','failed') THEN 1 ELSE 0 END) AS past FROM social_posts WHERE creator_id=? GROUP BY platform`).bind(creatorId).all<PostCount>(),
-    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? ORDER BY COALESCE(p.published_at,p.scheduled_at,p.created_at) DESC LIMIT 8`).bind(creatorId).all<SocialPost>(),
+    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? ORDER BY COALESCE(p.published_at,p.scheduled_at,p.created_at) DESC LIMIT 8`).bind(creatorId).all<SocialPost>(),
   ]);
   const accounts = new Map(accountResult.results.map((account) => [account.platform, account]));
   const eligible = new Map(eligibleResult.results.map((row) => [row.destination, row.assets]));
@@ -168,18 +190,20 @@ export async function getPlatformOperations(creatorId: string, platform: Operati
     WHERE a.creator_id=? AND a.source_available=1 AND d.destination=?
     ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120
   `).bind(creatorId, definition.destination).all<AssetRow>() : Promise.resolve({ results: [] as AssetRow[], success: true, meta: {} });
-  const [account, posts, assets, communities] = await Promise.all([
+  const [account, posts, assets, communities, flairs] = await Promise.all([
     DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform=? ORDER BY label LIMIT 1").bind(creatorId, platform).first<OperationalAccount>(),
-    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? AND p.platform=? ORDER BY COALESCE(p.scheduled_at,p.published_at,p.created_at) DESC`).bind(creatorId, platform).all<SocialPost>(),
+    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? AND p.platform=? ORDER BY COALESCE(p.scheduled_at,p.published_at,p.created_at) DESC`).bind(creatorId, platform).all<SocialPost>(),
     assetQuery,
     platform === "reddit" ? DB.prepare("SELECT * FROM reddit_communities WHERE creator_id=? ORDER BY status,name").bind(creatorId).all<RedditCommunity>() : Promise.resolve({ results: [] as RedditCommunity[], success: true, meta: {} }),
+    platform === "reddit" ? DB.prepare("SELECT creator_id,community_id,flair_id,flair_text,text_editable,fetched_at FROM reddit_community_flairs WHERE creator_id=? AND active=1 ORDER BY community_id,flair_text").bind(creatorId).all<RedditCommunityFlair>() : Promise.resolve({ results: [] as RedditCommunityFlair[], success: true, meta: {} }),
   ]);
-  return { definition, account, posts: posts.results, assets: assets.results, communities: communities.results };
+  return { definition, account, posts: posts.results, assets: assets.results, communities: communities.results, flairs: flairs.results };
 }
 
 export async function getInstagramSchedulerStatus(creatorId: string): Promise<PlatformSchedulerStatus | null> {
   try {
-    const response = await cloudflareEnv().INSTAGRAM_SCHEDULER.fetch(`https://instagram-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
+    const env = cloudflareEnv();
+    const response = await fetchInternalService(env, "instagram", "instagram.status.read", env.INSTAGRAM_SCHEDULER, `https://instagram-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
     if (!response.ok) return null;
     return await response.json() as PlatformSchedulerStatus;
   } catch {
@@ -189,12 +213,13 @@ export async function getInstagramSchedulerStatus(creatorId: string): Promise<Pl
 
 export async function getInstagramAnalytics(creatorId: string) {
   const { DB } = cloudflareEnv();
-  const [snapshot, media, syncState] = await Promise.all([
+  const [snapshot, media, syncState, collection] = await Promise.all([
     DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsSnapshot>(),
     DB.prepare("SELECT media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at FROM instagram_media_metrics WHERE creator_id=? ORDER BY COALESCE(published_at,collected_at) DESC LIMIT 50").bind(creatorId).all<InstagramMediaMetric>(),
     DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<InstagramSyncState>(),
+    DB.prepare("SELECT status,trigger_type,media_count,media_insights_attempted,media_insights_succeeded,complete_metric_media,missing_view_media,missing_save_media,missing_share_media,started_at,completed_at,error FROM instagram_analytics_collection_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsCollectionRun>(),
   ]);
-  return { snapshot, media: media.results, syncState };
+  return { snapshot, media: media.results, syncState, collection };
 }
 
 export async function getVaultOperations(creatorId: string) {
@@ -223,16 +248,13 @@ export async function getVaultOperations(creatorId: string) {
 
 export async function getRedditSchedulerStatus(creatorId: string): Promise<RedditSchedulerStatus | null> {
   try {
-    const response = await cloudflareEnv().REDDIT_SCHEDULER.fetch(`https://reddit-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
+    const env = cloudflareEnv();
+    const response = await fetchInternalService(env, "reddit", "reddit.status.read", env.REDDIT_SCHEDULER, `https://reddit-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
     if (!response.ok) return null;
     return await response.json() as RedditSchedulerStatus;
   } catch {
     return null;
   }
-}
-
-export async function getRedditBridgePairing(creatorId: string) {
-  return cloudflareEnv().DB.prepare("SELECT status,expires_at,last_seen_at,created_at FROM bridge_credentials WHERE creator_id=? AND platform='reddit' ORDER BY created_at DESC LIMIT 1").bind(creatorId).first<RedditBridgePairing>();
 }
 
 export function isOperationPlatform(value: string | undefined): value is OperationPlatform {

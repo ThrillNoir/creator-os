@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "mode": "STAGING_SERVICE_AUTH_CAPABILITY_PATCH",
+  "patchId": "staging-adult-profile-capabilities-v1",
+  "sourceActivationId": "staging-canonical-service-auth-v1",
+  "environment": "staging",
+  "result": "VERIFIED",
+  "grants": [
+    {
+      "principalName": "thot-os-web-public-links",
+      "creatorId": "adelaide",
+      "capability": "adult.profile.publish"
+    },
+    {
+      "principalName": "thot-os-web-public-links",
+      "creatorId": "adelaide",
+      "capability": "adult.profile.withdraw"
+    }
+  ],
+  "credentialRotation": false,
+  "secretWrites": false,
+  "workerDeployment": false,
+  "status": {
+    "state": "SATISFIED",
+    "baseReady": true,
+    "requestedGrantCount": 2,
+    "activeGrantCount": 2,
+    "auditPresent": true
+  }
+}

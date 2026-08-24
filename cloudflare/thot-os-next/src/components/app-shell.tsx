@@ -2,21 +2,32 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { requireCreatorContext } from "@/lib/identity";
 import { switchCreatorAction } from "@/app/identity-actions";
-import { creatorRoleLabel, isCreatorPortalRole } from "@/lib/authorization";
+import { creatorRoleLabel, isAgencyStaffRole, isCreatorPortalRole, selectableWorkspaceMemberships } from "@/lib/authorization";
 
 const agencyNavigation = [
   ["⌂", "Overview", "/"],
   ["▦", "Content library", "/library"],
+  ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
+  ["⌁", "Growth insights", "/growth"],
+  ["✓", "Launch readiness", "/launch-readiness"],
+  ["↗", "Public profile", "/public-profile"],
+  ["18+", "18+ profile", "/adult-profile"],
   ["✦", "Messages", "/messages"],
+  ["$", "Money & health", "/money"],
   ["◇", "Creators", "/creators"],
 ] as const;
 
 const creatorNavigation = [
   ["⌂", "Overview", "/"],
   ["▦", "Content library", "/library"],
+  ["◎", "Accounts & connections", "/accounts"],
   ["▣", "Operations", "/operations"],
+  ["⌁", "Growth insights", "/growth"],
+  ["↗", "Public profile", "/public-profile"],
+  ["18+", "18+ profile", "/adult-profile"],
   ["✦", "Messages", "/messages"],
+  ["$", "Money & health", "/money"],
 ] as const;
 
 const viewerNavigation = creatorNavigation.slice(0, 2);
@@ -37,9 +48,9 @@ function AgencyShell({ active, children, identity, roleLabel }: { active: string
       </section>
       <form className="creator-card creator-picker" action={switchCreatorAction}>
         <span>{identity.creator.creator_initials}</span><label><small>Selected creator workspace</small>
-          {identity.creator.role === "agency_admin" ? <select name="creatorId" defaultValue={identity.creator.creator_id} aria-label="Active creator">
-            {identity.memberships.filter((membership) => membership.role === "agency_admin").map((membership) => <option key={membership.creator_id} value={membership.creator_id}>{membership.creator_name}</option>)}
-          </select> : <strong>{identity.creator.creator_name}</strong>}</label>{identity.creator.role === "agency_admin" && <button type="submit">Switch workspace</button>}
+          {isAgencyStaffRole(identity.creator.role) ? <select name="creatorId" defaultValue={identity.creator.creator_id} aria-label="Active creator">
+            {selectableWorkspaceMemberships(identity.memberships).map((membership) => <option key={membership.creator_id} value={membership.creator_id}>{membership.creator_name}</option>)}
+          </select> : <strong>{identity.creator.creator_name}</strong>}</label>{isAgencyStaffRole(identity.creator.role) && <button type="submit">Switch workspace</button>}
         <small className="creator-scope-note">You remain signed in as {roleLabel}; switching never impersonates the creator.</small>
       </form>
     </aside>

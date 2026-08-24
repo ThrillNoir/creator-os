@@ -37,7 +37,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
         <header className="topbar">
           <div><span className="eyebrow">SOURCE LIBRARY · READ ONLY</span><h1>{creator.name} content library</h1><p className="page-subtitle">{total} assets indexed · {assets.length} shown</p></div>
           <div className="library-header-actions">
-            <form action={syncLibraryAction}><button className="handoff-button" title="Refresh the read-only Dropbox catalogue">↻ Sync library</button></form>
+            <form action={syncLibraryAction}><button className="handoff-button" title="Refresh the read-only Dropbox catalogue">↻ Sync Dropbox</button></form>
             <Link className="primary-button button-link" href="/content/new">＋ Create post</Link>
           </div>
         </header>

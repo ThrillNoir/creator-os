@@ -11,12 +11,13 @@ export async function issueFanslyBridgePairing(destination: FanslyPairingDestina
   const identity = await requireCreatorContext("manage_identity");
   const creatorId = identity.creator.creator_id;
   const { DB } = cloudflareEnv();
-  const assignment = await creatorPrepare(DB, creatorId, `SELECT oa.id AS account_id,abp.profile_id,mc.id AS connection_id
+  const assignment = await creatorPrepare(DB, creatorId, `SELECT oa.id AS account_id,oa.external_identity_confirmed_at,abp.profile_id,mc.id AS connection_id
     FROM operational_accounts oa JOIN account_browser_profiles abp ON abp.creator_id=oa.creator_id AND abp.account_id=oa.id
     JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id AND bp.status<>'revoked'
     LEFT JOIN messaging_connections mc ON mc.creator_id=oa.creator_id AND mc.account_id=oa.id AND mc.platform='fansly'
-    WHERE oa.creator_id=@creator AND oa.platform='fansly' ORDER BY oa.label LIMIT 1`).first<{ account_id: string; profile_id: string; connection_id: string | null }>();
-  if (!assignment) throw new Error("Assign this creator’s Fansly account to an active M1 Chrome profile first.");
+    WHERE oa.creator_id=@creator AND oa.platform='fansly' ORDER BY oa.label LIMIT 1`).first<{ account_id: string; external_identity_confirmed_at: string | null; profile_id: string; connection_id: string | null }>();
+  if (!assignment) throw new Error("Add this creator’s Fansly account and assign its THOT OS Chrome profile first.");
+  if (!assignment.external_identity_confirmed_at) throw new Error("Confirm the signed-in Fansly identity before pairing the bridge.");
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   const tokenHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");

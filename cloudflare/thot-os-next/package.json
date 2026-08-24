@@ -2,29 +2,38 @@
   "name": "thot-os-cloud",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "deploy": "node ../../scripts/deploy-component.mjs",
+    "upload": "node ../../scripts/deploy-component.mjs",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts && node ../../scripts/normalize-generated-types.mjs cloudflare-env.d.ts",
     "health:staging": "node scripts/check-authenticated-health.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "verify": "npm test && npm run build && opennextjs-cloudflare build"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "1.20.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.33.0",
     "next": "16.2.12",
+    "radix-ui": "^1.6.7",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "sharp": "0.35.3",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.1.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5",
-    "wrangler": "4.120.0"
+    "wrangler": "4.125.0"
   },
   "overrides": {
     "postcss": "8.5.26",

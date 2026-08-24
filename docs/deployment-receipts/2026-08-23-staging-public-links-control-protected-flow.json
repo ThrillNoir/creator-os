@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "publicLinksControl",
+  "service": "thot-os-public-links-control",
+  "environment": "staging",
+  "gitSha": "ca0274404f6a04e741466f475bec85bcc53a0537",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T11:20:25.941Z",
+  "worker": "thot-os-public-links-control-staging",
+  "workerVersion": "e086a698-44f7-4ca6-b6e6-2575afe4e416",
+  "deploymentTimestamp": "2026-08-23T11:30:30.450Z",
+  "migrationState": "No D1 migration applied; existing staging baseline retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "deployed",
+    "detail": "Deployment and isolated adult publication bindings verified; public workflow remains blocked pending human publication approval."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}

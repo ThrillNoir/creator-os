@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "npm run types && tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "verify:identity": "node scripts/verify-service-identity.mjs",
-    "deploy": "wrangler deploy",
-    "types": "wrangler types"
+    "deploy": "node ../../scripts/deploy-component.mjs",
+    "types": "wrangler types && node ../../scripts/normalize-generated-types.mjs worker-configuration.d.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
-    "wrangler": "4.120.0"
+    "wrangler": "4.125.0"
   }
 }

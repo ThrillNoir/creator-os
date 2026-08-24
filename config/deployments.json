@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 1,
+  "canonicalApplication": "cloudflare/thot-os-next",
+  "namingConvention": "thot-os-<component>-<environment>",
+  "environments": {
+    "local": {
+      "kind": "local",
+      "provisioned": true,
+      "deployable": false,
+      "description": "Local development uses local bindings or sanitized fixtures. It has no Cloudflare deployment target and must not inherit staging credentials.",
+      "resources": {
+        "d1": {},
+        "r2": [],
+        "queues": [],
+        "workers": {}
+      },
+      "components": {}
+    },
+    "staging": {
+      "kind": "cloudflare",
+      "provisioned": true,
+      "deployable": true,
+      "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
+      "description": "The only real Cloudflare integration environment. Production credentials and resources are forbidden here.",
+      "resources": {
+        "d1": {
+          "thot-os-staging": {
+            "id": "174532e8-5ada-4e30-abba-1276b3540b3f",
+            "migrationsDir": "../thot-os-app/migrations"
+          }
+        },
+        "r2": [
+          "thot-os-media-staging",
+          "thot-os-public-media-staging",
+          "thot-os-adult-media-staging",
+          "thot-os-previews-staging",
+          "thot-os-creator-intake-staging",
+          "thot-os-creator-packages-staging"
+        ],
+        "queues": [
+          "thot-os-intake-staging",
+          "thot-os-ai-jobs-staging",
+          "thot-os-preview-staging",
+          "thot-os-preview-dlq-staging"
+        ],
+        "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a"],
+        "analytics": ["thot-os-public-link-events-staging", "thot-os-adult-events-staging"],
+        "workers": {
+          "web": "thot-os-staging",
+          "instagram": "thot-os-instagram-scheduler-staging",
+          "reddit": "thot-os-reddit-scheduler-staging",
+          "telegram": "thot-os-telegram-bridge-staging",
+          "vault": "thot-os-vault-bridge-staging",
+          "publicLinks": "thot-os-public-links-staging",
+          "publicMedia": "thot-os-public-media-staging",
+          "publicLinksControl": "thot-os-public-links-control-staging",
+          "adultGateway": "thot-os-adult-gateway-staging",
+          "legacyWorker": "thot-os-legacy-staging",
+          "legacyGateway": "creator-os-staging-gateway"
+        }
+      },
+      "components": {
+        "web": {
+          "service": "thot-os-web",
+          "config": "cloudflare/thot-os-next/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-next",
+          "worker": "thot-os-staging",
+          "deployable": true,
+          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN", "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
+            "images": ["IMAGES"],
+            "queues": [],
+            "services": {
+              "WORKER_SELF_REFERENCE": "thot-os-staging",
+              "REDDIT_SCHEDULER": "thot-os-reddit-scheduler-staging",
+              "INSTAGRAM_SCHEDULER": "thot-os-instagram-scheduler-staging",
+              "TELEGRAM_BRIDGE": "thot-os-telegram-bridge-staging",
+              "VAULT_BRIDGE": "thot-os-vault-bridge-staging",
+              "PUBLIC_LINKS_CONTROL": "thot-os-public-links-control-staging"
+            }
+          }
+        },
+        "instagram": {
+          "service": "thot-os-instagram",
+          "config": "cloudflare/instagram-scheduler/wrangler.jsonc",
+          "directory": "cloudflare/instagram-scheduler",
+          "worker": "thot-os-instagram-scheduler-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-previews-staging"],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "reddit": {
+          "service": "thot-os-reddit",
+          "config": "cloudflare/reddit-scheduler/wrangler.jsonc",
+          "directory": "cloudflare/reddit-scheduler",
+          "worker": "thot-os-reddit-scheduler-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_REDDIT_AUTH_CONFIG_ID"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": [],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "telegram": {
+          "service": "thot-os-telegram",
+          "config": "cloudflare/telegram-bridge/wrangler.jsonc",
+          "directory": "cloudflare/telegram-bridge",
+          "worker": "thot-os-telegram-bridge-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_TELEGRAM_CONNECTED_ACCOUNT_ID", "COMPOSIO_TELEGRAM_USER_ID"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": [],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "vault": {
+          "service": "thot-os-vault",
+          "config": "cloudflare/vault-bridge/wrangler.jsonc",
+          "directory": "cloudflare/vault-bridge",
+          "worker": "thot-os-vault-bridge-staging",
+          "deployable": true,
+          "requiredSecrets": ["COMPOSIO_API_KEY"],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-previews-staging"],
+            "queues": ["thot-os-preview-staging", "thot-os-preview-dlq-staging"],
+            "services": {}
+          }
+        },
+        "publicLinks": {
+          "service": "thot-os-public-links",
+          "config": "cloudflare/thot-os-public-links/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-links",
+          "worker": "thot-os-public-links-staging",
+          "deployable": true,
+          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured staging allowlist and must never bind operational D1, adult KV, or private R2. Its only adult capability is a no-store redirect from /{slug}/more to the configured protected gateway.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": [],
+            "r2": [],
+            "queues": [],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1"],
+            "analytics": ["thot-os-public-link-events-staging"],
+            "services": {}
+          }
+        },
+        "publicMedia": {
+          "service": "thot-os-public-media",
+          "config": "cloudflare/thot-os-public-media/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-media",
+          "worker": "thot-os-public-media-staging",
+          "deployable": true,
+          "stagingBoundary": "Isolated SFW derivative delivery only for public-profile-staging.thathuboverthere.com/media/*. It may bind only the public-link projection KV and the dedicated public derivative bucket; it must never bind private authoring R2, D1, contact, or adult resources.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": [],
+            "r2": ["thot-os-public-media-staging"],
+            "queues": [],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1"],
+            "analytics": [],
+            "services": {}
+          }
+        },
+        "publicLinksControl": {
+          "service": "thot-os-public-links-control",
+          "config": "cloudflare/thot-os-public-links-control/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-links-control",
+          "worker": "thot-os-public-links-control-staging",
+          "deployable": true,
+          "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
+          "publicationPolicy": {
+            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator", "adelaide"] },
+            "adultProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["adelaide"] }
+          },
+          "protectedAdultRelease": true,
+          "requiredSecrets": [],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-public-media-staging", "thot-os-adult-media-staging"],
+            "queues": [],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a"],
+            "analytics": [],
+            "services": {}
+          }
+        },
+        "adultGateway": {
+          "service": "thot-os-adult-gateway",
+          "config": "cloudflare/thot-os-adult-gateway/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-adult-gateway",
+          "worker": "thot-os-adult-gateway-staging",
+          "deployable": true,
+          "stagingBoundary": "Protected adult staging gateway for more-staging.thathuboverthere.com only. It may bind only the isolated adult projection KV, adult derivative R2 bucket, and adult event dataset. It must never bind D1, authoring R2, safe public KV, contact KV, or the SFW public Worker.",
+          "requiredSecrets": ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"],
+          "resources": {
+            "d1": [],
+            "r2": ["thot-os-adult-media-staging"],
+            "queues": [],
+            "kv": ["960ce926cd234170aa789a8eb0ca223a"],
+            "analytics": ["thot-os-adult-events-staging"],
+            "services": {}
+          }
+        },
+        "legacyWorker": {
+          "service": "thot-os-legacy-worker",
+          "config": "cloudflare/thot-os-app/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-app",
+          "worker": "thot-os-legacy-staging",
+          "deployable": false,
+          "retirement": "Preserve migration/reference source. It must never target the canonical web Worker.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
+            "queues": [],
+            "services": {}
+          }
+        },
+        "legacyGateway": {
+          "service": "thot-os-legacy-gateway",
+          "config": "cloudflare/staging-gateway/wrangler.jsonc",
+          "directory": "cloudflare/staging-gateway",
+          "worker": "creator-os-staging-gateway",
+          "deployable": false,
+          "retirement": "Known stale/broken callback queue architecture. Replace under a later Local Node job-plane change; do not repair or deploy in Phase 1A.",
+          "requiredSecrets": ["STAGING_GATEWAY_TOKEN"],
+          "resources": {
+            "d1": [],
+            "r2": ["thot-os-creator-intake-staging", "thot-os-creator-packages-staging"],
+            "queues": ["thot-os-intake-staging", "thot-os-ai-jobs-staging"],
+            "services": {}
+          }
+        }
+      }
+    },
+    "production": {
+      "kind": "cloudflare",
+      "provisioned": true,
+      "deployable": true,
+      "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
+      "description": "Stage 5 foundations only. The public-links Worker is route-less and contains no profile projection; D1, private R2, KV and Analytics Engine are isolated from staging. No custom domain, secret, social job or creator profile is deployed.",
+      "publicLinkDomain": {
+        "hostname": "thathuboverthere.com",
+        "profilePath": "/<creator-slug>",
+        "exclusiveComponent": "publicLinks",
+        "state": "reserved-unattached",
+        "privateDashboard": "must use a separately selected hostname, a separately deployed private Worker and a dedicated Cloudflare Access policy; it must never attach to this public link domain"
+      },
+      "resources": {
+        "d1": {
+          "thot-os-production": { "id": "4a353a1b-4a28-4d85-ab9a-776cbb59d3b2", "migrationsDir": "../thot-os-app/migrations" }
+        },
+        "r2": ["thot-os-media-production", "thot-os-previews-production"],
+        "queues": [],
+        "kv": ["be71a3d6f07c4c708bc3e053d7ef4be5"],
+        "analytics": ["thot-os-public-link-events-production"],
+        "workers": {
+          "publicLinks": "thot-os-public-links-production"
+        }
+      },
+      "components": {
+        "publicLinks": {
+          "service": "thot-os-public-links",
+          "config": "cloudflare/thot-os-public-links/wrangler.production.jsonc",
+          "directory": "cloudflare/thot-os-public-links",
+          "worker": "thot-os-public-links-production",
+          "deployable": true,
+          "productionBoundary": "Route-less foundation only. thathuboverthere.com is reserved exclusively for public /<creator-slug> profiles and must never host the private THOT OS dashboard. The Worker has no D1 or private R2 binding, no custom domain and no creator profile projection. A public route requires a separately approved production launch release.",
+          "requiredSecrets": [],
+          "resources": {
+            "d1": [],
+            "r2": [],
+            "queues": [],
+            "kv": ["be71a3d6f07c4c708bc3e053d7ef4be5"],
+            "analytics": ["thot-os-public-link-events-production"],
+            "services": {}
+          }
+        }
+      }
+    }
+  }
+}

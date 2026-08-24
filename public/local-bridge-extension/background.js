@@ -142,33 +142,15 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
     return true;
   }
   if (message?.type !== "creator-os-claim" || !["onlyfans","fansly"].includes(message.platform)) return;
-  fetch("http://127.0.0.1:3000/api/local-bridge/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({platform:message.platform})})
-    .then(async (response) => {
-      if (!response.ok) throw new Error("claim failed");
-      const config = await response.json();
-      await setStoredBridge(config);
-      sendResponse({ok:true,config});
-    })
-    .catch(() => sendResponse({ok:false}));
+  sendResponse({ok:false,error:"Open Creator OS and start an explicit pairing."});
   return true;
 });
 
-const claimInFlight={};
 const claim = async (platform) => {
   console.info("Creator OS collector: checking authentication",{platform});
   const stored = await getStoredBridge(platform);
   if (stored?.token) return stored;
-  if(stored?.cloud)throw new Error(`Open and pair ${platform} from THOT OS again.`);
-  if(claimInFlight[platform])return claimInFlight[platform];
-  claimInFlight[platform]=(async()=>{
-    const response = await fetch("http://127.0.0.1:3000/api/local-bridge/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({platform,creatorId:stored?.creatorId,accountId:stored?.accountId})});
-    if (!response.ok) throw new Error("collector claim failed");
-    const config = await response.json();
-    await setStoredBridge(config);
-    return config;
-  })();
-  try{return await claimInFlight[platform];}
-  finally{delete claimInFlight[platform];}
+  throw new Error(`Open and pair ${platform} from Creator OS again.`);
 };
 
 const snapshotPage = (platform) => {
@@ -344,6 +326,41 @@ const prepareFanslyVault = async () => {
   return {ready:false,error:"Fansly did not expose one media input after the native vault sequence.",receipt:{...diagnostic,clickedAlbum,clickedUpload,clickedPlus,url:location.href}};
 };
 
+const readFanslyVaultState = () => {
+  const uploadInput=document.querySelector('app-media-upload-input input[type="file"]');
+  const uploadContainer=uploadInput?.closest("app-media-upload-input");
+  const savedMediaIds=Array.from(document.querySelectorAll("app-media-vault app-media[data-media-id]"))
+    .map((element)=>element.getAttribute("data-media-id")).filter(Boolean);
+  return {savedMediaIds,uploadTileCount:uploadContainer?.querySelectorAll("app-account-media-create-template").length||0};
+};
+
+const verifyFanslyVaultAttachment = async (filename,baseline) => {
+  const findMediaInputs=()=>Array.from(document.querySelectorAll('input[type="file"]')).filter((input)=>!input.disabled).filter((input)=>{
+    const context=`${input.accept||""} ${input.getAttribute("aria-label")||""} ${input.closest("label")?.textContent||""}`;
+    return !/avatar|profile|cover|banner/i.test(context)&&(!input.accept||/image|video|\.jpg|\.jpeg|\.png|\.webp|\.heic|\.mp4|\.mov/i.test(input.accept));
+  });
+  const baselineIds=new Set(Array.isArray(baseline?.savedMediaIds)?baseline.savedMediaIds:[]);
+  const baselineTileCount=Number(baseline?.uploadTileCount||0);
+  let previewObserved=false;
+  for(let attempt=0;attempt<480;attempt++){
+    const mediaInputs=findMediaInputs();
+    if(mediaInputs.length!==1)return {status:"failed",error:`Expected one native Fansly media input; found ${mediaInputs.length}.`,receipt:{mediaInputCount:mediaInputs.length,url:location.href}};
+    const input=mediaInputs[0];
+    const container=input.closest("app-media-upload-input")||input.parentElement;
+    const retained=input.files?.length===1&&input.files[0]?.name===filename;
+    const tiles=container?Array.from(container.querySelectorAll("app-account-media-create-template")):[];
+    const newTiles=tiles.slice(Math.min(baselineTileCount,tiles.length));
+    const healthyPreviews=newTiles.flatMap((tile)=>Array.from(tile.querySelectorAll("img,video"))).filter((media)=>media instanceof HTMLVideoElement?media.readyState>=2:media.complete&&media.naturalWidth>0);
+    if(retained||healthyPreviews.length>0||tiles.length>baselineTileCount)previewObserved=true;
+    const savedMediaIds=Array.from(document.querySelectorAll("app-media-vault app-media[data-media-id]"))
+      .map((element)=>element.getAttribute("data-media-id")).filter(Boolean);
+    const externalMediaId=savedMediaIds.find((mediaId)=>!baselineIds.has(mediaId));
+    if(externalMediaId)return {status:"staged",receipt:{filename,inputAccepted:true,inputRetained:retained,previewObserved,savedVaultRecord:true,externalMediaId,savedMediaCount:savedMediaIds.length,url:location.href}};
+    await new Promise((resolve)=>setTimeout(resolve,250));
+  }
+  return {status:"failed",error:"Fansly did not create a saved vault record for the approved file within two minutes.",receipt:{filename,previewObserved,url:location.href}};
+};
+
 const stageVaultFile = async (mediaUrl,token,installationId,filename) => {
   const findMediaInputs=()=>Array.from(document.querySelectorAll('input[type="file"]')).filter((input)=>!input.disabled).filter((input)=>{
     const context=`${input.accept||""} ${input.getAttribute("aria-label")||""} ${input.closest("label")?.textContent||""}`;
@@ -406,8 +423,22 @@ const processVaultQueue=async(tabId,url)=>{
     job=(await response.json()).job;
     if(!job)return {ok:true,state:"empty",message:"No approved vault upload is waiting for this creator."};
     console.info("Creator OS collector: staging approved vault asset",{platform,jobId:job.id,filename:job.basename});
-    const executed=await chrome.scripting.executeScript({target:{tabId},func:stageVaultFile,args:[job.mediaUrl,config.token,config.installationId,job.basename]});
-    const result=executed?.[0]?.result??{status:"failed",error:"No native vault execution receipt."};
+    let result;
+    if(platform==="fansly"){
+      const baselineResults=await chrome.scripting.executeScript({target:{tabId},func:readFanslyVaultState});
+      const baseline=baselineResults?.[0]?.result;
+      if(!baseline)throw new Error("Fansly did not return its saved-vault baseline before attachment.");
+      const download=await downloadBridgeMedia(config,job);
+      try{
+        await attachLocalFileToNativeInput(tabId,download.localMediaPath,"fansly");
+        const executed=await chrome.scripting.executeScript({target:{tabId},func:verifyFanslyVaultAttachment,args:[job.basename,baseline]});
+        result=executed?.[0]?.result??{status:"failed",error:"Fansly did not return an attachment receipt after the native file was set."};
+        if(result.receipt)result.receipt={...result.receipt,bytes:download.downloadBytes,nativeAttachment:true};
+      }finally{await discardBridgeDownload(download.downloadId);}
+    }else{
+      const executed=await chrome.scripting.executeScript({target:{tabId},func:stageVaultFile,args:[job.mediaUrl,config.token,config.installationId,job.basename]});
+      result=executed?.[0]?.result??{status:"failed",error:"No native vault execution receipt."};
+    }
     const receiptResponse=await bridgeRequest(config,config.cloud?`/jobs/${encodeURIComponent(job.id)}/receipt`:"/api/local-bridge/vault",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jobId:job.id,status:result.status,error:result.error,receipt:result.receipt})});
     if(!receiptResponse.ok)return {ok:false,state:"receipt_error",error:"The file was handled, but Creator OS could not record the result."};
     return {ok:result.status==="staged",state:result.status,filename:job.basename,error:result.error};
@@ -419,128 +450,123 @@ const processVaultQueue=async(tabId,url)=>{
   finally{vaultUploadRunning=false;}
 };
 
-const prepareAndSubmitRedditPost=async(job,token,installationId)=>{
-  const clean=(value)=>String(value||"").replace(/\s+/g," ").trim();
-  const visible=(element)=>{const rect=element.getBoundingClientRect();const style=getComputedStyle(element);return rect.width>0&&rect.height>0&&style.display!=="none"&&style.visibility!=="hidden";};
-  const deepAll=(selector)=>{
-    const roots=[document];
-    const seen=new Set();
-    for(let index=0;index<roots.length;index++){
-      const root=roots[index];
-      for(const element of root.querySelectorAll("*"))if(element.shadowRoot&&!seen.has(element.shadowRoot)){seen.add(element.shadowRoot);roots.push(element.shadowRoot);}
-    }
-    return roots.flatMap((root)=>Array.from(root.querySelectorAll(selector)));
-  };
-  const setControlValue=(control,value)=>{
-    control.focus();
-    if(control instanceof HTMLInputElement){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")?.set?.call(control,value);}
-    else if(control instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")?.set?.call(control,value);}
-    else control.textContent=value;
-    control.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:value}));
-    control.dispatchEvent(new Event("change",{bubbles:true}));
-  };
-  let observedHandle="";
-  for(const endpoint of ["/api/me.json","/user/me/about.json"]){
-    try{
-      const response=await fetch(endpoint,{credentials:"include",headers:{accept:"application/json"}});
-      const payload=await response.json();
-      observedHandle=clean(payload?.data?.name||payload?.name);
-      if(observedHandle)break;
-    }catch{}
-  }
-  if(!observedHandle){
-    const profileLinks=deepAll('a[href*="/user/"]').map((link)=>new URL(link.href,location.origin).pathname.match(/^\/user\/([^/]+)/i)?.[1]).filter(Boolean);
-    observedHandle=clean(profileLinks[0]);
-  }
-  const expected=clean(job.expected_handle).replace(/^u\//i,"").replace(/^@/,"").toLowerCase();
-  if(!observedHandle||observedHandle.toLowerCase()!==expected)return {submitted:false,error:`Reddit browser identity ${observedHandle||"could not be read"}; expected u/${expected}.`,observedHandle,receipt:{url:location.href}};
-  const response=await fetch(job.mediaUrl,{headers:{authorization:`Bearer ${token}`,"x-thot-os-installation-id":installationId}});
-  if(!response.ok)return {submitted:false,error:`THOT OS media download failed with ${response.status}.`,observedHandle,receipt:{url:location.href}};
-  const blob=await response.blob();
-  const file=new File([blob],job.basename,{type:blob.type||"application/octet-stream",lastModified:Date.now()});
-  let mediaInput,titleControl,bodyControl;
-  for(let attempt=0;attempt<80;attempt++){
-    const mediaInputs=deepAll('input[type="file"]').filter((input)=>!input.disabled&&input.getRootNode()?.host?.tagName==="R-POST-MEDIA-INPUT");
-    const titleControls=deepAll('input,textarea,[contenteditable="true"]').filter((control)=>{
-      const label=clean(`${control.getAttribute("name")||""} ${control.getAttribute("aria-label")||""} ${control.getAttribute("placeholder")||""}`);
-      return visible(control)&&/(^|\s)title(\s|$)/i.test(label)&&!/search/i.test(label);
-    });
-    const bodyControls=deepAll('textarea,[contenteditable="true"]').filter((control)=>{
-      const label=clean(`${control.getAttribute("name")||""} ${control.getAttribute("aria-label")||""} ${control.getAttribute("placeholder")||""}`);
-      return visible(control)&&/body|post body text field/i.test(label)&&!/search/i.test(label);
-    });
-    if(mediaInputs.length===1&&titleControls.length===1){mediaInput=mediaInputs[0];titleControl=titleControls[0];bodyControl=bodyControls.length===1?bodyControls[0]:undefined;break;}
-    await new Promise((resolve)=>setTimeout(resolve,250));
-  }
-  if(!mediaInput||!titleControl)return {submitted:false,error:"Reddit did not expose one native media input and one title field.",observedHandle,receipt:{url:location.href,fileInputs:deepAll('input[type="file"]').length}};
-  const transfer=new DataTransfer();transfer.items.add(file);mediaInput.files=transfer.files;
-  mediaInput.dispatchEvent(new Event("input",{bubbles:true}));mediaInput.dispatchEvent(new Event("change",{bubbles:true}));
-  setControlValue(titleControl,job.title);
-  if(job.caption&&bodyControl)setControlValue(bodyControl,job.caption);
-  if(job.content_rating==="nsfw"){
-    const nsfwButtons=deepAll("button").filter((button)=>visible(button)&&/^NSFW$/i.test(clean(`${button.textContent||""} ${button.getAttribute("aria-label")||""}`)));
-    if(nsfwButtons.length===1&&nsfwButtons[0].getAttribute("aria-pressed")!=="true")nsfwButtons[0].click();
-  }
-  let postButton;
-  for(let attempt=0;attempt<120;attempt++){
-    const candidates=deepAll("button").filter((button)=>visible(button)&&!button.disabled&&/^Post$/i.test(clean(button.textContent||button.getAttribute("aria-label"))));
-    if(candidates.length===1){postButton=candidates[0];break;}
-    await new Promise((resolve)=>setTimeout(resolve,250));
-  }
-  if(!postButton)return {submitted:false,error:"Reddit did not expose one enabled Post button after the native file was attached.",observedHandle,receipt:{url:location.href,filename:file.name,bytes:file.size}};
-  postButton.click();
-  return {submitted:true,observedHandle,receipt:{composerUrl:location.href,filename:file.name,bytes:file.size,type:file.type,nativeInputAccepted:true,bodyFilled:Boolean(job.caption&&bodyControl)}};
-};
-
-const waitForRedditReceipt=(tabId,timeoutMs=60000)=>new Promise((resolve,reject)=>{
-  const match=(url)=>typeof url==="string"&&/https:\/\/(?:www\.)?reddit\.com\/r\/[^/]+\/comments\/[a-z0-9]+/i.test(url);
-  const finish=(value,error)=>{clearTimeout(timer);clearInterval(poller);chrome.tabs.onUpdated.removeListener(listener);if(error)reject(error);else resolve(value);};
-  const listener=(changedTabId,changeInfo,tab)=>{if(changedTabId===tabId&&match(changeInfo.url||tab.url))finish(changeInfo.url||tab.url);};
-  const poller=setInterval(()=>chrome.tabs.get(tabId).then((tab)=>{if(match(tab.url))finish(tab.url);}).catch(()=>{}),1000);
-  const timer=setTimeout(()=>finish(undefined,new Error("Reddit submission did not return a post URL within 60 seconds.")),timeoutMs);
-  chrome.tabs.onUpdated.addListener(listener);
-});
-
 let redditPublishRunning=false;
+const waitForDownload=(downloadId,timeoutMs=120000)=>new Promise((resolve,reject)=>{
+  const finish=(download,error)=>{clearTimeout(timer);chrome.downloads.onChanged.removeListener(listener);if(error)reject(error);else resolve(download);};
+  const read=()=>chrome.downloads.search({id:downloadId}).then(([download])=>{
+    if(download?.state==="complete"&&download.filename)return finish(download);
+    if(download?.state==="interrupted")return finish(undefined,new Error(`Chrome could not download the approved media (${download.error||"interrupted"}).`));
+  }).catch((error)=>finish(undefined,error));
+  const listener=(delta)=>{if(delta.id===downloadId&&(delta.state||delta.error))read();};
+  const timer=setTimeout(()=>finish(undefined,new Error("Chrome did not finish downloading the approved media within two minutes.")),timeoutMs);
+  chrome.downloads.onChanged.addListener(listener);read();
+});
+const discardBridgeDownload=async(downloadId)=>{
+  if(!downloadId)return;
+  await chrome.downloads.removeFile(downloadId).catch(()=>{});
+  await chrome.downloads.erase({id:downloadId}).catch(()=>{});
+};
+const downloadBridgeMedia=async(config,job)=>{
+  const basename=String(job.basename||"approved-media").replace(/[\\/:*?"<>|\u0000-\u001f]/g,"-").slice(-140);
+  const jobId=String(job.id||"approved-job").replace(/[\\/:*?"<>|\u0000-\u001f]/g,"-").slice(-100);
+  const downloadId=await chrome.downloads.download({
+    url:job.mediaUrl,
+    filename:`THOT OS Bridge/${jobId}-${basename}`,
+    conflictAction:"overwrite",saveAs:false,
+    headers:[{name:"Authorization",value:`Bearer ${config.token}`},...(config.installationId?[{name:"X-THOT-OS-Installation-ID",value:config.installationId}]:[])],
+  });
+  try{
+    const download=await waitForDownload(downloadId);
+    return {downloadId,localMediaPath:download.filename,downloadBytes:Number(download.fileSize||job.bytes||0)};
+  }catch(error){
+    await discardBridgeDownload(downloadId);
+    throw error;
+  }
+};
+const attachLocalFileToNativeInput=async(tabId,localMediaPath,platform)=>{
+  const target={tabId};
+  let attached=false;
+  try{
+    await chrome.debugger.attach(target,"1.3");attached=true;
+    await chrome.debugger.sendCommand(target,"DOM.enable");
+    const platformLiteral=JSON.stringify(platform);
+    const remote=await chrome.debugger.sendCommand(target,"Runtime.evaluate",{
+      expression:`(()=>{const platform=${platformLiteral};const roots=[document],seen=new Set();for(let i=0;i<roots.length;i++){for(const element of roots[i].querySelectorAll('*'))if(element.shadowRoot&&!seen.has(element.shadowRoot)){seen.add(element.shadowRoot);roots.push(element.shadowRoot);}}const inputs=roots.flatMap(root=>Array.from(root.querySelectorAll('input[type="file"]'))).filter(input=>{if(input.disabled)return false;if(platform==='reddit'){const host=input.getRootNode()?.host;if(!host||!['POST-COMPOSER-TOOLBAR-BUTTON-IMAGE','R-POST-MEDIA-INPUT'].includes(host.tagName))return false;const rect=host.getBoundingClientRect();const style=getComputedStyle(host);return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden';}const context=(input.accept||'')+' '+(input.getAttribute('aria-label')||'')+' '+(input.closest('label')?.textContent||'');return !/avatar|profile|cover|banner/i.test(context)&&(!input.accept||/image|video|\\.jpg|\\.jpeg|\\.png|\\.webp|\\.heic|\\.mp4|\\.mov/i.test(input.accept));});return inputs.length===1?inputs[0]:null;})()`,
+      returnByValue:false,
+    });
+    if(!remote?.result?.objectId)throw new Error(`${platform==="fansly"?"Fansly":"Reddit"} did not expose exactly one active native media input.`);
+    await chrome.debugger.sendCommand(target,"DOM.setFileInputFiles",{files:[localMediaPath],objectId:remote.result.objectId});
+  }finally{if(attached)await chrome.debugger.detach(target).catch(()=>{});}
+};
+const attachRedditMedia=async(tabId,jobId)=>{
+  const stored=await chrome.storage.local.get("creatorOsRedditPending");
+  const pending=stored.creatorOsRedditPending;
+  if(!pending?.job?.id||pending.job.id!==jobId||pending.tabId!==tabId||!pending.localMediaPath)throw new Error("The approved Reddit media is not bound to this composer tab.");
+  await attachLocalFileToNativeInput(tabId,pending.localMediaPath,"reddit");
+  await chrome.storage.local.set({creatorOsRedditPending:{...pending,state:"media_attached",mediaAttachedAt:Date.now()}});
+  return {ok:true,bytes:pending.downloadBytes||pending.job.bytes||0};
+};
+const discardRedditDownload=async(jobId)=>{
+  const stored=await chrome.storage.local.get("creatorOsRedditPending");
+  const pending=stored.creatorOsRedditPending;
+  if(pending?.job?.id!==jobId||!pending.downloadId)return;
+  await discardBridgeDownload(pending.downloadId);
+  await chrome.storage.local.set({creatorOsRedditPending:{...pending,downloadId:undefined,localMediaPath:undefined}});
+};
 const processRedditQueue=async()=>{
   if(redditPublishRunning)return {ok:false,state:"busy"};
   redditPublishRunning=true;
-  let config,job,createdTab,clicked=false,observedHandle="";
+  let config,job,createdTab;
   try{
     config=await getStoredBridge("reddit");
     if(!config?.token)return {ok:false,state:"unpaired",error:"Pair Adelaide’s Reddit browser from THOT OS first."};
+    const pendingState=await chrome.storage.local.get("creatorOsRedditPending");
+    const pending=pendingState.creatorOsRedditPending;
+    if(pending?.job?.id){
+      if(Date.now()-Number(pending.claimedAt||0)<5*60*1000)return {ok:true,state:"pending",jobId:pending.job.id};
+      await bridgeRequest(config,`/jobs/${encodeURIComponent(pending.job.id)}/receipt`,{
+        method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({
+          status:"failed",error:"The paired browser did not finish the Reddit composer within five minutes.",
+          observedHandle:pending.job.expected_handle,uncertain:pending.state==="submitted",receipt:{state:pending.state||"unknown",url:pending.url||null},
+        }),
+      }).catch(()=>{});
+      await discardRedditDownload(pending.job.id);
+      await chrome.storage.local.remove("creatorOsRedditPending");
+    }
     const claimResponse=await bridgeRequest(config,"/jobs/claim",{headers:{"x-thot-os-reddit-client":"native-v1"}});
     if(claimResponse.status===401){await removeStoredBridge("reddit");return {ok:false,state:"unpaired",error:"Reddit pairing has expired."};}
     if(!claimResponse.ok)return {ok:false,state:"bridge_error",error:`THOT OS returned ${claimResponse.status}.`};
     job=(await claimResponse.json()).job;
     if(!job)return {ok:true,state:"empty"};
+    const download=await downloadBridgeMedia(config,job);
+    const pendingJob={job,claimedAt:Date.now(),state:"claimed",...download};
+    await chrome.storage.local.set({creatorOsRedditPending:pendingJob});
     createdTab=await chrome.tabs.create({url:`https://www.reddit.com/r/${encodeURIComponent(job.community_name)}/submit?type=IMAGE`,active:false});
     if(!createdTab.id)throw new Error("Chrome did not create the Reddit composer tab.");
-    await waitForTab(createdTab.id,30000);
-    await new Promise((resolve)=>setTimeout(resolve,1500));
-    const executed=await chrome.scripting.executeScript({target:{tabId:createdTab.id},func:prepareAndSubmitRedditPost,args:[job,config.token,config.installationId]});
-    const result=executed?.[0]?.result??{submitted:false,error:"No native Reddit execution receipt."};
-    observedHandle=result.observedHandle||"";
-    if(!result.submitted){
-      await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:result.error,observedHandle,receipt:result.receipt})});
-      return {ok:false,state:"failed",error:result.error};
-    }
-    clicked=true;
-    const externalUrl=await waitForRedditReceipt(createdTab.id);
-    const receiptResponse=await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"published",externalUrl,observedHandle,receipt:{...result.receipt,externalUrl}})});
-    if(!receiptResponse.ok)throw new Error("THOT OS could not validate the Reddit receipt.");
-    await chrome.tabs.remove(createdTab.id).catch(()=>{});createdTab=undefined;
-    return {ok:true,state:"published",externalUrl};
+    await chrome.storage.local.set({creatorOsRedditPending:{...pendingJob,tabId:createdTab.id,url:createdTab.url}});
+    return {ok:true,state:"composer_opened",jobId:job.id};
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
     console.error("THOT OS collector: native Reddit publishing failed",error);
-    if(config?.token&&job?.id)await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:message,observedHandle,uncertain:clicked,receipt:{url:createdTab?.url}})}).catch(()=>{});
+    if(config?.token&&job?.id){
+      await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:message,observedHandle:job.expected_handle,receipt:{url:createdTab?.url}})}).catch(()=>{});
+      await chrome.storage.local.remove("creatorOsRedditPending");
+    }
     return {ok:false,state:"failed",error:message};
-  }finally{
-    if(createdTab?.id&&!clicked)await chrome.tabs.remove(createdTab.id).catch(()=>{});
-    redditPublishRunning=false;
-  }
+  }finally{redditPublishRunning=false;}
 };
+
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(message?.type==="creator-os-reddit-attach"){
+    if(!sender.tab?.id||!/^https:\/\/(?:www\.)?reddit\.com\//i.test(sender.tab.url||"")){sendResponse({ok:false,error:"Chrome could not identify the Reddit composer tab."});return;}
+    attachRedditMedia(sender.tab.id,String(message.jobId||"")).then(sendResponse).catch((error)=>sendResponse({ok:false,error:error instanceof Error?error.message:String(error)}));
+    return true;
+  }
+  if(message?.type==="creator-os-reddit-discard-download"){
+    discardRedditDownload(String(message.jobId||"")).then(()=>sendResponse({ok:true})).catch((error)=>sendResponse({ok:false,error:error instanceof Error?error.message:String(error)}));
+    return true;
+  }
+});
 
 chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   if(message?.type==="creator-os-vault-status"){

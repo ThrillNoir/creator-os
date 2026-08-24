@@ -7,6 +7,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "secrets": {
+    "required": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID"]
+  },
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "invocation_logs": true },

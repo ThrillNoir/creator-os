@@ -8,9 +8,483 @@ import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { destinations, type Destination } from "@/lib/library";
 import { issueFanslyBridgePairing } from "@/lib/fansly-pairing";
+import { fetchInternalService } from "@/lib/internal-service";
+import { approvedHttpsDestination } from "@/lib/profile-link-input";
+import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
 
 function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
+}
+
+type PublicProfileLinkInput = {
+  id: string;
+  stableId: string;
+  label: string;
+  destinationUrl: string;
+  destinationHost: string;
+  sortOrder: number;
+};
+
+type PublicContactInput = { channel: "sms" | "email"; value: string };
+
+export type PublicProfileDraftValues = {
+  slug: string;
+  displayName: string;
+  headline: string;
+  bio: string;
+  bookingPhone: string;
+  bookingEmail: string;
+  linkLabels: string[];
+  linkDestinations: string[];
+  linkStableIds: string[];
+};
+
+export type PublicProfileDraftState = {
+  status: "idle" | "error";
+  message: string | null;
+  reasonCode: string | null;
+  fieldErrors: Record<string, string>;
+  values: PublicProfileDraftValues | null;
+};
+
+export type AdultProfileDraftValues = {
+  bio: string;
+  linkLabels: string[];
+  linkDestinations: string[];
+  linkStableIds: string[];
+};
+
+export type AdultProfileDraftState = {
+  status: "idle" | "error";
+  message: string | null;
+  reasonCode: string | null;
+  fieldErrors: Record<string, string>;
+  values: AdultProfileDraftValues | null;
+};
+
+type AdultProfileLinkInput = {
+  stableId: string;
+  label: string;
+  destinationUrl: string;
+  destinationHost: string;
+  sortOrder: number;
+};
+
+type PublicProfileVersionRow = {
+  id: string;
+  profile_id: string;
+  creator_id: string;
+  slug: string;
+  published_version_id: string | null;
+  version_number: number;
+  display_name: string;
+  headline: string;
+  bio: string;
+  content_checksum: string;
+  status: string;
+};
+
+const publicProfileSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const publicProfileId = /^[a-zA-Z0-9_-]{1,160}$/;
+
+function publicText(value: FormDataEntryValue | null, maximum: number, label: string, { required = false, collapseWhitespace = false }: { required?: boolean; collapseWhitespace?: boolean } = {}) {
+  const text = String(value ?? "").replace(/\r\n?/g, "\n");
+  const normalized = (collapseWhitespace ? text.replace(/\s+/g, " ") : text).trim();
+  if (required && !normalized) throw new Error(`Enter a ${label}.`);
+  if (normalized.length > maximum) throw new Error(`Enter a ${label} of up to ${maximum} characters.`);
+  return normalized;
+}
+
+function publicProfileSlugValue(value: FormDataEntryValue | null) {
+  const slug = String(value ?? "").trim().toLowerCase();
+  if (!publicProfileSlug.test(slug) || slug.length > 80) throw new Error("Use a public URL slug of lowercase letters, numbers and single hyphens.");
+  return slug;
+}
+
+function submittedPublicProfileDraftValues(formData: FormData): PublicProfileDraftValues {
+  return {
+    slug: String(formData.get("slug") ?? ""),
+    displayName: String(formData.get("displayName") ?? ""),
+    headline: String(formData.get("headline") ?? ""),
+    bio: String(formData.get("bio") ?? ""),
+    bookingPhone: String(formData.get("bookingPhone") ?? ""),
+    bookingEmail: String(formData.get("bookingEmail") ?? ""),
+    linkLabels: formData.getAll("linkLabel").map(String),
+    linkDestinations: formData.getAll("linkDestination").map(String),
+    linkStableIds: formData.getAll("linkStableId").map(String),
+  };
+}
+
+function validationError(values: PublicProfileDraftValues, fieldErrors: Record<string, string>): PublicProfileDraftState {
+  return { status: "error", message: "Fix the highlighted fields and save again.", reasonCode: "profile_validation_failed", fieldErrors, values };
+}
+
+type ValidPublicProfileDraft = {
+  slug: string;
+  requestedDisplayName: string;
+  headline: string;
+  bio: string;
+  links: PublicProfileLinkInput[];
+  contacts: PublicContactInput[];
+  appearance: ReturnType<typeof publicProfileAppearance>;
+};
+
+type PublicProfileDraftValidation =
+  | { error: PublicProfileDraftState }
+  | ValidPublicProfileDraft;
+
+function validatePublicProfileDraft(formData: FormData, values: PublicProfileDraftValues): PublicProfileDraftValidation {
+  const fieldErrors: Record<string, string> = {};
+  const validate = <T>(field: string, run: () => T): T | null => {
+    try { return run(); } catch (error) {
+      fieldErrors[field] = error instanceof Error ? error.message : "Enter a valid value.";
+      return null;
+    }
+  };
+  const slug = validate("slug", () => publicProfileSlugValue(values.slug));
+  const requestedDisplayName = validate("displayName", () => publicText(values.displayName, 120, "display name", { collapseWhitespace: true }));
+  const headline = validate("headline", () => publicText(values.headline, 280, "headline"));
+  const bio = validate("bio", () => publicText(values.bio, 2000, "bio"));
+  const phone = validate("bookingPhone", () => publicText(values.bookingPhone, 20, "phone number", { collapseWhitespace: true }));
+  const email = validate("bookingEmail", () => publicText(values.bookingEmail, 254, "email address", { collapseWhitespace: true }).toLowerCase());
+  if (phone && !/^\+[1-9]\d{5,14}$/.test(phone)) fieldErrors.bookingPhone = "Use an international phone number, for example +61400000000.";
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fieldErrors.bookingEmail = "Enter one valid email address.";
+  const labels = values.linkLabels.map((value) => value.replace(/\s+/g, " ").trim());
+  const destinations = values.linkDestinations.map((value) => value.trim());
+  const stableIds = values.linkStableIds.map((value) => value.trim());
+  const links: PublicProfileLinkInput[] = [];
+  if (labels.length !== destinations.length || labels.length !== stableIds.length || labels.length > 8) {
+    fieldErrors.links = "A public profile can contain up to 8 links.";
+  } else {
+    labels.forEach((label, index) => {
+      const destination = destinations[index];
+      if (!label && !destination) return;
+      if (!label) { fieldErrors[`linkLabel.${index}`] = "Enter a label for this link."; return; }
+      if (!destination) { fieldErrors[`linkDestination.${index}`] = "Enter a complete HTTPS destination for this link."; return; }
+      if (label.length > 80) { fieldErrors[`linkLabel.${index}`] = "Use a link label of 80 characters or fewer."; return; }
+      let approved: ReturnType<typeof approvedHttpsDestination>;
+      try { approved = approvedHttpsDestination(destination); } catch (error) {
+        fieldErrors[`linkDestination.${index}`] = error instanceof Error ? error.message : "Enter a complete HTTPS destination.";
+        return;
+      }
+      const stableId = stableIds[index] || crypto.randomUUID();
+      if (!publicProfileId.test(stableId)) { fieldErrors.links = "A public link identity is invalid. Refresh the page and try again."; return; }
+      links.push({ id: crypto.randomUUID(), stableId, label, destinationUrl: approved.destinationUrl, destinationHost: approved.destinationHost, sortOrder: index });
+    });
+  }
+  const appearance = validate("appearance", () => publicProfileAppearance(formData));
+  if (Object.keys(fieldErrors).length || !slug || requestedDisplayName === null || headline === null || bio === null || phone === null || email === null || !appearance) return { error: validationError(values, fieldErrors) };
+  const contacts = [phone ? { channel: "sms" as const, value: phone } : null, email ? { channel: "email" as const, value: email } : null].filter(Boolean) as PublicContactInput[];
+  return { slug, requestedDisplayName, headline, bio, links, contacts, appearance };
+}
+
+function publicProfileAppearance(formData: FormData) {
+  return parseProfileAppearance({
+    themeKey: formData.get("appearanceThemeKey"),
+    buttonStyle: formData.get("appearanceButtonStyle"),
+    backgroundMode: formData.get("appearanceBackgroundMode"),
+    backgroundColor: formData.get("appearanceBackgroundColor"),
+    primaryColor: formData.get("appearancePrimaryColor"),
+    textColor: formData.get("appearanceTextColor"),
+    cardColor: formData.get("appearanceCardColor"),
+    radiusScale: formData.get("appearanceRadiusScale"),
+  });
+}
+
+function adultProfileAppearance(formData: FormData) {
+  return parseProfileAppearance({
+    themeKey: formData.get("appearanceThemeKey"),
+    buttonStyle: formData.get("appearanceButtonStyle"),
+    backgroundMode: formData.get("appearanceBackgroundMode"),
+    backgroundColor: formData.get("appearanceBackgroundColor"),
+    primaryColor: formData.get("appearancePrimaryColor"),
+    textColor: formData.get("appearanceTextColor"),
+    cardColor: formData.get("appearanceCardColor"),
+    radiusScale: formData.get("appearanceRadiusScale"),
+    inheritSfwTheme: formData.get("appearanceInheritSfwTheme") === "yes",
+  }, { adult: true });
+}
+
+function submittedAdultProfileDraftValues(formData: FormData): AdultProfileDraftValues {
+  return {
+    bio: String(formData.get("adultBio") ?? ""),
+    linkLabels: formData.getAll("adultLinkLabel").map(String),
+    linkDestinations: formData.getAll("adultLinkDestination").map(String),
+    linkStableIds: formData.getAll("adultLinkStableId").map(String),
+  };
+}
+
+function adultValidationError(values: AdultProfileDraftValues, fieldErrors: Record<string, string>): AdultProfileDraftState {
+  return { status: "error", message: "Fix the highlighted fields and save again.", reasonCode: "adult_profile_validation_failed", fieldErrors, values };
+}
+
+type ValidAdultProfileDraft = {
+  bio: string;
+  links: AdultProfileLinkInput[];
+  appearance: ReturnType<typeof adultProfileAppearance>;
+};
+
+type AdultProfileDraftValidation =
+  | { error: AdultProfileDraftState }
+  | ValidAdultProfileDraft;
+
+function validateAdultProfileDraft(formData: FormData, values: AdultProfileDraftValues): AdultProfileDraftValidation {
+  const fieldErrors: Record<string, string> = {};
+  const validate = <T>(field: string, run: () => T): T | null => {
+    try { return run(); } catch (error) {
+      fieldErrors[field] = error instanceof Error ? error.message : "Enter a valid value.";
+      return null;
+    }
+  };
+  const bio = validate("adultBio", () => publicText(values.bio, 2000, "adult bio"));
+  const labels = values.linkLabels.map((value) => value.replace(/\s+/g, " ").trim());
+  const destinations = values.linkDestinations.map((value) => value.trim());
+  const stableIds = values.linkStableIds.map((value) => value.trim());
+  const links: AdultProfileLinkInput[] = [];
+  if (labels.length !== destinations.length || labels.length !== stableIds.length || labels.length > 12) {
+    fieldErrors.links = "An 18+ profile can contain up to 12 links.";
+  } else {
+    labels.forEach((label, index) => {
+      const destination = destinations[index];
+      if (!label && !destination) return;
+      if (!label) { fieldErrors[`adultLinkLabel.${index}`] = "Enter a label for this link."; return; }
+      if (!destination) { fieldErrors[`adultLinkDestination.${index}`] = "Enter a complete HTTPS destination for this link."; return; }
+      if (label.length > 80) { fieldErrors[`adultLinkLabel.${index}`] = "Use a link label of 80 characters or fewer."; return; }
+      let approved: ReturnType<typeof approvedHttpsDestination>;
+      try { approved = approvedHttpsDestination(destination); } catch (error) {
+        fieldErrors[`adultLinkDestination.${index}`] = error instanceof Error ? error.message : "Enter a complete HTTPS destination.";
+        return;
+      }
+      const stableId = stableIds[index] || crypto.randomUUID();
+      if (!publicProfileId.test(stableId)) { fieldErrors.links = "An adult link identity is invalid. Refresh the page and try again."; return; }
+      links.push({ stableId, label, destinationUrl: approved.destinationUrl, destinationHost: approved.destinationHost, sortOrder: index });
+    });
+  }
+  const appearance = validate("appearance", () => adultProfileAppearance(formData));
+  if (Object.keys(fieldErrors).length || bio === null || !appearance) return { error: adultValidationError(values, fieldErrors) };
+  return { bio, links, appearance };
+}
+
+async function adultProfileChecksum(content: { bio: string; links: AdultProfileLinkInput[] }) {
+  const canonical = JSON.stringify({ bio: content.bio, links: content.links.map((link) => ({ label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder })) });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function publicProfileChecksum(content: { displayName: string; headline: string; bio: string; links: Array<Pick<PublicProfileLinkInput, "label" | "destinationUrl" | "destinationHost" | "sortOrder">> }) {
+  const canonical = JSON.stringify({ ...content, links: content.links.map((link) => ({ label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder })) });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function submittedPublicProfileVersionId(formData: FormData) {
+  const id = String(formData.get("versionId") ?? "");
+  if (!publicProfileId.test(id)) throw new Error("The requested public profile version is invalid.");
+  return id;
+}
+
+function submittedAdultProfileVersionId(formData: FormData) {
+  const id = String(formData.get("adultVersionId") ?? "");
+  if (!publicProfileId.test(id)) throw new Error("The requested adult profile version is invalid.");
+  return id;
+}
+
+function cleanFanslyHandle(value: FormDataEntryValue | null) {
+  const handle = String(value ?? "").trim().replace(/^@+/, "").replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9._-]{2,80}$/.test(handle)) throw new Error("Enter the expected Fansly handle without spaces.");
+  return `@${handle}`;
+}
+
+function browserInstallationId(value: FormDataEntryValue | null) {
+  const installationId = String(value ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(installationId)) {
+    throw new Error("Paste the installation ID shown by this Chrome profile’s THOT OS extension.");
+  }
+  return installationId;
+}
+
+async function requestRedditFlairRefresh(env: CloudflareEnv, creatorId: string, communityId: number) {
+  const response = await fetchInternalService(env, "reddit", "reddit.communities.read", env.REDDIT_SCHEDULER, "https://reddit-scheduler/communities/reddit/flairs/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, communityId }),
+  });
+  const result = await response.json() as { ok?: boolean; error?: string; flairRequired?: boolean; flairs?: unknown[] };
+  if (!response.ok || !result.ok) throw new Error(result.error || "Reddit did not return its current flair choices.");
+  return result;
+}
+
+export async function addFanslyAccountAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const label = String(formData.get("label") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const handle = cleanFanslyHandle(formData.get("handle"));
+  const profileLabel = String(formData.get("profileLabel") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const installationId = browserInstallationId(formData.get("installationId"));
+  if (label.length < 2 || profileLabel.length < 2) throw new Error("Enter recognisable account and Chrome profile labels.");
+
+  const { DB } = cloudflareEnv();
+  const [existingAccount, installedProfile] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' LIMIT 1").first<{ id: string }>(),
+    DB.prepare("SELECT id,creator_id,label,status FROM browser_profiles WHERE installation_id=?").bind(installationId).first<{ id: string; creator_id: string; label: string; status: string }>(),
+  ]);
+  if (existingAccount) throw new Error("A Fansly account is already configured for this creator. Complete its setup instead of adding another account.");
+  if (installedProfile && installedProfile.creator_id !== creatorId) throw new Error("That THOT OS extension profile is assigned to another creator workspace.");
+  if (installedProfile?.status === "revoked") throw new Error("That Chrome profile has been revoked. Use an active THOT OS extension profile.");
+  const profileId = installedProfile?.id ?? crypto.randomUUID();
+  const accountId = crypto.randomUUID();
+  const connectionId = crypto.randomUUID();
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(installedProfile ? [] : [creatorPrepare(DB, creatorId, "INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,@creator,?,?,?)").bind(profileId, profileLabel, identity.email, installationId)]),
+    creatorPrepare(DB, creatorId, `INSERT INTO operational_accounts
+      (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,warning_level,warning_message)
+      VALUES (?,@creator,'fansly',?,?,'not_connected','local_bridge','device_only','attention','Sign in and confirm the native Fansly identity before pairing this browser bridge.')`).bind(accountId, label, handle),
+    creatorPrepare(DB, creatorId, "INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by) VALUES (@creator,?,'fansly',?,?)").bind(accountId, profileId, identity.email),
+    creatorPrepare(DB, creatorId, `INSERT INTO messaging_connections
+      (id,creator_id,account_id,platform,display_name,handle,mode,read_enabled,write_enabled,outbound_validated,status,last_error)
+      VALUES (?,@creator,?,'fansly',?,?,'observe',0,0,0,'not_connected','Confirm the signed-in Fansly identity and pair the assigned browser before collecting messages.')`).bind(connectionId, accountId, label, handle),
+    identityAuditStatement(DB, actor, "fansly_account_added", accountId, { profileId, installationIdSuffix: installationId.slice(-6), administrativeAction: true }),
+  ];
+  if (!installedProfile) statements.push(identityAuditStatement(DB, actor, "browser_profile_registered", profileId, { label: profileLabel, installationIdSuffix: installationId.slice(-6), administrativeAction: true }));
+  await DB.batch(statements);
+  revalidatePath("/accounts");
+  revalidatePath("/operations");
+  revalidatePath("/messages");
+  redirect("/accounts?saved=fansly_added");
+}
+
+export async function assignFanslyBrowserProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const profileLabel = String(formData.get("profileLabel") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const installationId = browserInstallationId(formData.get("installationId"));
+  if (profileLabel.length < 2) throw new Error("Enter a recognisable Chrome profile label.");
+
+  const { DB } = cloudflareEnv();
+  const [account, assignment, installedProfile] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id,label,handle FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' LIMIT 1").first<{ id: string; label: string; handle: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT profile_id FROM account_browser_profiles WHERE creator_id=@creator AND account_id=(SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' LIMIT 1)").first<{ profile_id: string }>(),
+    DB.prepare("SELECT id,creator_id,status FROM browser_profiles WHERE installation_id=?").bind(installationId).first<{ id: string; creator_id: string; status: string }>(),
+  ]);
+  if (!account) throw new Error("Add a Fansly account before assigning its Chrome profile.");
+  if (assignment) throw new Error("This Fansly account already has a Chrome profile assignment.");
+  if (installedProfile && installedProfile.creator_id !== creatorId) throw new Error("That THOT OS extension profile is assigned to another creator workspace.");
+  if (installedProfile?.status === "revoked") throw new Error("That Chrome profile has been revoked. Use an active THOT OS extension profile.");
+
+  const profileId = installedProfile?.id ?? crypto.randomUUID();
+  const connectionId = crypto.randomUUID();
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(installedProfile ? [] : [creatorPrepare(DB, creatorId, "INSERT INTO browser_profiles (id,creator_id,label,created_by,installation_id) VALUES (?,@creator,?,?,?)").bind(profileId, profileLabel, identity.email, installationId)]),
+    creatorPrepare(DB, creatorId, "INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by) VALUES (@creator,?,'fansly',?,?)").bind(account.id, profileId, identity.email),
+    creatorPrepare(DB, creatorId, `UPDATE operational_accounts SET connection_status='not_connected',external_identity_confirmed_at=NULL,last_checked_at=NULL,warning_level='attention',warning_message='Chrome profile assigned. Sign in natively and confirm the visible identity before pairing this browser bridge.',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator`).bind(account.id),
+    creatorPrepare(DB, creatorId, `INSERT INTO messaging_connections
+      (id,creator_id,account_id,platform,display_name,handle,mode,read_enabled,write_enabled,outbound_validated,status,last_error)
+      VALUES (?,@creator,?,'fansly',?,?,'observe',0,0,0,'not_connected','Confirm the signed-in Fansly identity and pair the assigned browser before collecting messages.')
+      ON CONFLICT(creator_id,platform,display_name) DO UPDATE SET account_id=excluded.account_id,status='not_connected',last_error=excluded.last_error,updated_at=CURRENT_TIMESTAMP`).bind(connectionId, account.id, account.label, account.handle),
+    identityAuditStatement(DB, actor, "fansly_browser_profile_assigned", account.id, { profileId, installationIdSuffix: installationId.slice(-6), administrativeAction: true }),
+  ];
+  if (!installedProfile) statements.push(identityAuditStatement(DB, actor, "browser_profile_registered", profileId, { label: profileLabel, installationIdSuffix: installationId.slice(-6), administrativeAction: true }));
+  await DB.batch(statements);
+  revalidatePath("/accounts");
+  revalidatePath("/operations");
+  revalidatePath("/messages");
+  redirect("/accounts?saved=fansly_profile_assigned");
+}
+
+export async function confirmFanslyIdentityAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  if (formData.get("identityConfirmed") !== "yes") throw new Error("Confirm the signed-in native identity before continuing.");
+  const observedHandle = cleanFanslyHandle(formData.get("observedHandle"));
+  const { DB } = cloudflareEnv();
+  const account = await creatorPrepare(DB, creatorId, `SELECT oa.id,oa.handle FROM operational_accounts oa
+    JOIN account_browser_profiles abp ON abp.creator_id=oa.creator_id AND abp.account_id=oa.id
+    JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id AND bp.status<>'revoked'
+    WHERE oa.creator_id=@creator AND oa.platform='fansly' LIMIT 1`).first<{ id: string; handle: string }>();
+  if (!account) throw new Error("Assign an active THOT OS Chrome profile before confirming the native identity.");
+  if (account.handle.toLowerCase() !== observedHandle.toLowerCase()) throw new Error("The signed-in Fansly handle does not match this creator’s configured account.");
+  const actor = humanAuditActor(identity);
+  await DB.batch([
+    creatorPrepare(DB, creatorId, `UPDATE operational_accounts SET connection_status='needs_check',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='attention',warning_message='Native identity confirmed. Pair the assigned THOT OS Chrome profile before staging vault uploads.',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator`).bind(account.id),
+    creatorPrepare(DB, creatorId, "UPDATE messaging_connections SET status='device_bridge_ready',last_error='Browser identity confirmed; bridge pairing is still required.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND account_id=? AND platform='fansly'").bind(account.id),
+    identityAuditStatement(DB, actor, "fansly_identity_confirmed", account.id, { administrativeAction: true }),
+  ]);
+  revalidatePath("/accounts");
+  revalidatePath("/operations");
+  redirect("/accounts?saved=fansly_identity_confirmed");
+}
+
+export async function syncDropboxCatalogueAction() {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const env = cloudflareEnv();
+  let notice = "sync_failed";
+  let detail = "";
+  try {
+    const response = await fetchInternalService(env, "vault_catalogue", "vault.catalogue.refresh", env.VAULT_BRIDGE, "https://vault-bridge/catalogue/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ creatorId }),
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; assets?: number; previews?: { ready?: number; queued?: number; processing?: number; failed?: number }; error?: string };
+    if (!response.ok || !result.ok || typeof result.assets !== "number") throw new Error(result.error || `Dropbox catalogue refresh failed (${response.status}).`);
+    const previews = result.previews ?? {};
+    await identityAuditStatement(env.DB, humanAuditActor(identity), "dropbox_catalogue_refreshed", creatorId, { assets: result.assets, previewsQueued: previews.queued ?? 0, previewsReady: previews.ready ?? 0, previewsFailed: previews.failed ?? 0, readOnlySource: true }).run();
+    revalidatePath("/library");
+    revalidatePath("/operations");
+    notice = `sync_complete&count=${result.assets}&previewQueued=${previews.queued ?? 0}&previewReady=${previews.ready ?? 0}&previewFailed=${previews.failed ?? 0}`;
+  } catch (error) {
+    detail = (error instanceof Error ? error.message : "Dropbox catalogue refresh failed.").slice(0, 300);
+  }
+  redirect(`/library?notice=${notice}${detail ? `&detail=${encodeURIComponent(detail)}` : ""}`);
+}
+
+export async function startDropboxReconnectAction() {
+  const identity = await requireCreatorContext("manage_identity");
+  const env = cloudflareEnv();
+  const callbackUrl = new URL("/api/accounts/dropbox/callback", env.APP_BASE_URL).toString();
+  let redirectUrl: URL | null = null;
+  let connectionError = "";
+  try {
+    const response = await fetchInternalService(env, "vault_catalogue", "vault.catalogue.connection.manage", env.VAULT_BRIDGE, "https://vault-bridge/catalogue/dropbox/reconnect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ creatorId: identity.creator.creator_id, callbackUrl }),
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; redirectUrl?: string; error?: string };
+    if (!response.ok || !result.ok || !result.redirectUrl) throw new Error(result.error || "Dropbox reconnection could not be started.");
+    redirectUrl = new URL(result.redirectUrl);
+    if (redirectUrl.protocol !== "https:" || redirectUrl.username || redirectUrl.password) throw new Error("Dropbox reconnection returned an unsafe sign-in URL.");
+  } catch (error) {
+    connectionError = (error instanceof Error ? error.message : "Dropbox reconnection could not be started.").slice(0, 300);
+  }
+  if (!redirectUrl) redirect(`/accounts?connectionError=${encodeURIComponent(connectionError || "Dropbox reconnection could not be started.")}`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "dropbox_connection_requested", "dropbox", { providerCallback: true, readOnlySource: true }).run();
+  redirect(redirectUrl.toString());
+}
+
+export async function saveDropboxCatalogueSourceAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const root = String(formData.get("dropboxRoot") ?? "").trim().replace(/\/+$/, "");
+  const linkValue = String(formData.get("dropboxLink") ?? "").trim();
+  if (!root.startsWith("/") || root.includes("..") || root.length > 500) throw new Error("Enter the Dropbox folder path starting with /.");
+  let link = "";
+  if (linkValue) {
+    let parsed: URL;
+    try { parsed = new URL(linkValue); } catch { throw new Error("Enter a complete Dropbox folder or file link."); }
+    if (parsed.protocol !== "https:" || !["dropbox.com", "www.dropbox.com"].includes(parsed.hostname.toLowerCase())) throw new Error("Use an https://www.dropbox.com folder or file link.");
+    link = parsed.toString();
+  }
+  const { DB } = cloudflareEnv();
+  const updated = await creatorPrepare(DB, creatorId, "UPDATE creators SET dropbox_root=?,dropbox_link=? WHERE id=@creator AND status='active'").bind(root, link || null).run();
+  if (!updated.meta?.changes) throw new Error("This creator workspace is not available.");
+  await identityAuditStatement(DB, humanAuditActor(identity), "dropbox_catalogue_source_saved", creatorId, { hasReferenceLink: Boolean(link), readOnlySource: true }).run();
+  revalidatePath("/accounts");
+  revalidatePath("/library");
+  redirect("/accounts?saved=dropbox_source_saved");
 }
 
 export async function saveAssetAttributesAction(formData: FormData) {
@@ -91,6 +565,7 @@ export async function createRedditPostAction(formData: FormData) {
   const existingPostId = String(formData.get("postId") ?? "").trim();
   const assetId = String(formData.get("assetId") ?? "");
   const communityId = Number(formData.get("communityId"));
+  const flairId = String(formData.get("flairId") ?? "").trim();
   const title = String(formData.get("title") ?? "").trim();
   const caption = String(formData.get("caption") ?? "").trim().slice(0, 10000);
   const contentRating = String(formData.get("contentRating") ?? "");
@@ -113,24 +588,26 @@ export async function createRedditPostAction(formData: FormData) {
 
   const env = cloudflareEnv();
   const { DB } = env;
-  const [asset, community, account, pairing, existingPost] = await Promise.all([
+  const [asset, community, selectedFlair, account, existingPost] = await Promise.all([
     creatorPrepare(DB, creatorId, `SELECT a.id,a.extension,c.safety FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id LEFT JOIN asset_classifications c ON c.asset_id=a.id WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND d.destination='reddit'`).bind(assetId).first<{ id: string; extension: string; safety: "sfw" | "nsfw" | null }>(),
-    creatorPrepare(DB, creatorId, "SELECT id,allows_nsfw,status,last_verified_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; allows_nsfw: number; status: string; last_verified_at: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT id,name,allows_nsfw,status,last_verified_at,flair_required,flairs_checked_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; name: string; allows_nsfw: number; status: string; last_verified_at: string; flair_required: number; flairs_checked_at: string | null }>(),
+    flairId ? creatorPrepare(DB, creatorId, "SELECT flair_id,flair_text,fetched_at FROM reddit_community_flairs WHERE creator_id=@creator AND community_id=? AND flair_id=? AND active=1").bind(communityId, flairId).first<{ flair_id: string; flair_text: string; fetched_at: string }>() : Promise.resolve(null),
     creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority FROM operational_accounts WHERE creator_id=@creator AND platform='reddit' ORDER BY label LIMIT 1").first<{ id: string; connection_status: string; publishing_authority: string }>(),
-    creatorPrepare(DB, creatorId, "SELECT last_seen_at FROM bridge_credentials WHERE creator_id=@creator AND platform='reddit' AND status='active' AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 1").first<{ last_seen_at: string | null }>(),
     existingPostId ? creatorPrepare(DB, creatorId, "SELECT id,status FROM social_posts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(existingPostId).first<{ id: string; status: string }>() : Promise.resolve(null),
   ]);
   if (!asset) throw new Error("That asset is no longer available for Reddit.");
   if (!asset.safety) throw new Error("Classify the asset as SFW or NSFW before creating a Reddit post.");
-  if (!["jpg", "jpeg", "png", "webp", "gif"].includes(asset.extension.toLowerCase().replace(/^\./, ""))) throw new Error("The native Reddit bridge currently supports image posts. Native video will be enabled after its separate composer is verified.");
+  if (!["jpg", "jpeg", "png", "webp", "gif"].includes(asset.extension.toLowerCase().replace(/^\./, ""))) throw new Error("Reddit API publishing currently supports image posts. Native video will be enabled after its separate media flow is verified.");
   if (asset.safety !== contentRating) throw new Error(`This asset is classified ${asset.safety.toUpperCase()}; use the matching Reddit content rating.`);
   if (!community || community.status !== "active") throw new Error("That subreddit is not active.");
+  if (flairId && !selectedFlair) throw new Error("That Reddit flair is no longer available for the selected subreddit. Refresh its flairs and choose again.");
+  if (intent !== "draft" && community.flair_required && !selectedFlair) throw new Error(`r/${community.name} requires post flair. Refresh its flairs and choose one before publishing.`);
+  if (intent !== "draft" && community.flair_required && !community.flairs_checked_at) throw new Error(`Refresh r/${community.name} to load its current Reddit flair requirements before publishing.`);
   if (contentRating === "nsfw" && !community.allows_nsfw) throw new Error("That subreddit is not recorded as allowing NSFW posts.");
   const rulesCheckedAt = new Date(`${community.last_verified_at}T00:00:00Z`).getTime();
   if (!Number.isFinite(rulesCheckedAt) || Date.now() - rulesCheckedAt > 30 * 24 * 60 * 60 * 1000) throw new Error("Recheck this subreddit’s rules before scheduling a post.");
   if (!account) throw new Error("Add the Reddit account before creating a post.");
-  if (intent !== "draft" && account.connection_status !== "connected") throw new Error("Reconnect and verify Reddit before approving native delivery.");
-  if (intent !== "draft" && !pairing?.last_seen_at) throw new Error("Open and pair this creator’s Reddit browser before approving native delivery.");
+  if (intent !== "draft" && (account.connection_status !== "connected" || account.publishing_authority !== "confirmed")) throw new Error("Reconnect and verify Reddit before approving API delivery.");
   if (existingPostId && (!existingPost || !["draft", "scheduled"].includes(existingPost.status))) throw new Error("Only draft or scheduled Reddit posts can be edited.");
 
   const actor = identity.email;
@@ -138,25 +615,25 @@ export async function createRedditPostAction(formData: FormData) {
   let postId = existingPostId || crypto.randomUUID();
   if (!existingPostId && status === "scheduled") {
     const intentWindow = intent === "publish_now" ? scheduledAt!.slice(0, 16) : scheduledAt;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([creatorId, account.id, asset.id, caption, intent, intentWindow].join("|")));
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([creatorId, account.id, asset.id, community.id, title, caption, contentRating, selectedFlair?.flair_id ?? "", intent, intentWindow].join("|")));
     postId = `reddit-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
   }
   const eventType = intent === "publish_now" ? "post_now_approved" : intent === "schedule" ? "post_scheduled" : existingPostId ? "draft_updated" : "draft_created";
   if (existingPostId) {
-    const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,community_id=?,title=?,caption=?,content_rating=?,status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')`)
-      .bind(account.id, asset.id, community.id, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
+    const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,community_id=?,reddit_flair_id=?,reddit_flair_text=?,title=?,caption=?,content_rating=?,status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')`)
+      .bind(account.id, asset.id, community.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
     if (!update.meta?.changes) throw new Error("This Reddit post changed before it could be saved. Refresh and try again.");
-    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })).run();
   } else {
     await DB.batch([
-      creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,asset_id,community_id,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, community.id, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
-      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, deliveryMode: "native_device" })),
+      creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,asset_id,community_id,reddit_flair_id,reddit_flair_text,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, community.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
+      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })),
     ]);
   }
   revalidatePath("/operations");
   if (intent === "publish_now") {
     try {
-      const response = await env.REDDIT_SCHEDULER.fetch("https://reddit-scheduler/posts/reddit/publish", {
+      const response = await fetchInternalService(env, "reddit", "reddit.publish.execute", env.REDDIT_SCHEDULER, "https://reddit-scheduler/posts/reddit/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ postId, creatorId }),
@@ -233,8 +710,28 @@ export async function saveRedditCommunityAction(formData: FormData) {
       SELECT ?,id,@creator,?,?,'community_saved',? FROM reddit_communities WHERE creator_id=@creator AND name=?`)
       .bind(crypto.randomUUID(), actor, identity.creator.role, detail, communityName),
   ]);
+  const savedCommunity = await creatorPrepare(DB, creatorId, "SELECT id FROM reddit_communities WHERE creator_id=@creator AND name=?").bind(communityName).first<{ id: number }>();
+  let flairState = "unavailable";
+  if (savedCommunity) {
+    try {
+      await requestRedditFlairRefresh(cloudflareEnv(), creatorId, savedCommunity.id);
+      flairState = "synced";
+    } catch {}
+  }
   revalidatePath("/operations");
-  redirect("/operations?platform=reddit&section=communities&community=saved");
+  redirect(`/operations?platform=reddit&section=communities&community=saved&flairs=${flairState}`);
+}
+
+export async function refreshRedditFlairsAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const communityId = Number(formData.get("communityId"));
+  if (!Number.isInteger(communityId) || communityId < 1) throw new Error("Choose a saved Reddit community.");
+  const community = await creatorPrepare(cloudflareEnv().DB, creatorId, "SELECT id FROM reddit_communities WHERE id=? AND creator_id=@creator AND status='active'").bind(communityId).first<{ id: number }>();
+  if (!community) throw new Error("That Reddit community is not active in this creator workspace.");
+  await requestRedditFlairRefresh(cloudflareEnv(), creatorId, community.id);
+  revalidatePath("/operations");
+  redirect("/operations?platform=reddit&section=communities&flairs=synced");
 }
 
 export async function cancelRedditPostAction(formData: FormData) {
@@ -266,38 +763,15 @@ export async function startRedditReconnectAction() {
   const identity = await requireCreatorContext("manage_identity");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/operations/reddit/callback", env.APP_BASE_URL).toString();
-  const response = await env.REDDIT_SCHEDULER.fetch("https://reddit-scheduler/connections/reddit/start", {
+  const response = await fetchInternalService(env, "reddit", "reddit.connection.manage", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ callbackUrl, actor: identity.email, creatorId: identity.creator.creator_id }),
+    body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id }),
   });
   const result = await response.json() as { ok?: boolean; redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Reddit reconnection could not be started.");
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "reddit_connection_requested", "reddit", { providerCallback: true }).run();
   redirect(result.redirectUrl);
-}
-
-export async function openRedditBridgeAction() {
-  const identity = await requireCreatorContext("manage_identity");
-  const creatorId = identity.creator.creator_id;
-  const env = cloudflareEnv();
-  const { DB } = env;
-  const account = await creatorPrepare(DB, creatorId, `SELECT oa.id,oa.handle,abp.profile_id FROM operational_accounts oa
-    JOIN account_browser_profiles abp ON abp.account_id=oa.id AND abp.creator_id=oa.creator_id
-    JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id AND bp.status<>'revoked'
-    WHERE oa.creator_id=@creator AND oa.platform='reddit' ORDER BY oa.label LIMIT 1`).first<{ id: string; handle: string; profile_id: string }>();
-  if (!account) throw new Error("Assign this creator’s Reddit account to an active M1 Chrome profile first.");
-  const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  const tokenHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  const auditActor = humanAuditActor(identity);
-  await DB.batch([
-    creatorPrepare(DB, creatorId, "UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND account_id=? AND profile_id=? AND platform='reddit' AND status='active'").bind(account.id, account.profile_id),
-    creatorPrepare(DB, creatorId, "INSERT INTO bridge_credentials (id,creator_id,account_id,profile_id,platform,token_hash,status,issued_by,expires_at) VALUES (?,@creator,?,?, 'reddit',?,'active',?,datetime('now','+90 days'))").bind(crypto.randomUUID(), account.id, account.profile_id, tokenHash, identity.email),
-    creatorPrepare(DB, creatorId, "UPDATE operational_accounts SET publishing_mode='local_bridge',publishing_authority='device_only',warning_level='attention',warning_message='Finish pairing the assigned signed Reddit browser for native scheduled posts.',last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator").bind(account.id),
-    identityAuditStatement(DB, auditActor, "bridge_credential_issued", account.id, { platform: "reddit", profileId: account.profile_id }),
-  ]);
-  const bridgeBaseUrl = (env as CloudflareEnv & { VAULT_BRIDGE_BASE_URL?: string }).VAULT_BRIDGE_BASE_URL ?? "https://thot-os-vault-bridge-staging.thot-os.workers.dev";
-  redirect(`${bridgeBaseUrl}/pair#creator_os_bridge_pair=${encodeURIComponent(token)}&platform=reddit&next=${encodeURIComponent("https://www.reddit.com/submit")}`);
 }
 
 export async function createInstagramPostAction(formData: FormData) {
@@ -359,7 +833,7 @@ export async function createInstagramPostAction(formData: FormData) {
   revalidatePath("/operations");
   if (intent === "publish_now") {
     try {
-      const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/posts/instagram/publish", {
+      const response = await fetchInternalService(env, "instagram", "instagram.publish.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/posts/instagram/publish", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ postId, creatorId }),
       });
       const result = await response.json() as { post?: { status?: string } };
@@ -402,22 +876,22 @@ export async function startInstagramReconnectAction() {
   const identity = await requireCreatorContext("manage_identity");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/operations/instagram/callback", env.APP_BASE_URL).toString();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/connections/instagram/start", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callbackUrl, actor: identity.email, creatorId: identity.creator.creator_id }),
+  const response = await fetchInternalService(env, "instagram", "instagram.connection.manage", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/start", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id }),
   });
   const result = await response.json() as { redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Instagram reconnection could not be started.");
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "instagram_connection_requested", "instagram", { providerCallback: true }).run();
   redirect(result.redirectUrl);
 }
 
 export async function refreshInstagramDataAction() {
   const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const response = await fetchInternalService(env, "instagram", "instagram.sync.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/analytics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; errors?: string[]; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.errors?.join(" ") || result.error || "Instagram data could not be refreshed.");
   revalidatePath("/operations");
-  revalidatePath("/messages");
   redirect("/operations?platform=instagram&section=analytics&saved=refreshed");
 }
 
@@ -425,7 +899,7 @@ export async function refreshInstagramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const response = await fetchInternalService(env, "instagram", "instagram.messages.sync", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Instagram messages could not be refreshed.");
   revalidatePath("/messages");
@@ -437,13 +911,14 @@ export async function markInstagramThreadReadAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   if (!threadId) throw new Error("Choose an Instagram conversation to mark as read.");
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/messages/instagram/seen", {
+  const response = await fetchInternalService(env, "instagram", "instagram.messages.write", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/seen", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ threadId, actor: identity.email, creatorId: identity.creator.creator_id }),
+    body: JSON.stringify({ threadId, creatorId: identity.creator.creator_id }),
   });
   const result = await response.json() as { ok?: boolean; markedSeen?: boolean; error?: string };
   if (!response.ok || !result.ok || !result.markedSeen) throw new Error(result.error || "Instagram did not confirm that the conversation was marked as read.");
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "instagram_thread_marked_read", threadId, { providerConfirmed: true }).run();
   revalidatePath("/messages");
   redirect(`/messages?platform=instagram&thread=${encodeURIComponent(threadId)}&saved=instagram_thread_read`);
 }
@@ -495,7 +970,7 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
 
   let saved = "instagram_send_failed";
   try {
-    const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/messages/instagram/send", {
+    const response = await fetchInternalService(env, "instagram", "instagram.messages.write", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/send", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ draftId, creatorId }),
@@ -521,7 +996,7 @@ export async function validateInstagramReplyTargetAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   if (!threadId) throw new Error("Choose an Instagram conversation to validate.");
   const env = cloudflareEnv();
-  const response = await env.INSTAGRAM_SCHEDULER.fetch("https://instagram-scheduler/messages/instagram/validate", {
+  const response = await fetchInternalService(env, "instagram", "instagram.messages.write", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/validate", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ threadId, creatorId }),
@@ -657,7 +1132,8 @@ export async function updateMessagingAuthorityAction(formData: FormData) {
 
 export async function validateTelegramConnectorAction() {
   const identity = await requireCreatorContext("manage_identity");
-  const response = await cloudflareEnv().TELEGRAM_BRIDGE.fetch("https://telegram-bridge/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const env = cloudflareEnv();
+  const response = await fetchInternalService(env, "telegram", "telegram.connection.manage", env.TELEGRAM_BRIDGE, "https://telegram-bridge/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) redirect("/messages?platform=telegram&saved=telegram_failed");
   redirect("/messages?platform=telegram&saved=telegram_validated");
@@ -666,7 +1142,8 @@ export async function validateTelegramConnectorAction() {
 export async function refreshTelegramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();
-  const response = await cloudflareEnv().TELEGRAM_BRIDGE.fetch("https://telegram-bridge/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const env = cloudflareEnv();
+  const response = await fetchInternalService(env, "telegram", "telegram.messages.sync", env.TELEGRAM_BRIDGE, "https://telegram-bridge/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Telegram replies could not be refreshed.");
   revalidatePath("/messages");
@@ -700,7 +1177,8 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
   if (!message || message.length > 4096) throw new Error("Telegram messages must contain between 1 and 4,096 characters.");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestId)) throw new Error("Refresh Messages before sending this Telegram message.");
   const actor = identity.email;
-  const { DB, TELEGRAM_BRIDGE } = cloudflareEnv();
+  const env = cloudflareEnv();
+  const { DB, TELEGRAM_BRIDGE } = env;
   const connection = await creatorPrepare(DB, creatorId, `SELECT id,status,write_enabled,outbound_validated,emergency_paused FROM messaging_connections
     WHERE creator_id=@creator AND platform='telegram' ORDER BY id LIMIT 1`).first<{ id: string; status: string; write_enabled: number; outbound_validated: number; emergency_paused: number }>();
   if (!connection || connection.status !== "connected" || !connection.outbound_validated) throw new Error("Validate this creator’s Telegram connection before sending.");
@@ -715,7 +1193,7 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
   }
   await creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'telegram_message_approved',?,?,?)")
     .bind(`telegram-send-audit-${requestId}`, connection.id, actor, identity.creator.role, JSON.stringify({ logId, characters: message.length, enterToSend: true })).run();
-  const response = await TELEGRAM_BRIDGE.fetch("https://telegram-bridge/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ logId, creatorId }) });
+  const response = await fetchInternalService(env, "telegram", "telegram.messages.write", TELEGRAM_BRIDGE, "https://telegram-bridge/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ logId, creatorId }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   revalidatePath("/messages");
   redirect(`/messages?platform=telegram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=${response.ok && result.ok ? "telegram_sent" : "telegram_failed"}`);
@@ -748,4 +1226,293 @@ export async function sendFanslyReplyAction(formData: FormData) {
   ]);
   revalidatePath("/messages");
   redirect(`/messages?platform=fansly&thread=${encodeURIComponent(thread.id)}&saved=fansly_reply_queued`);
+}
+
+export async function savePublicProfileDraftAction(_previousState: PublicProfileDraftState, formData: FormData): Promise<PublicProfileDraftState> {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const values = submittedPublicProfileDraftValues(formData);
+  const validated = validatePublicProfileDraft(formData, values);
+  if ("error" in validated) return validated.error;
+  const { slug, requestedDisplayName, headline, bio, links, contacts, appearance } = validated;
+  const displayName = requestedDisplayName || identity.creator.creator_name;
+  const checksum = await publicProfileChecksum({ displayName, headline, bio, links });
+  const { DB } = cloudflareEnv();
+  const [profile, draft, nextVersion] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id,slug,published_version_id FROM creator_public_profiles WHERE creator_id=@creator LIMIT 1")
+      .first<{ id: string; slug: string; published_version_id: string | null }>(),
+    creatorPrepare(DB, creatorId, `SELECT v.id,v.profile_id,v.creator_id,p.slug,p.published_version_id,v.version_number,v.display_name,v.headline,v.bio,v.content_checksum,v.status
+      FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+      WHERE v.creator_id=@creator AND v.status='draft' ORDER BY v.version_number DESC LIMIT 1`).first<PublicProfileVersionRow>(),
+    creatorPrepare(DB, creatorId, `SELECT COALESCE(MAX(v.version_number),0)+1 AS version_number
+      FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+      WHERE v.creator_id=@creator`).first<{ version_number: number }>(),
+  ]);
+  if (profile?.published_version_id && profile.slug !== slug) throw new Error("A published public URL slug is stable. Withdraw the current profile before changing it.");
+  const profileId = profile?.id ?? crypto.randomUUID();
+  const versionId = draft?.id ?? crypto.randomUUID();
+  const versionNumber = draft?.version_number ?? nextVersion?.version_number ?? 1;
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(profile ? profile.slug === slug ? [] : [creatorPrepare(DB, creatorId, "UPDATE creator_public_profiles SET slug=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND published_version_id IS NULL").bind(slug, profileId)] : [creatorPrepare(DB, creatorId, "INSERT INTO creator_public_profiles (id,creator_id,slug,created_by) VALUES (?,@creator,?,?)").bind(profileId, slug, identity.email)]),
+    ...(draft ? [
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_public_link_revisions WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_public_contact_methods WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
+        SET display_name=?,headline=?,bio=?,avatar_media_id=NULL,content_checksum=?
+        WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`)
+        .bind(displayName, headline, bio, checksum, versionId, profileId),
+    ] : [creatorPrepare(DB, creatorId, `INSERT INTO creator_public_profile_versions
+      (id,profile_id,creator_id,version_number,display_name,headline,bio,avatar_media_id,content_checksum,created_by)
+      VALUES (?,?,@creator,?,?,?, ?,NULL,?,?)`).bind(versionId, profileId, versionNumber, displayName, headline, bio, checksum, identity.email)]),
+    ...links.map((link) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_links
+      (id,creator_id,profile_version_id,label,destination_url,destination_host,sort_order)
+      VALUES (?,@creator,?,?,?,?,?)`).bind(link.id, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder)),
+    creatorPrepare(DB, creatorId, `INSERT INTO creator_public_profile_details
+      (profile_version_id,creator_id,public_display_name,public_bio,theme_key,button_style,background_mode,background_color,primary_color,text_color,card_color,radius_scale,updated_at)
+      VALUES (?,@creator,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(profile_version_id) DO UPDATE SET
+        public_display_name=excluded.public_display_name,public_bio=excluded.public_bio,
+        theme_key=excluded.theme_key,button_style=excluded.button_style,background_mode=excluded.background_mode,
+        background_color=excluded.background_color,primary_color=excluded.primary_color,text_color=excluded.text_color,
+        card_color=excluded.card_color,radius_scale=excluded.radius_scale,updated_at=CURRENT_TIMESTAMP`)
+      .bind(versionId, displayName, bio, appearance.themeKey, appearance.buttonStyle, appearance.backgroundMode, appearance.backgroundColor, appearance.primaryColor, appearance.textColor, appearance.cardColor, appearance.radiusScale),
+    ...links.flatMap((link) => [
+      creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO creator_public_link_entities (id,creator_id) VALUES (?,@creator)").bind(link.stableId),
+      creatorPrepare(DB, creatorId, `INSERT INTO creator_public_link_revisions
+        (id,creator_id,link_id,profile_version_id,label,destination_url,destination_host,icon_key,category,sort_order,enabled)
+        VALUES (?,@creator,?,?,?,?,?,'link','social',?,1)`)
+        .bind(crypto.randomUUID(), link.stableId, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder),
+    ]),
+    ...contacts.map((contact) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_contact_methods
+      (id,creator_id,profile_version_id,channel,contact_value,enabled)
+      VALUES (?,@creator,?,?,?,1)`).bind(crypto.randomUUID(), versionId, contact.channel, contact.value)),
+    identityAuditStatement(DB, actor, draft ? "public_profile_draft_updated" : "public_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contactChannels: contacts.map((contact) => contact.channel), contentChecksum: checksum, appearance: appearance.themeKey, publicSurface: true }),
+  ];
+  try {
+    await DB.batch(statements);
+  } catch {
+    return { status: "error", message: "We could not save this profile. Try again.", reasonCode: "profile_save_failed", fieldErrors: {}, values };
+  }
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=draft_saved");
+}
+
+export async function approvePublicProfileVersionAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must approve a public release.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedPublicProfileVersionId(formData);
+  const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");
+  const { DB } = cloudflareEnv();
+  const version = await creatorPrepare(DB, creatorId, `SELECT v.id,v.profile_id,v.creator_id,p.slug,p.published_version_id,v.version_number,v.display_name,v.headline,v.bio,v.content_checksum,v.status
+    FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+    WHERE v.id=? AND v.creator_id=@creator AND v.status='draft'`).bind(versionId).first<PublicProfileVersionRow>();
+  if (!version) throw new Error("Only this creator’s current draft profile can be approved.");
+  const linkRows = await creatorPrepare(DB, creatorId, `SELECT label,destination_url,destination_host,sort_order
+    FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=? ORDER BY sort_order ASC`).bind(version.id)
+    .all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes approval validation. Update the draft first.");
+    return { label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await publicProfileChecksum({ displayName: version.display_name, headline: version.headline, bio: version.bio, links });
+  if (checksum !== version.content_checksum) throw new Error("The profile content changed outside the approved draft workflow. Save the draft again before approving it.");
+  const approved = await creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
+    SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note=?
+    WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`).bind(identity.email, approvalNote, version.id, version.profile_id).run();
+  if (!approved.meta?.changes) throw new Error("This public profile draft is no longer available for approval.");
+  await identityAuditStatement(DB, humanAuditActor(identity), "public_profile_version_approved", version.id, { profileId: version.profile_id, versionNumber: version.version_number, contentChecksum: checksum, destinationCount: links.length, publicSurface: true }).run();
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=version_approved");
+}
+
+export async function publishPublicProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedPublicProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const version = await creatorPrepare(env.DB, creatorId, `SELECT v.id,v.profile_id,v.creator_id,p.slug,p.published_version_id,v.version_number,v.display_name,v.headline,v.bio,v.content_checksum,v.status
+    FROM creator_public_profile_versions v JOIN creator_public_profiles p ON p.id=v.profile_id AND p.creator_id=v.creator_id
+    WHERE v.id=? AND v.creator_id=@creator AND v.status IN ('draft','approved')`).bind(versionId).first<PublicProfileVersionRow>();
+  if (!version) throw new Error("Only this creator’s saved draft can be published.");
+  const linkRows = await creatorPrepare(env.DB, creatorId, `SELECT label,destination_url,destination_host,sort_order
+    FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=? ORDER BY sort_order ASC`).bind(version.id)
+    .all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes publication validation. Save the profile again before publishing.");
+    return { label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await publicProfileChecksum({ displayName: version.display_name, headline: version.headline, bio: version.bio, links });
+  if (checksum !== version.content_checksum) throw new Error("The profile changed outside the saved workflow. Save it again before publishing.");
+  if (version.status === "draft") {
+    const [approved] = await env.DB.batch([
+      creatorPrepare(env.DB, creatorId, `UPDATE creator_public_profile_versions
+        SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note='Publish selected in profile editor'
+        WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`).bind(identity.email, version.id, version.profile_id),
+      identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_version_approved", version.id, { profileId: version.profile_id, versionNumber: version.version_number, contentChecksum: checksum, destinationCount: links.length, publicSurface: true, approvalSource: "publish_button" }),
+    ]);
+    if (!approved.meta?.changes) throw new Error("This public profile draft is no longer available to publish.");
+  }
+  const response = await fetchInternalService(env, "public_links_control", "public.profile.publish", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/publish", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: version.profile_id, versionId: version.id }),
+  });
+  if (response.status !== 202) throw new Error(`Public publishing control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_publish_requested", version.id, { profileId: version.profile_id, versionNumber: version.version_number, publicSurface: true }).run();
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=publication_started");
+}
+
+export async function withdrawPublicProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedPublicProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const profile = await creatorPrepare(env.DB, creatorId, `SELECT id,published_version_id FROM creator_public_profiles
+    WHERE creator_id=@creator AND status='active' AND published_version_id=?`).bind(versionId).first<{ id: string; published_version_id: string }>();
+  if (!profile) throw new Error("This creator has no matching published profile to withdraw.");
+  const response = await fetchInternalService(env, "public_links_control", "public.profile.withdraw", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/withdraw", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: profile.id, versionId: profile.published_version_id }),
+  });
+  if (response.status !== 202) throw new Error(`Public withdrawal control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "public_profile_withdraw_requested", profile.published_version_id, { profileId: profile.id, publicSurface: true }).run();
+  revalidatePath("/public-profile");
+  redirect("/public-profile?notice=withdrawal_started");
+}
+
+export async function saveAdultProfileDraftAction(_previousState: AdultProfileDraftState, formData: FormData): Promise<AdultProfileDraftState> {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const values = submittedAdultProfileDraftValues(formData);
+  const validated = validateAdultProfileDraft(formData, values);
+  if ("error" in validated) return validated.error;
+  const { bio, links, appearance } = validated;
+  const checksum = await adultProfileChecksum({ bio, links });
+  const { DB } = cloudflareEnv();
+  const [profile, draft, nextVersion] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id,published_version_id FROM creator_adult_profiles WHERE creator_id=@creator LIMIT 1").first<{ id: string; published_version_id: string | null }>(),
+    creatorPrepare(DB, creatorId, "SELECT id,profile_id,version_number FROM creator_adult_profile_versions WHERE creator_id=@creator AND status='draft' ORDER BY version_number DESC LIMIT 1").first<{ id: string; profile_id: string; version_number: number }>(),
+    creatorPrepare(DB, creatorId, "SELECT COALESCE(MAX(version_number),0)+1 AS version_number FROM creator_adult_profile_versions WHERE creator_id=@creator").first<{ version_number: number }>(),
+  ]);
+  const profileId = profile?.id ?? crypto.randomUUID();
+  const versionId = draft?.id ?? crypto.randomUUID();
+  const versionNumber = draft?.version_number ?? nextVersion?.version_number ?? 1;
+  const actor = humanAuditActor(identity);
+  const statements = [
+    ...(profile ? [] : [creatorPrepare(DB, creatorId, "INSERT INTO creator_adult_profiles (id,creator_id,created_by) VALUES (?,@creator,?)").bind(profileId, identity.email)]),
+    ...(draft ? [
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_adult_link_revisions WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "UPDATE creator_adult_profile_versions SET adult_bio=?,content_checksum=? WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'").bind(bio, checksum, versionId, profileId),
+    ] : [creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_profile_versions
+      (id,profile_id,creator_id,version_number,adult_bio,content_checksum,created_by)
+      VALUES (?,?,@creator,?,?,?,?)`).bind(versionId, profileId, versionNumber, bio, checksum, identity.email)]),
+    ...links.flatMap((link) => [
+      creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO creator_adult_link_entities (id,creator_id) VALUES (?,@creator)").bind(link.stableId),
+      creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_link_revisions
+        (id,creator_id,link_id,profile_version_id,label,destination_url,destination_host,icon_key,category,sort_order,enabled)
+        VALUES (?,@creator,?,?,?,?,?,'link','creator',?,1)`)
+        .bind(crypto.randomUUID(), link.stableId, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder),
+    ]),
+    creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_profile_appearances
+      (profile_version_id,creator_id,theme_key,button_style,background_mode,background_color,primary_color,text_color,card_color,radius_scale,inherit_sfw_theme,updated_at)
+      VALUES (?,@creator,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(profile_version_id) DO UPDATE SET
+        theme_key=excluded.theme_key,button_style=excluded.button_style,background_mode=excluded.background_mode,
+        background_color=excluded.background_color,primary_color=excluded.primary_color,text_color=excluded.text_color,
+        card_color=excluded.card_color,radius_scale=excluded.radius_scale,inherit_sfw_theme=excluded.inherit_sfw_theme,updated_at=CURRENT_TIMESTAMP`)
+      .bind(versionId, appearance.themeKey, appearance.buttonStyle, appearance.backgroundMode, appearance.backgroundColor, appearance.primaryColor, appearance.textColor, appearance.cardColor, appearance.radiusScale, appearance.inheritSfwTheme ? 1 : 0),
+    identityAuditStatement(DB, actor, draft ? "adult_profile_draft_updated" : "adult_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contentChecksum: checksum, appearance: appearance.themeKey, adultSurface: true }),
+  ];
+  await DB.batch(statements);
+  revalidatePath("/adult-profile");
+  redirect("/adult-profile?notice=draft_saved");
+}
+
+export async function approveAdultProfileVersionAction(formData: FormData) {
+  const identity = await requireCreatorContext("approve");
+  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must approve an adult release.");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedAdultProfileVersionId(formData);
+  const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");
+  const { DB } = cloudflareEnv();
+  const version = await creatorPrepare(DB, creatorId, "SELECT id,profile_id,version_number,adult_bio,content_checksum FROM creator_adult_profile_versions WHERE id=? AND creator_id=@creator AND status='draft'").bind(versionId).first<{ id: string; profile_id: string; version_number: number; adult_bio: string; content_checksum: string }>();
+  if (!version) throw new Error("Only this creator’s current adult-profile draft can be approved.");
+  const linkRows = await creatorPrepare(DB, creatorId, "SELECT label,destination_url,destination_host,sort_order FROM creator_adult_link_revisions WHERE creator_id=@creator AND profile_version_id=? AND enabled=1 ORDER BY sort_order ASC").bind(version.id).all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved adult destination no longer passes approval validation. Update the draft first.");
+    return { stableId: "checksum", label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await adultProfileChecksum({ bio: version.adult_bio, links });
+  if (checksum !== version.content_checksum) throw new Error("The adult profile changed outside the approved draft workflow. Save the draft again before approving it.");
+  const approved = await creatorPrepare(DB, creatorId, "UPDATE creator_adult_profile_versions SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note=? WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'").bind(identity.email, approvalNote, version.id, version.profile_id).run();
+  if (!approved.meta?.changes) throw new Error("This adult profile draft is no longer available for approval.");
+  await identityAuditStatement(DB, humanAuditActor(identity), "adult_profile_version_approved", version.id, { profileId: version.profile_id, versionNumber: version.version_number, contentChecksum: checksum, destinationCount: links.length, adultSurface: true }).run();
+  revalidatePath("/adult-profile");
+  redirect("/adult-profile?notice=version_approved");
+}
+
+export async function publishAdultProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedAdultProfileVersionId(formData);
+  const env = cloudflareEnv();
+  if (String(env.ADULT_PROFILE_PUBLISHING_ENABLED) !== "1") throw new Error("Adult-profile publishing is not enabled in this environment.");
+  const profile = await creatorPrepare(env.DB, creatorId, `SELECT p.id,p.published_version_id,v.id AS version_id,v.version_number,v.adult_bio,v.content_checksum,v.status AS version_status
+    FROM creator_adult_profiles p
+    JOIN creator_adult_profile_versions v ON v.id=? AND v.profile_id=p.id AND v.creator_id=p.creator_id
+    WHERE p.creator_id=@creator AND v.status IN ('draft','approved')`).bind(versionId).first<{ id: string; published_version_id: string | null; version_id: string; version_number: number; adult_bio: string; content_checksum: string; version_status: "draft" | "approved" }>();
+  if (!profile) throw new Error("Only this creator’s saved adult-profile draft can be published.");
+  const linkRows = await creatorPrepare(env.DB, creatorId, "SELECT label,destination_url,destination_host,sort_order FROM creator_adult_link_revisions WHERE creator_id=@creator AND profile_version_id=? AND enabled=1 ORDER BY sort_order ASC").bind(profile.version_id).all<{ label: string; destination_url: string; destination_host: string; sort_order: number }>();
+  const links = linkRows.results.map((link) => {
+    const destination = approvedHttpsDestination(link.destination_url);
+    if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved adult destination no longer passes publication validation. Save the profile again before publishing.");
+    return { stableId: "checksum", label: link.label, ...destination, sortOrder: link.sort_order };
+  });
+  const checksum = await adultProfileChecksum({ bio: profile.adult_bio, links });
+  if (checksum !== profile.content_checksum) throw new Error("The adult profile changed outside the saved workflow. Save it again before publishing.");
+  if (profile.version_status === "draft") {
+    const [approved] = await env.DB.batch([
+      creatorPrepare(env.DB, creatorId, "UPDATE creator_adult_profile_versions SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note='Publish selected in profile editor' WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'").bind(identity.email, profile.version_id, profile.id),
+      identityAuditStatement(env.DB, humanAuditActor(identity), "adult_profile_version_approved", profile.version_id, { profileId: profile.id, versionNumber: profile.version_number, contentChecksum: checksum, destinationCount: links.length, adultSurface: true, approvalSource: "publish_button" }),
+    ]);
+    if (!approved.meta?.changes) throw new Error("This adult-profile draft is no longer available to publish.");
+  }
+  const response = await fetchInternalService(env, "public_links_control", "adult.profile.publish", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/adult/publish", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: profile.id, versionId: profile.version_id }),
+  });
+  if (response.status !== 202) throw new Error(`Adult publication control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "adult_profile_publish_requested", profile.version_id, { profileId: profile.id, versionNumber: profile.version_number, adultSurface: true }).run();
+  revalidatePath("/adult-profile");
+  revalidatePath("/public-profile");
+  redirect("/adult-profile?notice=publication_started");
+}
+
+export async function withdrawAdultProfileAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  const creatorId = identity.creator.creator_id;
+  const versionId = submittedAdultProfileVersionId(formData);
+  const env = cloudflareEnv();
+  const profile = await creatorPrepare(env.DB, creatorId, "SELECT id,published_version_id FROM creator_adult_profiles WHERE creator_id=@creator AND status='active' AND published_version_id=?")
+    .bind(versionId).first<{ id: string; published_version_id: string }>();
+  if (!profile) throw new Error("This creator has no matching published adult profile to withdraw.");
+  const response = await fetchInternalService(env, "public_links_control", "adult.profile.withdraw", env.PUBLIC_LINKS_CONTROL, "https://public-links-control/adult/withdraw", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ creatorId, profileId: profile.id, versionId: profile.published_version_id }),
+  });
+  if (response.status !== 202) throw new Error(`Adult withdrawal control did not accept this request (${response.status}).`);
+  await identityAuditStatement(env.DB, humanAuditActor(identity), "adult_profile_withdraw_requested", profile.published_version_id, { profileId: profile.id, adultSurface: true }).run();
+  revalidatePath("/adult-profile");
+  revalidatePath("/public-profile");
+  redirect("/adult-profile?notice=withdrawal_started");
 }

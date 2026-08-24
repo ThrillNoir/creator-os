@@ -4,7 +4,7 @@ import { issueFanslyBridgePairing, type FanslyPairingDestination } from "@/lib/f
 export async function POST(request: Request) {
   const requestUrl = new URL(request.url);
   const origin = request.headers.get("origin");
-  if (origin && origin !== requestUrl.origin) {
+  if (origin !== requestUrl.origin) {
     return new NextResponse("Cross-site pairing requests are not allowed.", { status: 403 });
   }
 

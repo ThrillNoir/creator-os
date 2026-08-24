@@ -1,4 +1,5 @@
 type UnknownRecord = Record<string, unknown>;
+import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 type TelegramMessage = {
   message_id?: number; text?: string; caption?: string; date?: number;
   photo?: unknown[]; video?: unknown; document?: unknown; voice?: unknown; audio?: unknown; sticker?: unknown;
@@ -185,6 +186,25 @@ async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?:
   }
 }
 
+async function beginTelegramSend(env: Env, creatorId: string, logId: string) {
+  const operationId = `message-send:telegram:${logId}`;
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO operation_outbox
+      (id,creator_id,operation_type,idempotency_key,payload,status,attempts,next_attempt_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,'pending',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT(idempotency_key) DO UPDATE SET status=CASE WHEN operation_outbox.status='delivered' THEN 'delivered' ELSE 'pending' END,
+        attempts=operation_outbox.attempts+1,last_error=NULL,updated_at=CURRENT_TIMESTAMP`)
+      .bind(operationId, creatorId, "message_send", operationId, JSON.stringify({ logId, platform: "telegram" })),
+    env.DB.prepare(`INSERT INTO external_operation_receipts
+      (id,creator_id,operation_id,provider,status,verification_detail,created_at,updated_at)
+      VALUES (?,?,?,'telegram','pending','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT(operation_id,provider) DO UPDATE SET status=CASE WHEN external_operation_receipts.status='confirmed' THEN 'confirmed' ELSE 'pending' END,
+        verification_detail='{}',updated_at=CURRENT_TIMESTAMP`)
+      .bind(`external-receipt:telegram:${logId}`, creatorId, operationId),
+  ]);
+  return operationId;
+}
+
 async function sendMessage(request: Request, env: Env) {
   const input = await request.json<{ logId?: string; creatorId?: string }>();
   if (!input.logId || !input.creatorId) return Response.json({ ok: false, error: "missing_log_or_creator_id" }, { status: 400 });
@@ -197,10 +217,14 @@ async function sendMessage(request: Request, env: Env) {
   if (row.emergency_paused || !row.write_enabled || !row.outbound_validated || row.connection_status !== "connected") return Response.json({ ok: false, error: "outbound_not_authorised" }, { status: 409 });
   const claim = await env.DB.prepare("UPDATE telegram_send_log SET claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='queued' AND claimed_at IS NULL").bind(row.id, creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "message_already_claimed" }, { status: 409 });
+  const operationId = `message-send:telegram:${row.id}`;
+  let providerMessageId: string | null = null;
   try {
+    await beginTelegramSend(env, creatorId, row.id);
     const result = await executeTelegramTool<{ ok?: boolean; result?: { message_id?: number; date?: number } }>(env, "TELEGRAM_SEND_MESSAGE", { chat_id: row.chat_id, text: row.message_text, disable_web_page_preview: true });
     if (!result.ok || !result.result?.message_id) throw new Error("Telegram did not confirm the message.");
     const providerId = String(result.result.message_id);
+    providerMessageId = providerId;
     const sentAt = result.result.date ? new Date(result.result.date * 1000).toISOString() : new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare("UPDATE telegram_send_log SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(providerId, row.id, creatorId),
@@ -209,15 +233,27 @@ async function sendMessage(request: Request, env: Env) {
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
         VALUES (?,?,?,?, 'outbound','agency',?,?,'sent')`).bind(`telegram-out-${creatorId}-${providerId}`, creatorId, threadId(creatorId), providerId, row.message_text, sentAt),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'telegram_message_sent','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, threadId(creatorId), JSON.stringify({ logId: row.id, providerMessageId: providerId })),
+      env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='telegram'")
+        .bind(providerId, JSON.stringify({ logId: row.id, providerMessageId: providerId }), operationId, creatorId),
+      env.DB.prepare("UPDATE operation_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
+        .bind(operationId, creatorId),
     ]);
     return Response.json({ ok: true, logId: row.id, providerMessageId: providerId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram delivery failed.";
+    const uncertain = providerMessageId !== null;
+    const safeMessage = `${uncertain ? "Outcome uncertain; verify Telegram before retrying. " : ""}${message}`.slice(0, 1000);
     await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_send_log SET status='failed',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(message.slice(0, 1000), row.id, creatorId),
-      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_message_failed','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, JSON.stringify({ logId: row.id, error: message })),
+      env.DB.prepare("UPDATE telegram_send_log SET status='failed',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(safeMessage, row.id, creatorId),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, row.connection_id, uncertain ? "telegram_message_uncertain" : "telegram_message_failed", JSON.stringify({ logId: row.id, error: safeMessage, uncertain })),
+      env.DB.prepare(`UPDATE external_operation_receipts SET status=CASE WHEN status='confirmed' THEN 'confirmed' ELSE ? END,
+        provider_operation_id=COALESCE(provider_operation_id,?),verification_detail=?,updated_at=CURRENT_TIMESTAMP
+        WHERE operation_id=? AND creator_id=? AND provider='telegram'`)
+        .bind(uncertain ? "uncertain" : "failed", providerMessageId, JSON.stringify({ logId: row.id, error: safeMessage, uncertain }), operationId, creatorId),
+      env.DB.prepare("UPDATE operation_outbox SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status<>'delivered'")
+        .bind(safeMessage, operationId, creatorId),
     ]);
-    return Response.json({ ok: false, error: message }, { status: 502 });
+    return Response.json({ ok: false, uncertain, error: safeMessage }, { status: 502 });
   }
 }
 
@@ -238,6 +274,23 @@ async function creatorIdFromBody(request: Request) {
   return requiredCreatorId((await request.json<{ creatorId?: string }>()).creatorId);
 }
 
+const routeCapabilities: Record<string, string> = {
+  "POST /validate": "telegram.connection.manage",
+  "POST /run": "telegram.messages.sync",
+  "POST /send": "telegram.messages.write",
+  "GET /status": "telegram.status.read",
+};
+
+async function authenticatedCreatorId(request: Request, env: Env, url: URL, capability: string) {
+  const candidate = request.method === "GET"
+    ? url.searchParams.get("creator")
+    : (await request.clone().json<{ creatorId?: unknown }>()).creatorId;
+  const creatorId = requiredCreatorId(candidate);
+  const service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-telegram", capability);
+  await internalServiceAuditStatement(env.DB, service, url.pathname).run();
+  return creatorId;
+}
+
 async function pollAllCreators(env: Env) {
   await pollSharedUpdates(env, "cron");
 }
@@ -246,10 +299,18 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     try {
-      if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env, await creatorIdFromBody(request)));
-      if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollSharedUpdates(env, "service", await creatorIdFromBody(request)));
+      const capability = routeCapabilities[`${request.method} ${url.pathname}`];
+      if (!capability) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+      let creatorId: string;
+      try {
+        creatorId = await authenticatedCreatorId(request, env, url, capability);
+      } catch {
+        return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+      }
+      if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env, creatorId));
+      if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollSharedUpdates(env, "service", creatorId));
       if (request.method === "POST" && url.pathname === "/send") return sendMessage(request, env);
-      if (request.method === "GET" && url.pathname === "/status") return status(env, requiredCreatorId(url.searchParams.get("creator")));
+      if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);
       return new Response("Not found", { status: 404 });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Telegram bridge failed.";

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Explicit Phase 1C domain contracts. The reconciliation tool reads only these declared domains; it is not a generic database copier.",
+  "domains": [
+    {"name":"assets","sourceTable":"assets","targetTable":"assets","relationship":"MERGE","key":"creator_id + relative_path","strategy":"compare_metadata_only","risk":"D1 R2 and Dropbox metadata is protected"},
+    {"name":"classifications","sourceTable":"asset_classifications","targetTable":"asset_classifications","relationship":"DIRECT","key":"creator_id + asset_id","strategy":"compare_after_asset_identity","risk":"Never overwrite D1 review data"},
+    {"name":"destinations","sourceTable":"asset_destinations","targetTable":"asset_destinations","relationship":"DIRECT","key":"creator_id + asset_id + destination","strategy":"compare_after_asset_identity","risk":"No automatic writes"},
+    {"name":"people","sourceTable":"people","targetTable":"people","relationship":"MANUAL REVIEW","key":"future creator-scoped person map","strategy":"sensitive_manual_review","risk":"Numeric IDs and private notes are not portable"},
+    {"name":"accounts","sourceTable":"accounts","targetTable":"operational_accounts","relationship":"TRANSFORM","key":"future creator/platform/handle map","strategy":"metadata_only","risk":"Credentials and target operational state are protected"},
+    {"name":"threads","sourceTable":"message_threads","targetTable":"message_threads","relationship":"MERGE","key":"future connection map + external_thread_id","strategy":"append_only_provider_identity","risk":"Connection identity is not yet mapped"},
+    {"name":"messages","sourceTable":"messages","targetTable":"messages","relationship":"MERGE","key":"future connection map + external_message_id","strategy":"append_only_provider_identity","risk":"media_json needs attachment transformation"},
+    {"name":"media","sourceTable":"assets","targetTable":"assets","relationship":"TRANSFORM","key":"creator_id + relative_path","strategy":"metadata_only","risk":"No R2 upload or object assertion in Phase 1C"},
+    {"name":"credentials","sourceTable":"platform_connections, creator_service_connections, local_bridge_pairings","targetTable":"provider_connections, bridge_credentials","relationship":"RETIRE","key":"none","strategy":"reconnect_only","risk":"Tokens, cookies, and bearer credentials are excluded"},
+    {"name":"publishing","sourceTable":"post_packages, publication_jobs, publication_events","targetTable":"social_posts, social_post_events","relationship":"TRANSFORM","key":"future provenance map","strategy":"history_only_manual_review","risk":"Local multi-asset packages do not fit one-asset target posts"},
+    {"name":"analytics","sourceTable":"analytics_imports, analytics_metrics, instagram_*","targetTable":"instagram_*_metrics","relationship":"TRANSFORM","key":"future source/import identity","strategy":"manual_review","risk":"Fields and units differ"},
+    {"name":"finance","sourceTable":"analytics_metrics, creator_financial_settings","targetTable":"finance_imports, finance_daily_metrics, creator_finance_settings","relationship":"TRANSFORM","key":"future content hash/import identity","strategy":"manual_review","risk":"Float/local values must not overwrite minor-unit D1 facts"},
+    {"name":"memory","sourceTable":"creator_voice_profiles, research_findings, agent_tasks","targetTable":null,"relationship":"ARCHIVE ONLY","key":"none","strategy":"privacy_review","risk":"No canonical D1 memory schema"},
+    {"name":"audit","sourceTable":"messaging_audit_events, workflow_receipts, automation_events","targetTable":"identity_audit_events, messaging_audit_events","relationship":"ARCHIVE ONLY","key":"none","strategy":"do_not_insert_as_current_audit","risk":"Historical actor provenance is not equivalent"}
+  ]
+}

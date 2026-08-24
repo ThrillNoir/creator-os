@@ -153,10 +153,10 @@ function seedRealisticAdelaide(db) {
   })();
 }
 
-test("Wrangler 4.120.0 parses comments and quotes but the preserved nested CASE is the compound split boundary", async () => {
+test("Wrangler 4.125.0 parses comments and quotes but the preserved nested CASE is the compound split boundary", async () => {
   const version = spawnSync(wrangler, ["--version"], { encoding: "utf8" });
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /4\.120\.0/);
+  assert.match(version.stdout, /4\.125\.0/);
   const repro = await readFile(path.join(appRoot, "tests/fixtures/0018-nested-case-repro.sql"), "utf8");
   const parts = unstable_splitSqlQuery(repro);
   assert.equal(parts.length, 2);

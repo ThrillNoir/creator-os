@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "allowedEnvironments": ["staging"],
+  "backupMaxAgeMinutes": 60,
+  "purpose": "Fail-closed policy for repository-owned bounded D1 migration releases. Production execution is deliberately disabled."
+}

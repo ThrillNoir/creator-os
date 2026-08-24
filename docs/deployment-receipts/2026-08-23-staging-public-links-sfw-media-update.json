@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "publicLinks",
+  "service": "thot-os-public-links",
+  "environment": "staging",
+  "gitSha": "677dc5cd2643132f30a4efc4e810771bc0951c72",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T08:49:54Z",
+  "worker": "thot-os-public-links-staging",
+  "workerVersion": "afa60b67-4e91-4c8f-b19c-a85be38650e1",
+  "deploymentTimestamp": "2026-08-23T08:50:05.931Z",
+  "migrationState": "No D1 migration applied; existing staging baseline 0040-0043 retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "not-verified",
+    "detail": "The authoritative DNS record and forced edge requests confirm the custom-domain origin fails closed while the synthetic profile fixture and local browser DNS verification remain pending."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}

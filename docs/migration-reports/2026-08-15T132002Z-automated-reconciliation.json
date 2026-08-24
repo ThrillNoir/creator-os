@@ -1,0 +1,718 @@
+{
+  "schemaVersion": 1,
+  "mode": "READ ONLY / DRY RUN",
+  "source": {
+    "snapshot": "sqlite-consistent-backup.sqlite",
+    "checksum": "2f4049754867ae6b9f3f24c67282bd16097bcd5da7e349298a4921dfb2f17c4c",
+    "integrity": "ok"
+  },
+  "target": {
+    "environment": "staging",
+    "databaseName": "thot-os-staging",
+    "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+    "snapshotChecksum": "4132fa95dbe33d8d2e6dcbf04bbc10fd77044371133d14f4cb3b5302eada31c6",
+    "migrationState": [
+      "0001_adelaide_library.sql",
+      "0002_library_classification_events.sql",
+      "0003_operations_foundation.sql",
+      "0004_reddit_scheduler.sql",
+      "0005_reddit_queue_controls.sql",
+      "0006_instagram_operations.sql",
+      "0007_vault_bridge.sql",
+      "0008_reddit_native_bridge.sql",
+      "0009_unified_messages.sql",
+      "0010_telegram_connector.sql",
+      "0011_instagram_completion.sql",
+      "0012_instagram_replies.sql",
+      "0013_instagram_reply_window.sql",
+      "0014_instagram_message_subscription.sql",
+      "0015_message_attachments.sql",
+      "0016_telegram_fansly_messages.sql",
+      "0017_reddit_community_events.sql",
+      "0018_creator_identity_profiles.sql",
+      "0019_actor_role_audit.sql",
+      "0020_actor_role_contract.sql",
+      "0021_creator_dropbox_source.sql",
+      "0022_asset_preview_queue.sql",
+      "0023_fansly_account_invariant.sql",
+      "0024_finance_foundation.sql",
+      "0025_reddit_composio_native_api.sql",
+      "0026_retire_reddit_browser_bridge.sql",
+      "0027_reddit_post_flairs.sql"
+    ]
+  },
+  "safety": {
+    "phase": "1C.6",
+    "applyEnabled": false,
+    "environment": "staging",
+    "remoteMutation": false,
+    "existingD1UpdateDefault": "DENY"
+  },
+  "manifests": [
+    {
+      "creatorId": "adelaide",
+      "mapping": {
+        "confidence": "high",
+        "approval": "identity_match_only"
+      },
+      "domains": {
+        "assets": {
+          "TARGET_ONLY": 117,
+          "TARGET_AUTHORITATIVE": 202,
+          "MATCH": 24
+        },
+        "classifications": {
+          "TARGET_ONLY": 51,
+          "MATCH": 194,
+          "CONFLICT": 1
+        },
+        "destinations": {
+          "MATCH": 212,
+          "TARGET_ONLY": 155
+        },
+        "messages": {
+          "TARGET_ONLY": 304,
+          "MATCH": 24,
+          "AMBIGUOUS": 18
+        },
+        "threads": {
+          "TARGET_ONLY": 27,
+          "MATCH": 19,
+          "AMBIGUOUS": 1
+        },
+        "media": {
+          "MATCH": 202,
+          "MANUAL_REVIEW": 24,
+          "TARGET_ONLY": 117
+        },
+        "people": {
+          "MANUAL_REVIEW": 1,
+          "TARGET_ONLY": 1
+        },
+        "accounts": {
+          "MANUAL_REVIEW": 4,
+          "TARGET_ONLY": 5
+        },
+        "credentials": {
+          "ARCHIVE_ONLY": 1,
+          "TARGET_ONLY": 2
+        },
+        "publishing": {
+          "MANUAL_REVIEW": 2,
+          "TARGET_ONLY": 22
+        },
+        "finance": {},
+        "memory": {},
+        "audit": {
+          "ARCHIVE_ONLY": 61,
+          "TARGET_ONLY": 3029
+        }
+      }
+    },
+    {
+      "creatorId": "bryshanagy",
+      "mapping": {
+        "confidence": "high",
+        "approval": "identity_match_only"
+      },
+      "domains": {
+        "assets": {
+          "TARGET_ONLY": 60,
+          "SOURCE_ONLY": 1
+        },
+        "classifications": {
+          "SOURCE_ONLY": 1
+        },
+        "destinations": {},
+        "messages": {},
+        "threads": {},
+        "media": {
+          "MANUAL_REVIEW": 1,
+          "TARGET_ONLY": 60
+        },
+        "people": {},
+        "accounts": {
+          "MANUAL_REVIEW": 4,
+          "TARGET_ONLY": 1
+        },
+        "credentials": {
+          "ARCHIVE_ONLY": 1
+        },
+        "publishing": {},
+        "finance": {},
+        "memory": {},
+        "audit": {
+          "ARCHIVE_ONLY": 6,
+          "TARGET_ONLY": 2
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "creator": "adelaide",
+      "entityType": "operational_account",
+      "platform": "fansly",
+      "declaredClassification": "CONFIRMED",
+      "computedConfidence": "PROBABLE",
+      "resolution": "AUTO_RESOLVED_NON_DESTRUCTIVE_MAPPING",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "exact_handle",
+        "same_creator",
+        "same_platform",
+        "source_and_target_identity_confirmed",
+        "target_browser_profile_verified"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "operational_account",
+      "platform": "instagram",
+      "declaredClassification": "PROBABLE",
+      "computedConfidence": "PROBABLE",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "confirmed_provider_external_identity",
+        "one_target_platform_candidate",
+        "same_creator"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "operational_account",
+      "platform": "reddit",
+      "declaredClassification": "CONFLICT",
+      "computedConfidence": "CONFLICT",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [],
+      "conflictingEvidence": [
+        "DECLARED_MAPPING_CONFLICT",
+        "external_identity_mismatch",
+        "two_source_accounts_to_one_target_candidate"
+      ],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "operational_account",
+      "platform": "reddit",
+      "declaredClassification": "CONFLICT",
+      "computedConfidence": "CONFLICT",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [],
+      "conflictingEvidence": [
+        "DECLARED_MAPPING_CONFLICT",
+        "external_identity_mismatch",
+        "two_source_accounts_to_one_target_candidate"
+      ],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "operational_account",
+      "platform": "myroomz",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "target_only"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "operational_account",
+      "platform": "youtube",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "target_only"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "operational_account",
+      "platform": "fansly",
+      "declaredClassification": "PROBABLE",
+      "computedConfidence": "CONFLICT",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "one_target_platform_candidate",
+        "same_creator",
+        "verified_target_browser_profile"
+      ],
+      "conflictingEvidence": [
+        "handle_mismatch"
+      ],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "operational_account",
+      "platform": "instagram",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "source_only"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "operational_account",
+      "platform": "myroomz",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "source_only"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "operational_account",
+      "platform": "onlyfans",
+      "declaredClassification": "RETIRED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RETIRED",
+      "evidence": [
+        "local_bridge_never_paired_or_seen",
+        "source_only"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "provider_connection",
+      "platform": "instagram",
+      "declaredClassification": "CONFIRMED",
+      "computedConfidence": "DETERMINISTIC",
+      "resolution": "AUTO_RESOLVED_NON_DESTRUCTIVE_MAPPING",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "exact_external_identity",
+        "identity_confirmed",
+        "same_creator",
+        "same_service",
+        "target_active"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "provider_connection",
+      "platform": "instagram",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "no_target_provider_row",
+        "source_identity_confirmed"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "provider_connection",
+      "platform": "reddit",
+      "declaredClassification": "CONFLICT",
+      "computedConfidence": "CONFLICT",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "same_creator",
+        "same_service"
+      ],
+      "conflictingEvidence": [
+        "DECLARED_MAPPING_CONFLICT",
+        "external_identity_mismatch"
+      ],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "provider_connection",
+      "platform": "youtube",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "source_only_identity_confirmed"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "provider_connection",
+      "platform": "dropbox",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "source_only_identity_confirmed"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "provider_connection",
+      "platform": "dropbox",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "source_only_identity_confirmed"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "provider_connection",
+      "platform": "reddit",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "source_only_identity_confirmed"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "messaging_connection",
+      "platform": "telegram",
+      "declaredClassification": "CONFIRMED",
+      "computedConfidence": "DETERMINISTIC",
+      "resolution": "AUTO_RESOLVED_NON_DESTRUCTIVE_MAPPING",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "creator_scoped_pairing",
+        "exact_private_external_identity",
+        "target_identity_confirmed",
+        "target_polled"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "messaging_connection",
+      "platform": "fansly",
+      "declaredClassification": "PROBABLE",
+      "computedConfidence": "DETERMINISTIC",
+      "resolution": "AUTO_RESOLVED_NON_DESTRUCTIVE_MAPPING",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "EXACT_PROVIDER_MESSAGE_ID_OVERLAP",
+        "EXACT_PROVIDER_THREAD_ID_OVERLAP",
+        "confirmed_account_or_bridge_evidence",
+        "one_target_platform_candidate",
+        "target_validated_state"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": [
+        "EXACT_PROVIDER_THREAD_ID_OVERLAP",
+        "EXACT_PROVIDER_MESSAGE_ID_OVERLAP"
+      ]
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "messaging_connection",
+      "platform": "instagram",
+      "declaredClassification": "PROBABLE",
+      "computedConfidence": "PROBABLE",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "EXISTING_CLOUD_CREDENTIAL",
+      "evidence": [
+        "confirmed_provider_identity",
+        "one_target_platform_candidate",
+        "target_validated_state"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "adelaide",
+      "entityType": "messaging_connection",
+      "platform": "reddit",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "no_target_messaging_connection",
+        "upstream_account_conflict"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    },
+    {
+      "creator": "bryshanagy",
+      "entityType": "messaging_connection",
+      "platform": "all",
+      "declaredClassification": "UNMAPPED",
+      "computedConfidence": "AMBIGUOUS",
+      "resolution": "PRESERVE_OR_ESCALATE",
+      "credentialDecision": "RECONNECT_REQUIRED",
+      "evidence": [
+        "no_target_messaging_connections"
+      ],
+      "conflictingEvidence": [],
+      "automaticInvestigation": []
+    }
+  ],
+  "futureCanonicalCreators": [
+    {
+      "creatorId": "thrill-noir",
+      "classification": "CREATE_CANONICAL_CREATOR",
+      "targetStatus": "FUTURE_CANONICAL_NO_TARGET",
+      "activeMigrationCandidates": 0,
+      "categories": {
+        "futureCandidateSet": {
+          "assets": 706,
+          "classifications": 785
+        },
+        "archiveOnly": {
+          "audit": 56,
+          "sourceMissingAssets": 79
+        },
+        "reconnect": {
+          "accounts": 7,
+          "providerOrServiceConnections": 4,
+          "messagingConnections": 4,
+          "bridgeOrVaultState": 9
+        },
+        "manualReview": {
+          "people": 1,
+          "publishing": 1,
+          "threads": 33,
+          "messages": 239
+        },
+        "excluded": {
+          "credentialsAndPairings": 2
+        }
+      }
+    }
+  ],
+  "metrics": {
+    "totalEntitiesAnalysed": 6905,
+    "automaticallyResolved": 4903,
+    "automaticResolutionPercentage": 71.01,
+    "deterministic": 4631,
+    "highConfidence": 0,
+    "probable": 3,
+    "ambiguous": 67,
+    "conflicts": 5,
+    "noMatch": 0,
+    "targetAuthoritative": 202,
+    "archiveOnly": 204,
+    "requiresHumanIntervention": 6
+  },
+  "exceptions": [
+    {
+      "exceptionId": "exc-6359bc68d677a457a5f0",
+      "creator": "adelaide",
+      "domain": "classifications",
+      "entity": "classifications",
+      "classification": "CONFLICT",
+      "confidence": "CONFLICT",
+      "evidence": [],
+      "conflictingEvidence": [],
+      "risk": "medium",
+      "recommendedResolution": "Review the grouped evidence before any future manifest",
+      "requiresHumanInput": true,
+      "affectedRecordCount": 1,
+      "sampleRecordRefs": [
+        "89b560a217eb92891e67fc06"
+      ],
+      "recordRefsChecksum": "b1734dc5ae5454b5ede238930a4265269606ed06436ef6a75ba54d8c38dc4a03",
+      "automaticInvestigation": []
+    },
+    {
+      "exceptionId": "exc-f97243750288ff54a2b0",
+      "creator": "adelaide",
+      "domain": "reddit_identity",
+      "entity": "account_and_provider",
+      "classification": "CONFLICT",
+      "confidence": "CONFLICT",
+      "evidence": [],
+      "conflictingEvidence": [
+        "DECLARED_MAPPING_CONFLICT",
+        "external_identity_mismatch",
+        "two_source_accounts_to_one_target_candidate"
+      ],
+      "risk": "high",
+      "recommendedResolution": "Choose the canonical account identity and reconnect if required",
+      "requiresHumanInput": true,
+      "affectedRecordCount": 3,
+      "sampleRecordRefs": [
+        "1d32795862c7bc9e",
+        "dd4cdc6b7980ff97",
+        "ef6c89defcc0f50f"
+      ],
+      "recordRefsChecksum": "2469ea4d7b463334269fd9b98aa37b507ec38e3cc4519dc66e12c0c657372ba4",
+      "automaticInvestigation": []
+    },
+    {
+      "exceptionId": "exc-4567ea7a9436f1cd73af",
+      "creator": "bryshanagy",
+      "domain": "connections",
+      "entity": "operational_account",
+      "classification": "CONFLICT",
+      "confidence": "CONFLICT",
+      "evidence": [
+        "one_target_platform_candidate",
+        "same_creator",
+        "verified_target_browser_profile"
+      ],
+      "conflictingEvidence": [
+        "handle_mismatch"
+      ],
+      "risk": "high",
+      "recommendedResolution": "Choose the canonical account identity and reconnect if required",
+      "requiresHumanInput": true,
+      "affectedRecordCount": 1,
+      "sampleRecordRefs": [
+        "3203951ad7e2376a"
+      ],
+      "recordRefsChecksum": "886810a83e2e4f59d79a2796fbc410830abb9a02af9eea27c7fd7591d89162ad",
+      "automaticInvestigation": []
+    },
+    {
+      "exceptionId": "exc-e0dd4452b247480d9f05",
+      "creator": "thrill-noir",
+      "domain": "creator_authority",
+      "entity": "creator",
+      "classification": "AMBIGUOUS",
+      "confidence": "AMBIGUOUS",
+      "evidence": [
+        "OWNER_DECLARED_FUTURE_CANONICAL_CREATOR"
+      ],
+      "conflictingEvidence": [],
+      "risk": "high",
+      "recommendedResolution": "Approve a dedicated canonical-creator creation phase before evaluating child records",
+      "requiresHumanInput": true,
+      "affectedRecordCount": 1,
+      "sampleRecordRefs": [
+        "98ffc2c470873698bfa7402f"
+      ],
+      "recordRefsChecksum": "16eb79c8a86387d461a11cafc10867dd7a2c5ecf65df4ed148f8d2866f527d4d",
+      "automaticInvestigation": [
+        "future_canonical_source_inventory"
+      ]
+    },
+    {
+      "exceptionId": "exc-16a34559fc199a5bc312",
+      "creator": "adelaide",
+      "domain": "instagram_identity",
+      "entity": "account_and_messaging",
+      "classification": "PROBABLE",
+      "confidence": "PROBABLE",
+      "evidence": [
+        "confirmed_provider_external_identity",
+        "one_target_platform_candidate",
+        "same_creator"
+      ],
+      "conflictingEvidence": [],
+      "risk": "medium",
+      "recommendedResolution": "Obtain one immutable provider or account identifier before confirming",
+      "requiresHumanInput": true,
+      "affectedRecordCount": 2,
+      "sampleRecordRefs": [
+        "c47ecd19595ad535",
+        "e75ac4a0f16e9bab"
+      ],
+      "recordRefsChecksum": "944e44adb674118c381bf4e5b9eec44180dd02393e9cbdd60b0c43590e656410",
+      "automaticInvestigation": []
+    },
+    {
+      "exceptionId": "exc-a35d61246c50f58ad4b5",
+      "creator": "bryshanagy",
+      "domain": "assets",
+      "entity": "asset",
+      "classification": "SOURCE_MISSING",
+      "confidence": "AMBIGUOUS",
+      "evidence": [
+        "FILENAME_BYTES_EXTENSION_MATCH"
+      ],
+      "conflictingEvidence": [],
+      "risk": "medium",
+      "recommendedResolution": "Verify the immutable source object and resolve the possible target duplicate",
+      "requiresHumanInput": true,
+      "affectedRecordCount": 1,
+      "sampleRecordRefs": [
+        "37a9c57fcd0b4dd830dfc0fb"
+      ],
+      "recordRefsChecksum": "04657067fb41f7120c3227a89f28118265266d6c9be20cac3a4622aa2b632ec6",
+      "automaticInvestigation": [
+        "same_creator_filename_bytes_extension_scan",
+        "source_filesystem_availability_check"
+      ]
+    }
+  ],
+  "candidateDiscovery": [
+    {
+      "creator": "bryshanagy",
+      "domain": "assets",
+      "recordRef": "37a9c57fcd0b4dd830dfc0fb",
+      "status": "NOT_SAFE",
+      "riskRank": 9,
+      "dependencyCount": 2,
+      "verificationComplexity": 3,
+      "affectedRecordCount": 1,
+      "assetStatus": "SOURCE_MISSING",
+      "confidence": "AMBIGUOUS",
+      "reasonCodes": [
+        "IDENTITY_NOT_AUTOMATIC",
+        "POSSIBLE_TARGET_DUPLICATE",
+        "SOURCE_OBJECT_UNAVAILABLE",
+        "SOURCE_OBJECT_UNVERIFIED"
+      ]
+    }
+  ],
+  "operatorSummary": {
+    "automaticallyResolved": 4903,
+    "protectedTargetData": 202,
+    "archived": 204,
+    "humanDecisions": 6,
+    "safeCandidates": 0
+  },
+  "tool": {
+    "gitSha": "5a5e25cc884e4f4d667146a2c2025665f242c482"
+  },
+  "generatedAt": "2026-08-15T13:29:27.929Z"
+}

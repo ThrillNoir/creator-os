@@ -2,6 +2,11 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
 
+const arguments_ = process.argv.slice(2);
+if (arguments_[0] !== "--environment" || arguments_[1] !== "staging" || !arguments_.includes("--execute")) {
+  throw new Error("Refusing remote D1 migration. Use --environment staging --execute only after a fresh backup and an explicitly approved migration runbook.");
+}
+
 const root = resolve(import.meta.dirname, "..");
 const local = new Database(resolve(root, ".creator-os/creator-os.sqlite"), { readonly: true });
 const pairing = local.prepare(`SELECT creator_id,chat_id,telegram_user_id,telegram_username,display_name,last_update_id,paired_at

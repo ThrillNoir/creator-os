@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "adultGateway",
+  "service": "thot-os-adult-gateway",
+  "environment": "staging",
+  "gitSha": "ca0274404f6a04e741466f475bec85bcc53a0537",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T11:20:25.941Z",
+  "worker": "thot-os-adult-gateway-staging",
+  "workerVersion": "a02c8301-2df2-4074-b958-d334d9182a14",
+  "deploymentTimestamp": "2026-08-23T11:30:17.943Z",
+  "migrationState": "No D1 migration applied; existing staging baseline retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "not-verified",
+    "detail": "Worker deployment and bindings verified; custom hostname has not yet resolved publicly."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}

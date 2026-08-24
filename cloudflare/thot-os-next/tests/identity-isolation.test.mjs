@@ -43,6 +43,8 @@ test("viewer memberships cannot mutate", () => {
   assert.equal(roleCan("legacy", "view"), false);
   assert.equal(roleCan("legacy", "mutate"), false);
   assert.equal(roleCan("operator", "approve"), true);
+  assert.equal(roleCan("creator", "approve"), false);
+  assert.deepEqual(authorizeCreatorScope([adelaide], "approve", "adelaide", null), { ok: false, status: 404 });
   assert.equal(roleCan("agency_admin", "manage_identity"), true);
   assert.deepEqual(authorizeCreatorScope([secondCreator], "mutate", "second", null), { ok: false, status: 404 });
 });
@@ -61,7 +63,25 @@ test("the browser QA mutation requires an exact same-origin request", () => {
   const url = "https://thot-os-staging.thot-os.workers.dev/api/staging/qa/human-mutation";
   assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "https://thot-os-staging.thot-os.workers.dev" } })), true);
   assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "https://attacker.example" } })), false);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { referer: "https://thot-os-staging.thot-os.workers.dev/staging-qa" } })), true);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { referer: "https://attacker.example/" } })), false);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { "sec-fetch-site": "same-origin" } })), true);
+  assert.equal(isSameOriginRequest(new Request(url, { headers: { "sec-fetch-site": "same-site" } })), false);
   assert.equal(isSameOriginRequest(new Request(url)), false);
+});
+
+test("local development accepts only equivalent loopback origins", () => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = "development";
+  try {
+    const url = "http://127.0.0.1:3001/api/profile-image";
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "http://localhost:3001" } })), true);
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "http://localhost:3002" } })), false);
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "https://localhost:3001" } })), false);
+    assert.equal(isSameOriginRequest(new Request(url, { headers: { origin: "http://attacker.example:3001" } })), false);
+  } finally {
+    process.env.NODE_ENV = previous;
+  }
 });
 
 test("service role is returned only after credential and creator-grant validation", async () => {
@@ -71,7 +91,7 @@ test("service role is returned only after credential and creator-grant validatio
       return {
         bind(_hash, creatorId) {
           boundCreator = creatorId;
-          return { first: async () => creatorId === "adelaide" ? { id: "service-id", service_name: "qa-runner" } : null };
+          return { first: async () => creatorId === "adelaide" ? { id: "service-id", principal_id: "qa-principal", principal_name: "qa-runner" } : null };
         },
       };
     },
@@ -79,6 +99,7 @@ test("service role is returned only after credential and creator-grant validatio
   const request = new Request("https://thot-os.test/api/staging/qa/service-mutation", { headers: { authorization: "Bearer local-test-token" } });
   assert.deepEqual(await requireServiceAuditActor(request, DB, "adelaide"), {
     actor: { identity: "service:qa-runner", role: "service", creatorId: "adelaide" },
+    principalId: "qa-principal",
     credentialId: "service-id",
   });
   assert.equal(boundCreator, "adelaide");
@@ -163,23 +184,26 @@ test("identity storage enforces creator-owned profiles and exclusive identity cl
 });
 
 test("cloud pairing is pre-bound and never exposes credentials to provider origins", async () => {
-  const [bridge, actions, fansly, extension, nativePair] = await Promise.all([
+  const [bridge, actions, fansly, extension, redditPublisher, nativePair] = await Promise.all([
     source("../../vault-bridge/src/index.ts"),
     source("../src/app/actions.ts"),
     source("../src/lib/fansly-pairing.ts"),
     source("../../../public/local-bridge-extension/background.js"),
+    source("../../../public/local-bridge-extension/reddit-publisher.js"),
     source("../../../public/local-bridge-extension/native-pair.js"),
   ]);
   assert.match(bridge, /installation_id=\? AND status<>'revoked'/);
   assert.doesNotMatch(bridge, /installation_id IS NULL/);
   assert.match(bridge, /content-security-policy/);
-  assert.match(actions, /VAULT_BRIDGE_BASE_URL[\s\S]*creator_os_bridge_pair/);
   assert.match(fansly, /VAULT_BRIDGE_BASE_URL[\s\S]*creator_os_bridge_pair/);
+  assert.doesNotMatch(actions, /openRedditBridgeAction|platform=reddit&next=/);
   assert.doesNotMatch(actions, /reddit\.com\/submit#creator_os/);
   assert.doesNotMatch(fansly, /fansly\.com\/[^{`]*#creator_os/);
   assert.match(extension, /x-thot-os-installation-id/);
   assert.match(extension, /stageVaultFile,args:\[job\.mediaUrl,config\.token,config\.installationId/);
-  assert.match(extension, /prepareAndSubmitRedditPost,args:\[job,config\.token,config\.installationId/);
+  assert.match(redditPublisher, /chrome\.storage\.local\.get/);
+  assert.match(redditPublisher, /authorization:`Bearer \$\{config\.token\}`/);
+  assert.doesNotMatch(redditPublisher, /document\.(?:cookie|write)|localStorage|sessionStorage/);
   assert.doesNotMatch(nativePair, /creator_os_cloud_pair/);
 });
 

@@ -3,7 +3,12 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-const creatorId = process.argv[2]?.trim() || "adelaide";
+const arguments_ = process.argv.slice(2);
+if (arguments_[0] !== "--environment" || arguments_[1] !== "staging" || !arguments_.includes("--execute")) {
+  throw new Error("Refusing remote R2 upload. Use --environment staging --execute only after the deployment preflight and an approved upload runbook.");
+}
+
+const creatorId = arguments_.find((argument) => !argument.startsWith("--") && argument !== "staging")?.trim() || "adelaide";
 const manifestPath = path.resolve("output/cloudflare", `${creatorId}-previews.json`);
 const configPath = path.resolve("cloudflare/thot-os-app/wrangler.jsonc");
 const bucket = "thot-os-previews-staging";

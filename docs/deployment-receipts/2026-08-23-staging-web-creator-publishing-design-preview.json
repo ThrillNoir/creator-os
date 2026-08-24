@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "web",
+  "service": "thot-os-web",
+  "environment": "staging",
+  "gitSha": "d538ea05210b55dddca1fbd9fa6df80dce9277a8",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T10:56:07Z",
+  "worker": "thot-os-staging",
+  "workerVersion": "c63cec74-3582-47e7-a13c-d0b05dab73f3",
+  "deploymentTimestamp": "2026-08-23T10:56:14.727Z",
+  "migrationState": "No D1 migration applied; existing staging baseline retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "verified",
+    "detail": "Authenticated staging 18+ editor showed Save and the protected-service Publish guard; the separate desktop SFW preview rendered Adelaide's saved image, theme and button styling. No profile data or publication state changed during smoke testing."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}

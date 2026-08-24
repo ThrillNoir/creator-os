@@ -3,6 +3,7 @@ import "server-only";
 type BoundValue = string | number | null | ArrayBuffer;
 
 function compileCreatorScope(sql: string, creatorId: string, values: BoundValue[]) {
+  if (!sql.includes("@creator")) throw new Error("Creator-scoped SQL must contain the @creator boundary.");
   let valueIndex = 0;
   const bound: BoundValue[] = [];
   const statement = sql.replace(/@creator|\?/g, (token) => {

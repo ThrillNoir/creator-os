@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "publicMedia",
+  "service": "thot-os-public-media",
+  "environment": "staging",
+  "gitSha": "677dc5cd2643132f30a4efc4e810771bc0951c72",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T08:49:54Z",
+  "worker": "thot-os-public-media-staging",
+  "workerVersion": "91f5e3ee-6591-4850-881a-2d2aa82254d7",
+  "deploymentTimestamp": "2026-08-23T08:50:05.921Z",
+  "migrationState": "No D1 migration applied; existing staging baseline 0040-0043 retained.",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "not-verified",
+    "detail": "The custom-domain /media route is deployed and fails closed with no-store responses before a synthetic approved derivative is published."
+  },
+  "operator": "codex",
+  "tool": "manual-controlled-deploy"
+}

@@ -54,7 +54,7 @@
       button.disabled=true;
       setStatus("Preparing Fansly and checking the approved queue…");
       const result=await send({type:"creator-os-process-fansly-vault"});
-      if(result?.state==="staged")setStatus(`${result.filename||"The file"} was added. Wait for Fansly processing, then verify it in Creator OS.`,"success");
+      if(result?.state==="staged")setStatus(`${result.filename||"The file"} is saved in Fansly’s vault and verified by Creator OS.`,"success");
       else if(result?.state==="empty")setStatus("No approved Fansly upload is waiting for this creator.");
       else if(result?.state==="unpaired")setStatus("Pair this Chrome profile again from Creator OS.","error");
       else setStatus(result?.error||"The upload could not be prepared.","error");

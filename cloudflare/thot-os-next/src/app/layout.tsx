@@ -7,5 +7,5 @@ export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   await requireAccessIdentity();
-  return <html lang="en"><body>{children}</body></html>;
+  return <html lang="en" className="dark"><body>{children}</body></html>;
 }

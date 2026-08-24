@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "publicLinksControl",
+  "service": "thot-os-public-links-control",
+  "environment": "staging",
+  "gitSha": "fdf36e7b2c08a6714cae4a84d930ab55183f015f",
+  "gitBranch": "codex/creator-profile-staging",
+  "buildTime": "2026-08-23T07:57:15.336Z",
+  "worker": "thot-os-public-links-control-staging",
+  "workerVersion": "c5f8d844-792b-4a32-bcd3-8fd34b191036",
+  "deploymentTimestamp": "2026-08-23T07:59:45.817Z",
+  "migrationState": "0040-0043 applied and remotely confirmed",
+  "resourceBindingsVerified": {
+    "mode": "registry-and-config",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "deployed",
+    "detail": "Cloudflare version and bindings confirmed; Worker remains non-public and publication policy is synthetic-only for SFW and disabled for adult."
+  },
+  "operator": "Codex",
+  "tool": "manual-controlled-deploy"
+}

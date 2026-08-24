@@ -1,0 +1,18 @@
+// Source-only local template. It is not a deploy configuration and contains no
+// live namespace IDs, routes, secrets, media buckets, or hostnames.
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "thot-os-adult-gateway-local-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "kv_namespaces": [{ "binding": "ADULT_PROFILES", "id": "LOCAL_ADULT_PROFILES_ONLY" }],
+  "r2_buckets": [{ "binding": "ADULT_MEDIA", "bucket_name": "LOCAL_ADULT_MEDIA_ONLY" }],
+  "analytics_engine_datasets": [{ "binding": "ADULT_EVENTS", "dataset": "LOCAL_ADULT_EVENTS_ONLY" }],
+  "vars": {
+    "TURNSTILE_SITE_KEY": "REQUIRES_LOCAL_VALUE",
+    "TURNSTILE_EXPECTED_HOSTNAME": "localhost"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"] }
+}

@@ -6,8 +6,9 @@
     "lib": ["ES2022", "WebWorker"],
     "types": [],
     "strict": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["worker-configuration.d.ts", "src/**/*.ts"]
+  "include": ["worker-configuration.d.ts", "src/**/*.ts", "../shared/**/*.ts"]
 }

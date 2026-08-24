@@ -32,8 +32,14 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
+      # Root preflight tests validate compatibility against the canonical app's
+      # pinned Wrangler/workerd runtime, so install that dependency tree first.
+      - run: npm ci --prefix cloudflare/thot-os-next
       - run: npm run lint
       - run: npm test
+      # Static only: validates the committed deployment registry against Wrangler
+      # configuration without authenticating to or changing Cloudflare.
+      - run: npm run deployment:preflight -- --environment staging --all
       - run: npx tsc --noEmit
       - run: npm run build
       - run: git diff --check

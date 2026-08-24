@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "patchId": "staging-adult-profile-capabilities-v1",
+  "environment": "staging",
+  "sourceActivationId": "staging-canonical-service-auth-v1",
+  "operatorIdentity": "approved-release-operator",
+  "expected": {
+    "databaseName": "thot-os-staging",
+    "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f"
+  },
+  "grants": [
+    {
+      "principalName": "thot-os-web-public-links",
+      "creatorId": "adelaide",
+      "capabilities": [
+        "adult.profile.publish",
+        "adult.profile.withdraw"
+      ]
+    }
+  ]
+}
