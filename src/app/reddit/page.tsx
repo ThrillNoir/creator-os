@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {approveRedditTargetAction,createRedditPostFromAssetAction,postRedditTargetNowAction,retryRedditTargetAction,saveRedditCommunityAction} from "@/app/actions";
-import {AppNav} from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import {getActiveCreator} from "@/lib/current-creator";
 import {getAccounts,getCreatorServiceConnections,getLibraryAssets,getRedditCommunities,getRedditTargets} from "@/lib/db";
 
@@ -21,7 +21,7 @@ export default async function RedditPage({searchParams}:{searchParams:Promise<{t
   const selectedAsset=assets.find((asset)=>asset.id===selectedAssetId);
   const upcoming=targets.filter((target)=>target.status!=="submitted");
   const past=targets.filter((target)=>target.status==="submitted");
-  return <main className="app-shell"><AppNav active="Reddit operations"/><section className="workspace library-workspace">
+  return <AppShell active="Reddit operations"><section className="workspace library-workspace">
     <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · RULE-AWARE DISTRIBUTION</span><h1>Reddit operations</h1><p className="page-subtitle">Accounts, community onboarding, eligible assets, scheduling and post receipts in one workspace.</p></div><Link className="secondary-button button-link" href="/operations/reddit">Account overview</Link></header>
     {redditService&&<div className="connection-alert success">Reddit OAuth connected as <strong>{redditService.display_name}</strong>. Identity access is verified; automatic posting remains separately locked.</div>}
     <div className="connection-alert success">Approved Reddit targets can publish automatically through the connected API. Media is delivered as a Dropbox-backed link post; Finish on device remains the native-upload fallback.</div>
@@ -41,5 +41,5 @@ export default async function RedditPage({searchParams}:{searchParams:Promise<{t
         {selectedAsset?<form action={createRedditPostFromAssetAction} className="person-form"><input type="hidden" name="assetId" value={selectedAsset.id}/><div className="reddit-selected-asset"><strong>{selectedAsset.basename}</strong><span>{selectedAsset.classification_safety?.toUpperCase()} · Reddit suitable</span></div>{accounts.length>1&&<label>Reddit account<select name="accountId" required>{accounts.map((account)=><option value={account.id} key={account.id}>{account.label} · {account.handle}</option>)}</select></label>}{accounts.length===1&&<input type="hidden" name="accountId" value={accounts[0].id}/>}<label>Subreddit<select name="communityId" required><option value="">Choose subreddit</option>{communities.filter((item)=>item.status==="active").map((item)=><option value={item.id} key={item.id}>r/{item.name}</option>)}</select></label><label>Reddit title<input name="title" maxLength={300} required/></label><div className="two-fields"><label>Flair<input name="flair"/></label><label>Rating<select name="contentRating" defaultValue={selectedAsset.classification_safety==="nsfw"?"nsfw":"sfw"}><option value="sfw">SFW</option><option value="nsfw">NSFW</option></select></label></div><label>Planned time<input type="datetime-local" name="scheduledAt"/></label>{communities.some((item)=>item.status==="active")?(accounts.length||redditService?<button className="primary-button">Save Reddit post &amp; continue</button>:<div className="mini-empty">Connect a Reddit identity under Accounts &amp; connections first.</div>):<div className="mini-empty">Onboard and verify a subreddit under the Communities tab before continuing.</div>}</form>:<div className="mini-empty">Click one of the Reddit-eligible assets above. You will remain on this page.</div>}
       </section><section className="panel reddit-delivery-explainer"><div className="panel-heading"><div><h2>3 · Post now or later</h2><p>Approve the saved target from Upcoming.</p></div></div><ol><li><strong>Post now through API</strong><span>Approve an unscheduled target and THOT OS submits it immediately.</span></li><li><strong>Scheduled API post</strong><span>Set a planned time, approve once and the local scheduler publishes when due.</span></li><li><strong>Finish on device fallback</strong><span>Use this only when you need Reddit&apos;s native image/video uploader instead of a Dropbox-backed link post.</span></li></ol><p>Every API attempt is claimed once and requires a Reddit receipt. An uncertain or failed result stops for review instead of being automatically submitted again.</p></section></div>
     </>}
-  </section></main>;
+  </section></AppShell>;
 }

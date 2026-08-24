@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getMessagingThread, getMessagingThreads, getThreadDrafts, getThreadMessages } from "@/lib/db";
 import { approveMessageDraftForSendAction, createMessageDraftAction } from "@/app/actions";
@@ -17,7 +17,7 @@ export default async function MessageThreadPage({params}:{params:Promise<{thread
   const messages = getThreadMessages(creator.id,threadId);
   const drafts = getThreadDrafts(creator.id,threadId);
   const threads = getMessagingThreads(creator.id);
-  return <main className="app-shell"><AppNav active="Messages" /><section className="workspace messaging-workspace">
+  return <AppShell active="Messages"><section className="workspace messaging-workspace">
     <header className="topbar"><div><span className="eyebrow">{thread.platform.toUpperCase()} CONVERSATION</span><h1>{thread.participant_name || thread.participant_handle || "Conversation"}</h1><p className="page-subtitle">{thread.connection_name} · {messages.length} imported messages</p></div><Link className="secondary-button button-link" href="/messages">← Inbox</Link></header>
     <nav className="thread-switcher" aria-label="Switch conversation">{threads.map((item)=><Link className={item.id===thread.id?"active":""} href={`/messages/${item.id}`} key={item.id}><span>{item.platform.slice(0,2).toUpperCase()}</span><strong>{item.participant_name||item.participant_handle||"Conversation"}</strong></Link>)}</nav>
     <div className="thread-layout">
@@ -32,5 +32,5 @@ export default async function MessageThreadPage({params}:{params:Promise<{thread
         <div className="draft-history">{drafts.map((draft) => <article key={draft.id}><strong>{draft.status}</strong><p>{draft.body}</p><small>{draft.author_name} · {draft.created_at}</small>{draft.status === "draft" && <form action={approveMessageDraftForSendAction}><input type="hidden" name="threadId" value={thread.id} /><input type="hidden" name="draftId" value={draft.id} /><button className="danger-button" type="submit">Approve this one message to send</button></form>}</article>)}{!drafts.length && <div className="mini-empty">No reply drafts yet.</div>}</div>
       </aside>
     </div>
-  </section></main>;
+  </section></AppShell>;
 }

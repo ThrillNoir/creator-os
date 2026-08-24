@@ -1,5 +1,5 @@
 import { createPersonAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getPeople } from "@/lib/db";
 import { getActiveCreator } from "@/lib/current-creator";
 
@@ -9,8 +9,7 @@ export default async function PeoplePage() {
   const creator = await getActiveCreator();
   const people = getPeople(creator.id);
   return (
-    <main className="app-shell">
-      <AppNav active="People & tags" />
+    <AppShell active="People & tags">
       <section className="workspace library-workspace">
         <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · CREATOR FRIENDS</span><h1>Creator friends &amp; platform handles</h1><p className="page-subtitle">Attach one person to an asset, then THOT OS offers only the handle that exists for the chosen platform. Handles never imply consent.</p></div></header>
         <div className="people-layout">
@@ -41,6 +40,6 @@ export default async function PeoplePage() {
           </section>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

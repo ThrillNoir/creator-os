@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { CheckCircle2, Copy, Download, ExternalLink, Share2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function HandoffActions({
   media,
@@ -9,7 +11,7 @@ export function HandoffActions({
   platform,
   actionLabel,
 }: {
-  media: Array<{ url: string; filename: string }>;
+  media: Array<{ url: string; filename: string; available: boolean }>;
   caption: string;
   platformUrl: string;
   platform: string;
@@ -17,19 +19,24 @@ export function HandoffActions({
 }) {
   const [message, setMessage] = useState("");
   const [accountConfirmed, setAccountConfirmed] = useState(false);
+  const mediaAvailable = media.length > 0 && media.every((item) => item.available);
 
   async function copyCaption() {
     if (!caption) {
       setMessage("This package has no caption yet.");
       return;
     }
-    await navigator.clipboard.writeText(caption);
-    setMessage("Caption copied.");
+    try {
+      await navigator.clipboard.writeText(caption);
+      setMessage("Caption copied. THOT OS has not marked the package published.");
+    } catch {
+      setMessage("Caption could not be copied in this browser. Select and copy it from the approved caption field.");
+    }
   }
 
   async function shareToApps() {
-    if (!accountConfirmed) {
-      setMessage("Confirm the logged-in destination account first.");
+    if (!accountConfirmed || !mediaAvailable) {
+      setMessage(mediaAvailable ? "Confirm the logged-in destination account first." : "Source media is unavailable locally. Restore it before sharing this package.");
       return;
     }
     try {
@@ -49,7 +56,7 @@ export function HandoffActions({
         text: caption || undefined,
         title: `Post to ${platform}`,
       });
-      setMessage("Shared to your selected app.");
+      setMessage("Shared to your selected app. THOT OS has not marked the package published.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage(error instanceof Error ? error.message : "Sharing failed.");
@@ -57,13 +64,16 @@ export function HandoffActions({
   }
 
   return (
-    <div className="handoff-actions">
-      <label className="account-confirmation"><input type="checkbox" checked={accountConfirmed} onChange={(event) => setAccountConfirmed(event.target.checked)} /> I am logged into the correct {platform} account</label>
-      <button className="primary-button" disabled={!accountConfirmed} onClick={shareToApps}>Share media to apps</button>
-      {media.map((item, index) => <a className="handoff-button" href={`${item.url}?download=1`} download key={item.url}>Download {media.length > 1 ? `image ${index + 1}` : "media"}</a>)}
-      <button className="handoff-button" onClick={copyCaption}>Copy caption</button>
-      {accountConfirmed ? <a className="handoff-button dark" href={platformUrl} target="_blank" rel="noreferrer">{actionLabel || `Open ${platform}`} ↗</a> : <span className="handoff-button disabled">Confirm account to continue</span>}
-      {message && <p role="status">{message}</p>}
-    </div>
+    <section className="workflow-handoff-actions" aria-label="Approved handoff actions">
+      <label className="workflow-account-confirmation">
+        <input checked={accountConfirmed} onChange={(event) => setAccountConfirmed(event.target.checked)} type="checkbox" />
+        <span>I am logged into the correct {platform} account.</span>
+      </label>
+      <Button className="workflow-share-button" disabled={!accountConfirmed || !mediaAvailable} onClick={shareToApps} type="button"><Share2 aria-hidden="true" />Share media to apps</Button>
+      {media.map((item, index) => item.available ? <Button asChild key={item.url} size="sm" variant="outline"><a download href={`${item.url}?download=1`}><Download aria-hidden="true" />Download {media.length > 1 ? `media ${index + 1}` : "media"}</a></Button> : <Button disabled key={item.url} size="sm" type="button" variant="outline"><Download aria-hidden="true" />Source unavailable</Button>)}
+      <Button onClick={copyCaption} size="sm" type="button" variant="outline"><Copy aria-hidden="true" />Copy caption</Button>
+      {accountConfirmed && mediaAvailable ? <Button asChild className="workflow-platform-button" variant="secondary"><a href={platformUrl} rel="noreferrer" target="_blank">{actionLabel || `Open ${platform}`}<ExternalLink aria-hidden="true" /></a></Button> : <Button className="workflow-platform-button" disabled type="button" variant="secondary"><CheckCircle2 aria-hidden="true" />{mediaAvailable ? "Confirm account to open platform" : "Restore source media to continue"}</Button>}
+      {message ? <p aria-live="polite" role="status">{message}</p> : null}
+    </section>
   );
 }

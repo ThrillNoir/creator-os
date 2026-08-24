@@ -19,7 +19,7 @@
   gap: 4px;
   font-size: 7px;
   font-weight: 750;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 
 .split-form input {
@@ -53,7 +53,7 @@
 .earnings-row.head {
   border-top: 0;
   background: #f7f6f9;
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 7px;
   text-transform: uppercase;
 }
@@ -63,14 +63,14 @@
 }
 
 .earnings-row small {
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 
 .earnings-note {
   margin: 0;
   padding: 12px 20px 16px;
   border-top: 1px solid var(--line);
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 8px;
   line-height: 1.5;
 }

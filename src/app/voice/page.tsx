@@ -1,5 +1,5 @@
 import { saveVoiceProfileAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getVoiceProfile } from "@/lib/db";
 import { getActiveCreator } from "@/lib/current-creator";
 
@@ -9,8 +9,7 @@ export default async function VoicePage() {
   const creator = await getActiveCreator();
   const voice = getVoiceProfile(creator.id);
   return (
-    <main className="app-shell">
-      <AppNav active="Creator voice" />
+    <AppShell active="Creator voice">
       <section className="workspace form-workspace">
         <header className="form-header"><span className="eyebrow">MANAGING AGENT FOUNDATION</span><h1>{creator.name} voice</h1><p>Give the agent real examples and boundaries before it writes a caption.</p></header>
         <form action={saveVoiceProfileAction} className="voice-layout">
@@ -31,6 +30,6 @@ export default async function VoicePage() {
           </section>
         </form>
       </section>
-    </main>
+    </AppShell>
   );
 }

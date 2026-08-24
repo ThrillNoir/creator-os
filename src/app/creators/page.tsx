@@ -1,5 +1,5 @@
 import { createCreatorAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getAccounts, getAssetCount, getCreatorReadiness, getCreators, getPostPackages } from "@/lib/db";
 
@@ -9,8 +9,7 @@ export default async function CreatorsPage() {
   const activeCreator = await getActiveCreator();
   const creators = getCreators();
   return (
-    <main className="app-shell">
-      <AppNav active="Creators" />
+    <AppShell active="Creators">
       <section className="workspace library-workspace">
         <header className="topbar"><div><span className="eyebrow">PRIVATE AGENCY WORKSPACES</span><h1>Managed creators</h1><p className="page-subtitle">Each dashboard keeps its own library, accounts, voice, approvals and reporting.</p></div></header>
         <div className="creator-management-layout">
@@ -34,6 +33,6 @@ export default async function CreatorsPage() {
           </section>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

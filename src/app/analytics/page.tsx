@@ -1,5 +1,5 @@
 import { importAnalyticsCsvAction, syncInstagramAnalyticsAction } from "@/app/actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getAnalyticsSummary, getInstagramAnalyticsData } from "@/lib/db";
 import { calculateInstagramTiming } from "@/lib/instagram-timing";
@@ -23,8 +23,7 @@ export default async function AnalyticsPage({searchParams}:{searchParams:Promise
   const latestActivity = instagram.followerActivity[0]?.hourly || {};
   const maxActivity = Math.max(1, ...Object.values(latestActivity));
   return (
-    <main className="app-shell">
-      <AppNav active="Analytics" />
+    <AppShell active="Analytics">
       <section className="workspace library-workspace">
         <header className="topbar command-header">
           <div><span className="eyebrow">{creator.name.toUpperCase()} · PERFORMANCE INTELLIGENCE</span><h1>Analytics command centre</h1><p className="page-subtitle">Live Instagram evidence, timing recommendations and reviewed manual imports—kept inside this creator workspace.</p></div>
@@ -97,6 +96,6 @@ export default async function AnalyticsPage({searchParams}:{searchParams:Promise
           </section>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

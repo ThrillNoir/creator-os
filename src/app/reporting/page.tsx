@@ -1,4 +1,4 @@
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import { getAnalyticsSummary, getAssetCount, getCreatorFinancialSettings, getCreatorReport, getInstagramAnalyticsData, getPremiumEarningsSummary } from "@/lib/db";
 import { saveCreatorFinancialSettingsAction } from "@/app/actions";
@@ -28,8 +28,7 @@ export default async function ReportingPage({searchParams}:{searchParams:Promise
   }), { reach: 0, views: 0, interactions: 0 });
   const usage = libraryAssets ? Math.round((report.uniqueAssets / libraryAssets) * 100) : 0;
   return (
-    <main className="app-shell">
-      <AppNav active="Reporting" />
+    <AppShell active="Reporting">
       <section className="workspace library-workspace">
         <header className="topbar"><div><span className="eyebrow">{creator.name.toUpperCase()} · LOCAL OPERATIONS</span><h1>Performance and earnings</h1><p className="page-subtitle">Creator-scoped operational metrics, imported platform earnings and an explainable agency split.</p></div></header>
         {query.notice==="split_saved"&&<div className="connection-alert success">The agency split was saved for {creator.name}. Existing imported earnings have been recalculated.</div>}
@@ -60,6 +59,6 @@ export default async function ReportingPage({searchParams}:{searchParams:Promise
           {analytics.byPlatform.length === 0 && <div className="mini-empty">No platform exports imported yet.</div>}
         </section>
       </section>
-    </main>
+    </AppShell>
   );
 }

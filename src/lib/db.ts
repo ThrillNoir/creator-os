@@ -2745,6 +2745,7 @@ export type PostPackageRow = {
   created_at: string;
   basename: string;
   relative_path: string;
+  source_available: number;
   account_label: string;
   platform: string;
   handle: string;
@@ -2823,7 +2824,7 @@ export function createPostBundle(input: {
 export function getPostPackages(creatorId = "thrill-noir") {
   return openDatabase()
     .prepare(`
-      SELECT p.*, a.basename, a.relative_path, ac.label AS account_label,
+      SELECT p.*, a.basename, a.relative_path, a.source_available, ac.label AS account_label,
              ac.platform, ac.handle, ac.url AS account_url, ac.creator_id,
              (SELECT COUNT(*) FROM post_package_assets pa WHERE pa.post_package_id=p.id) AS asset_count
       FROM post_packages p
@@ -2838,7 +2839,7 @@ export function getPostPackages(creatorId = "thrill-noir") {
 export function getPostPackage(id: number) {
   return openDatabase()
     .prepare(`
-      SELECT p.*, a.basename, a.relative_path, ac.label AS account_label,
+      SELECT p.*, a.basename, a.relative_path, a.source_available, ac.label AS account_label,
              ac.platform, ac.handle, ac.url AS account_url, ac.creator_id,
              (SELECT COUNT(*) FROM post_package_assets pa WHERE pa.post_package_id=p.id) AS asset_count
       FROM post_packages p

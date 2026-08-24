@@ -13,7 +13,7 @@ import {
 } from "@/app/actions";
 import { saveCreatorMediaSourceAction } from "@/app/media-actions";
 import { checkTelegramPairingAction, confirmTelegramPairingAction, createTelegramPairingLinkAction, revokeTelegramPairingAction } from "@/app/telegram-actions";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 import { getActiveCreator } from "@/lib/current-creator";
 import {
   getAccounts,
@@ -73,8 +73,7 @@ export default async function CreatorProfilePage({
   const localBridgeConnections = getLocalBridgeConnections(creator.id);
 
   return (
-    <main className="app-shell">
-      <AppNav active="Accounts & connections" />
+    <AppShell active="Accounts & connections">
       <section className="workspace library-workspace">
         <header className="topbar">
           <div>
@@ -348,6 +347,6 @@ export default async function CreatorProfilePage({
           </div>
         </section>
       </section>
-    </main>
+    </AppShell>
   );
 }
