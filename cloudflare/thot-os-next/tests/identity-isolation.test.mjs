@@ -37,14 +37,17 @@ test("creator-portal identities require one membership and cannot use a cookie t
   assert.equal(selectCreatorPortalMembership([adelaide, secondCreator], null), null);
 });
 
-test("viewer memberships cannot mutate", () => {
+test("creator publication permissions remain own-workspace scoped", () => {
   assert.equal(roleCan("viewer", "view"), true);
   assert.equal(roleCan("viewer", "mutate"), false);
   assert.equal(roleCan("legacy", "view"), false);
   assert.equal(roleCan("legacy", "mutate"), false);
   assert.equal(roleCan("operator", "approve"), true);
+  // A creator approves profile versions through the creator-scoped `mutate`
+  // action. `approve` remains reserved for unrelated elevated workflows.
   assert.equal(roleCan("creator", "approve"), false);
-  assert.deepEqual(authorizeCreatorScope([adelaide], "approve", "adelaide", null), { ok: false, status: 404 });
+  assert.equal(authorizeCreatorScope([adelaide], "mutate", "adelaide", null).status, 200);
+  assert.deepEqual(authorizeCreatorScope([adelaide], "mutate", "second", null), { ok: false, status: 404 });
   assert.equal(roleCan("agency_admin", "manage_identity"), true);
   assert.deepEqual(authorizeCreatorScope([secondCreator], "mutate", "second", null), { ok: false, status: 404 });
 });

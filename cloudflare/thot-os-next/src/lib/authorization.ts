@@ -10,11 +10,11 @@ export type CreatorMembership = {
 const permissions: Record<CreatorRole, ReadonlySet<CreatorPermission>> = {
   agency_admin: new Set(["view", "mutate", "approve", "manage_identity"]),
   operator: new Set(["view", "mutate", "approve"]),
-  // Creators may author drafts in their sole creator-portal workspace, but
-  // never approve, publish, or withdraw a profile. Publish actions also make
-  // their own role check, but keeping this false at the permission boundary
-  // means a future action cannot accidentally turn draft editing into release
-  // authority merely by asking for `approve`.
+  // Creators may create, approve, publish, and withdraw content in their sole
+  // creator-portal workspace. Those actions must use creator-scoped server
+  // queries, preserve consent and content checks, and write an audit event.
+  // `approve` remains an elevated workflow permission for actions that are not
+  // part of a creator's own publication flow.
   creator: new Set(["view", "mutate"]),
   viewer: new Set(["view"]),
 };

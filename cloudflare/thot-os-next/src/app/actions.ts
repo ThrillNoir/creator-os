@@ -1300,8 +1300,7 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
 }
 
 export async function approvePublicProfileVersionAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must approve a public release.");
+  const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedPublicProfileVersionId(formData);
   const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");
@@ -1436,8 +1435,7 @@ export async function saveAdultProfileDraftAction(_previousState: AdultProfileDr
 }
 
 export async function approveAdultProfileVersionAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  if (identity.creator.role === "creator") throw new Error("A separate operator or agency administrator must approve an adult release.");
+  const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const versionId = submittedAdultProfileVersionId(formData);
   const approvalNote = publicText(formData.get("approvalNote"), 500, "approval note");

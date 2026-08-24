@@ -77,10 +77,10 @@ Current role permissions are intentionally coarse and must not be described as f
 |---|---:|---:|---:|---:|
 | `agency_admin` | Yes | Yes | Yes | Yes |
 | `operator` | Yes | Yes | Yes | No |
-| `creator` | Yes | Yes | Yes | No |
+| `creator` | Yes | Yes | No | No |
 | `viewer` | Yes | No | No | No |
 
-`approve` currently does not enforce a different human from the author. If independent approval becomes a product rule, it needs a separate approval state transition and a D1-enforced self-approval policy rather than a label change.
+For creator-owned public and adult profiles, save, approve, publish, and withdraw are intentionally creator-scoped `mutate` actions. They remain subject to consent, content validation, checksum, service-capability, and audit-event checks. The `approve` permission is reserved for other elevated workflows; it does not create a four-eyes rule. If independent approval becomes a product rule, it needs a separate approval state transition and a D1-enforced self-approval policy rather than a label change.
 
 ## Browser route security matrix
 

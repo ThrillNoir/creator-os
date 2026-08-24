@@ -59,6 +59,9 @@ test("publish is one explicit creator-scoped action while protected release and 
   assert.match(actions, /approvalSource: "publish_button"/);
   assert.match(actions, /publishPublicProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
   assert.match(actions, /publishAdultProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /approvePublicProfileVersionAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /approveAdultProfileVersionAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.doesNotMatch(actions, /separate operator or agency administrator must approve/i);
   assert.match(actions, /String\(env\.ADULT_PROFILE_PUBLISHING_ENABLED\) !== "1"/);
   assert.match(adultPage, /String\(env\.ADULT_PROFILE_PUBLISHING_ENABLED\) === "1"/);
   assert.match(wrangler, /"ADULT_PROFILE_PUBLISHING_ENABLED": "1"/);
@@ -97,6 +100,10 @@ test("creator profile publishing remains tenant-scoped and private image reads u
   for (const editor of [publicEditor, adultEditor]) assert.match(editor, /props\.canPublish/);
   assert.match(actions, /publishPublicProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
   assert.match(actions, /publishAdultProfileAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /approvePublicProfileVersionAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /approveAdultProfileVersionAction\(formData: FormData\)[\s\S]*?requireCreatorContext\("mutate"\)/);
+  assert.match(actions, /identityAuditStatement\(DB, humanAuditActor\(identity\), "public_profile_version_approved"/);
+  assert.match(actions, /identityAuditStatement\(DB, humanAuditActor\(identity\), "adult_profile_version_approved"/);
   assert.match(imageRoute, /preview\.upload_id=display\.upload_id/);
   assert.match(imageRoute, /preview\.derivative_kind='preview'/);
   assert.match(imageRoute, /"cache-control": "private, no-store"/);
