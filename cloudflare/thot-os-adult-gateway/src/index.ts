@@ -148,13 +148,30 @@ async function validSession(request: Request, profile: AdultProfile, env: Env) {
 type TurnstileVerification = { accepted: true } | { accepted: false; reason: "missing_token" | "oversized_token" | "origin_mismatch" | "siteverify_http_error" | "siteverify_invalid_response" | "challenge_rejected" | "action_mismatch" | "hostname_mismatch" };
 
 /**
+ * Some privacy-preserving browser contexts submit an ordinary same-origin
+ * navigation with Origin: null. Accept that narrowly defined browser case,
+ * while retaining the exact Origin check everywhere else. Fetch Metadata
+ * request headers are browser-controlled and distinguish it from a
+ * cross-site form post; Turnstile still validates the host and action.
+ */
+function sameOriginAgeConfirmation(request: Request) {
+  const expectedOrigin = new URL(request.url).origin;
+  const origin = request.headers.get("origin");
+  if (origin === expectedOrigin) return true;
+  return origin === "null"
+    && request.headers.get("sec-fetch-site") === "same-origin"
+    && request.headers.get("sec-fetch-mode") === "navigate"
+    && request.headers.get("sec-fetch-dest") === "document";
+}
+
+/**
  * Only return fixed, safe reason codes: never the visitor token, Turnstile
  * response body, request headers, or any protected profile data.
  */
 async function verifyTurnstile(token: string, request: Request, env: Env): Promise<TurnstileVerification> {
   if (!token) return { accepted: false, reason: "missing_token" };
   if (token.length > 2048) return { accepted: false, reason: "oversized_token" };
-  if (request.headers.get("origin") !== new URL(request.url).origin) return { accepted: false, reason: "origin_mismatch" };
+  if (!sameOriginAgeConfirmation(request)) return { accepted: false, reason: "origin_mismatch" };
   const body = new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: token });
   let response: Response;
   try {

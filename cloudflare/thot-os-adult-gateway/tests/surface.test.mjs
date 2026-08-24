@@ -92,6 +92,36 @@ test("a successful Turnstile confirmation sets a short-lived protected session",
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("a null Origin is accepted only for a browser-proven same-origin navigation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const warnings = [];
+  globalThis.fetch = async () => Response.json({ success: true, hostname: "adult.example", action: "adult_access" });
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    const { env } = environment();
+    const sameOriginForm = new FormData(); sameOriginForm.set("cf-turnstile-response", "valid-token");
+    const sameOrigin = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", {
+      method: "POST",
+      headers: { origin: "null", "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+      body: sameOriginForm,
+    }), env);
+    assert.equal(sameOrigin.status, 303);
+
+    const crossSiteForm = new FormData(); crossSiteForm.set("cf-turnstile-response", "valid-token");
+    const crossSite = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", {
+      method: "POST",
+      headers: { origin: "null", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+      body: crossSiteForm,
+    }), env);
+    assert.equal(crossSite.status, 400);
+    assert.deepEqual(warnings, ['{"event":"adult_age_confirmation_rejected","reason":"origin_mismatch","creatorSlug":"adelaide"}']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
 test("a rejected Turnstile confirmation logs only a fixed safe reason code", async () => {
   const originalFetch = globalThis.fetch;
   const originalWarn = console.warn;
