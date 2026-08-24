@@ -145,12 +145,30 @@ async function validSession(request: Request, profile: AdultProfile, env: Env) {
   } catch { return false; }
 }
 
-async function validTurnstile(token: string, request: Request, env: Env) {
-  if (!token || token.length > 2048 || request.headers.get("origin") !== new URL(request.url).origin) return false;
+type TurnstileVerification = { accepted: true } | { accepted: false; reason: "missing_token" | "oversized_token" | "origin_mismatch" | "siteverify_http_error" | "siteverify_invalid_response" | "challenge_rejected" | "action_mismatch" | "hostname_mismatch" };
+
+/**
+ * Only return fixed, safe reason codes: never the visitor token, Turnstile
+ * response body, request headers, or any protected profile data.
+ */
+async function verifyTurnstile(token: string, request: Request, env: Env): Promise<TurnstileVerification> {
+  if (!token) return { accepted: false, reason: "missing_token" };
+  if (token.length > 2048) return { accepted: false, reason: "oversized_token" };
+  if (request.headers.get("origin") !== new URL(request.url).origin) return { accepted: false, reason: "origin_mismatch" };
   const body = new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: token });
-  const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+  let response: Response;
+  try {
+    response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+  } catch {
+    return { accepted: false, reason: "siteverify_http_error" };
+  }
+  if (!response.ok) return { accepted: false, reason: "siteverify_http_error" };
   const result = await response.json().catch(() => null) as { success?: boolean; hostname?: string; action?: string } | null;
-  return Boolean(result?.success && result.action === "adult_access" && (!env.TURNSTILE_EXPECTED_HOSTNAME || result.hostname === env.TURNSTILE_EXPECTED_HOSTNAME));
+  if (!result) return { accepted: false, reason: "siteverify_invalid_response" };
+  if (!result.success) return { accepted: false, reason: "challenge_rejected" };
+  if (result.action !== "adult_access") return { accepted: false, reason: "action_mismatch" };
+  if (env.TURNSTILE_EXPECTED_HOSTNAME && result.hostname !== env.TURNSTILE_EXPECTED_HOSTNAME) return { accepted: false, reason: "hostname_mismatch" };
+  return { accepted: true };
 }
 
 function event(env: Env, profile: AdultProfile, name: string, item = "") {
@@ -204,7 +222,12 @@ export default {
     if (request.method === "POST" && parts.length === 3 && parts[0] === "age" && SLUG.test(parts[1]) && parts[2] === "confirm") {
       const profile = await loadProfile(env, parts[1]);
       const form = await request.formData().catch(() => null);
-      if (!profile || !await validTurnstile(String(form?.get("cf-turnstile-response") ?? ""), request, env)) return page("Unable to confirm access", 400);
+      if (!profile) return page("Unable to confirm access", 400);
+      const verification = await verifyTurnstile(String(form?.get("cf-turnstile-response") ?? ""), request, env);
+      if (!verification.accepted) {
+        console.warn(JSON.stringify({ event: "adult_age_confirmation_rejected", reason: verification.reason, creatorSlug: profile.creator.slug }));
+        return page("Unable to confirm access", 400);
+      }
       event(env, profile, "age_gate_completed");
       return new Response(null, { status: 303, headers: { ...securityHeaders(), location: `/${encodeURIComponent(profile.creator.slug)}`, "set-cookie": `${SESSION_COOKIE}=${await issueSession(profile.creator.slug, profile.publishedVersionId, env.AGE_SESSION_SECRET)}; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; Secure; HttpOnly; SameSite=Lax` } });
     }

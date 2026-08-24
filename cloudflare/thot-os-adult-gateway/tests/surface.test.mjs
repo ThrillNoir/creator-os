@@ -92,6 +92,25 @@ test("a successful Turnstile confirmation sets a short-lived protected session",
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("a rejected Turnstile confirmation logs only a fixed safe reason code", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const warnings = [];
+  globalThis.fetch = async () => Response.json({ success: false });
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    const { env } = environment();
+    const form = new FormData(); form.set("cf-turnstile-response", "visitor-token-must-not-appear-in-logs");
+    const denied = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", { method: "POST", headers: { origin: "https://adult.example" }, body: form }), env);
+    assert.equal(denied.status, 400);
+    assert.deepEqual(warnings, ['{"event":"adult_age_confirmation_rejected","reason":"challenge_rejected","creatorSlug":"adelaide"}']);
+    assert.doesNotMatch(warnings.join("\n"), /visitor-token|test-secret|protected profile|example\.com/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
 test("protected redirects remain closed without a session and never accept a caller destination", async () => {
   const { env } = environment();
   const response = await worker.fetch(new Request("https://adult.example/r/adelaide/fans?next=https://attacker.example"), env);
