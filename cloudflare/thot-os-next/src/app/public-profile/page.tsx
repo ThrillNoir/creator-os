@@ -4,9 +4,11 @@ import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { PublicProfileEditor } from "@/components/public-profile-editor";
+import { CopyProfileLink } from "@/components/copy-profile-link";
 import Link from "next/link";
 import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
+import { safePublicProfileUrl } from "@/lib/profile-public-url";
 
 type Profile = { id: string; slug: string; status: string; published_version_id: string | null };
 type Version = { id: string; version_number: number; display_name: string; headline: string; bio: string; status: string; approved_by: string | null; approved_at: string | null; created_at: string };
@@ -81,6 +83,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const slots = Array.from({ length: Math.max(4, Math.min(8, authoringLinks.length + 1)) }, (_, index) => authoringLinks[index] ?? null);
   const notice = query.notice ? notices[query.notice] : null;
   const defaultSlug = profile?.slug ?? creator?.slug ?? "creator";
+  const publicProfileUrl = published ? safePublicProfileUrl(env.SAFE_PUBLIC_PROFILE_BASE_URL, defaultSlug) : null;
   const authoringAppearance = appearanceFromRow(authoring ? appearances.results.find((appearance) => appearance.profile_version_id === authoring.id) : undefined);
   const authoringImages = authoring ? images.results.filter((image) => image.profile_version_id === authoring.id).map((image) => ({ id: image.id, role: image.image_role, previewUrl: `/api/profile-image/${image.id}` })) : [];
 
@@ -88,6 +91,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
     {notice && <div className="success">{notice}</div>}
     {authoring && <Link className="preview-link" href="/public-profile/preview">Open private local preview</Link>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Save changes privately, preview the page, then publish when it is ready.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Saved" : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
+      {publicProfileUrl && <CopyProfileLink title="Your link for bio" detail="Use this safe public page in Instagram, TikTok, X, and other social bios." url={publicProfileUrl} />}
       {canEdit ? <PublicProfileEditor defaultSlug={defaultSlug} displayName={authoring?.display_name ?? context.creator.creator_name} headline={authoring?.headline ?? ""} bio={authoring?.bio ?? ""} phone={phone} email={email}
         links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
         appearance={authoringAppearance} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} canPublish={canPublish} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} slugLocked={Boolean(profile?.published_version_id)} />

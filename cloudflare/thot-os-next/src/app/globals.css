@@ -667,6 +667,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .profile-action-buttons button { min-height: 41px; margin: 0; }
 .profile-action-buttons button:disabled { cursor: not-allowed; opacity: .45; }
 .profile-unpublish { min-height: 39px; padding: 0 12px; border: 1px solid #80545f; border-radius: 8px; background: transparent; color: #f2a6ba; font-weight: 750; cursor: pointer; }
+.copy-profile-link { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,.9fr) auto; gap: 10px 12px; align-items: end; margin: 18px 0; padding: 14px; border: 1px solid #5c478a; border-radius: 10px; background: #171020; }
+.copy-profile-link > div { display: grid; gap: 3px; }
+.copy-profile-link > div span,.copy-profile-link-status { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.copy-profile-link label { min-width: 0; }
+.copy-profile-link input { box-sizing: border-box; width: 100%; min-height: 40px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #100c16; color: var(--ink); font: inherit; }
+.copy-profile-link button { min-height: 40px; margin: 0; white-space: nowrap; }
+.copy-profile-link-status { grid-column: 1 / -1; min-height: 1.45em; }
 .profile-history-panel { margin-top: 16px; }
 .profile-history-panel > summary { color: var(--ink); font-weight: 800; cursor: pointer; }
 .profile-history-panel > summary::marker { color: var(--purple2); }
@@ -743,6 +750,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .profile-action-buttons { justify-content: stretch; }
   .profile-action-buttons > button,.profile-action-buttons form { flex: 1; }
   .profile-action-buttons form button { width: 100%; }
+  .copy-profile-link { grid-template-columns: 1fr; align-items: stretch; }
+  .copy-profile-link button { width: 100%; }
   .public-profile-history article { grid-template-columns: auto minmax(0,1fr); }
   .public-profile-history > article > span:last-child { grid-column: 2; }
 }

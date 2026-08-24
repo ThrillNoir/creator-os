@@ -4,9 +4,11 @@ import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { type ProfileImageAttachment } from "@/components/profile-appearance-editor";
+import { CopyProfileLink } from "@/components/copy-profile-link";
 import { AdultProfileEditor } from "@/components/adult-profile-editor";
 import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
+import { adultAgeGateUrl } from "@/lib/profile-public-url";
 
 type Version = { id: string; version_number: number; adult_bio: string; status: string; approved_by: string | null; approved_at: string | null; created_at: string };
 type Link = { id: string; stable_link_id: string; profile_version_id: string; label: string; destination_url: string; sort_order: number };
@@ -15,6 +17,7 @@ type Publication = { id: string; version_id: string; status: string; adult_snaps
 type AppearanceRow = { profile_version_id: string; theme_key: string; button_style: string; background_mode: string; background_color: string; primary_color: string; text_color: string; card_color: string; radius_scale: string; inherit_sfw_theme?: number };
 type SafeVersion = { id: string; status: string };
 type ImageRow = { id: string; image_role: "avatar" | "background"; profile_version_id: string };
+type Creator = { slug: string };
 
 function appearanceFromRow(row: AppearanceRow | undefined): ProfileAppearance {
   if (!row) return DEFAULT_PROFILE_APPEARANCE;
@@ -47,7 +50,8 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
   const creatorId = context.creator.creator_id;
   const env = cloudflareEnv();
   const DB = env.DB;
-  const [profile, versions, links, publications, appearances, safeVersions, safeAppearances, images] = await Promise.all([
+  const [creator, profile, versions, links, publications, appearances, safeVersions, safeAppearances, images] = await Promise.all([
+    DB.prepare("SELECT slug FROM creators WHERE id=?").bind(creatorId).first<Creator>(),
     DB.prepare("SELECT id,status,published_version_id FROM creator_adult_profiles WHERE creator_id=?").bind(creatorId).first<Profile>(),
     DB.prepare("SELECT id,version_number,adult_bio,status,approved_by,approved_at,created_at FROM creator_adult_profile_versions WHERE creator_id=? ORDER BY version_number DESC").bind(creatorId).all<Version>(),
     DB.prepare("SELECT id,link_id AS stable_link_id,profile_version_id,label,destination_url,sort_order FROM creator_adult_link_revisions WHERE creator_id=? AND enabled=1 ORDER BY profile_version_id,sort_order").bind(creatorId).all<Link>(),
@@ -72,10 +76,12 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
   const safeVersion = safeVersions.results.find((version) => version.status === "draft") ?? safeVersions.results.find((version) => version.status === "approved") ?? safeVersions.results.find((version) => version.status === "published") ?? null;
   const safeAppearance = safeVersion ? appearanceFromRow(safeAppearances.results.find((appearance) => appearance.profile_version_id === safeVersion.id)) : null;
   const authoringImages: ProfileImageAttachment[] = authoring ? images.results.filter((image) => image.profile_version_id === authoring.id).map((image) => ({ id: image.id, role: image.image_role, previewUrl: `/api/profile-image/${image.id}` })) : [];
+  const ageGateUrl = published ? adultAgeGateUrl(env.ADULT_GATEWAY_BASE_URL, creator?.slug ?? "") : null;
 
   return <AppShell active="18+ profile"><PageHeader title="18+ profile" subtitle="Design, preview and publish this creator’s age-gated profile." eyebrow="ADULT-GATED CONTENT" />
     {notice && <div className="success">{notice}</div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">PROTECTED PROFILE</span><h2>18+ profile and links</h2><p>Content and destinations stay out of the safe public page. The live profile remains behind the separate age gate.</p></div><span>{published ? "Published" : draft ? `Draft v${draft.version_number}` : approved ? `Saved v${approved.version_number}` : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
+      {ageGateUrl && <CopyProfileLink title="Your 18+ gate link" detail="Share this only where an age-gated creator link is appropriate." url={ageGateUrl} />}
       {canEdit ? <AdultProfileEditor bio={authoring?.adult_bio ?? ""} links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
         appearance={authoringAppearance} inheritedAppearance={safeAppearance} displayName={context.creator.creator_name} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} published={Boolean(published)} canPublish={canPublish} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} />
         : <div className="empty"><b>Read-only adult-profile view</b><span>Your role can inspect this creator’s private version history but cannot change protected content or destinations.</span></div>}

@@ -108,6 +108,24 @@ test("creator profile publishing remains tenant-scoped and private image reads u
   assert.match(safePreview, /previewButtonClass\(appearance\.buttonStyle\)/);
 });
 
+test("published profiles expose only environment-controlled public entry links for copying", async () => {
+  const [publicPage, adultPage, copyLink, urls, wrangler] = await Promise.all([
+    source("src/app/public-profile/page.tsx"),
+    source("src/app/adult-profile/page.tsx"),
+    source("src/components/copy-profile-link.tsx"),
+    source("src/lib/profile-public-url.ts"),
+    source("wrangler.jsonc"),
+  ]);
+  assert.match(publicPage, /safePublicProfileUrl\(env\.SAFE_PUBLIC_PROFILE_BASE_URL, defaultSlug\)/);
+  assert.match(adultPage, /adultAgeGateUrl\(env\.ADULT_GATEWAY_BASE_URL, creator\?\.slug/);
+  assert.match(copyLink, /navigator\.clipboard\.writeText\(url\)/);
+  assert.doesNotMatch(copyLink, /destination|query|redirect/i);
+  assert.match(urls, /url\.protocol !== "https:"/);
+  assert.match(urls, /CREATOR_SLUG/);
+  assert.match(wrangler, /"SAFE_PUBLIC_PROFILE_BASE_URL": "https:\/\/public-profile-staging\.thathuboverthere\.com"/);
+  assert.match(wrangler, /"ADULT_GATEWAY_BASE_URL": "https:\/\/more-staging\.thathuboverthere\.com"/);
+});
+
 test("public-profile save validation returns structured field errors without leaking values", async () => {
   const [actions, editor, adultEditor] = await Promise.all([
     source("src/app/actions.ts"),
