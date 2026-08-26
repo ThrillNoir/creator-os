@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertApprovedPlan, createApplyReceipt, createDeploymentPlan, planDigest } from "../scripts/staging-web-deployment-lib.mjs";
+import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest } from "../scripts/staging-web-deployment-lib.mjs";
 
 const metadata = { environment: "staging", component: "web", worker: "thot-os-staging", accountId: "account", config: "cloudflare/thot-os-next/wrangler.jsonc", databaseId: "database", gitSha: "abc", gitBranch: "codex/release" };
 const artifactManifest = { artifact: { sha256: "artifact" }, build: { timestamp: "2026-08-26T00:00:00.000Z" } };
@@ -28,6 +28,12 @@ test("apply refuses drift from the approved Worker state", () => {
   const drifted = structuredClone(workerState);
   drifted.deployment.versions[0].percentage = 90;
   assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest, migrationNames, workerState: drifted }), /differs/);
+});
+
+test("read-only reconciliation accepts post-deploy Worker drift but preserves immutable plan gates", () => {
+  const plan = createDeploymentPlan({ metadata, artifactManifest, migrationNames, requiredSecretNames, workerState });
+  assert.equal(assertReconciliationPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest, migrationNames }), true);
+  assert.throws(() => assertReconciliationPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest: { ...artifactManifest, artifact: { sha256: "changed" } }, migrationNames }), /artifact differs/);
 });
 
 test("apply receipt requires one fresh 100-percent version with all secret names", () => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
 import { verifyStagingArtifactManifest } from "./staging-artifact-lib.mjs";
 import { captureWorkerMetadata, createActivationD1ReadClient, mutationWranglerEnvironment, runWranglerMetadataRead } from "./service-auth-activate.mjs";
-import { assertApprovedPlan, createApplyReceipt, createDeploymentPlan } from "./staging-web-deployment-lib.mjs";
+import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan } from "./staging-web-deployment-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const registryPath = path.join(root, "config/deployments.json");
@@ -15,14 +15,14 @@ const lockfilePath = path.join(webDirectory, "package-lock.json");
 const openNextBinary = path.join(webDirectory, "node_modules/.bin/opennextjs-cloudflare");
 
 function usage() {
-  return "Usage: npm run deploy -- --plan|--apply --environment staging --component web --artifact-manifest <path> --output <owner-only-json> [--approved-plan <path> --confirmation <deploy:...>]";
+  return "Usage: npm run deploy -- --plan|--apply|--reconcile --environment staging --component web --artifact-manifest <path> --output <owner-only-json> [--approved-plan <path> --confirmation <deploy:...>]";
 }
 
 function parseArguments(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--plan" || argument === "--apply") {
+    if (argument === "--plan" || argument === "--apply" || argument === "--reconcile") {
       if (options.mode) throw new Error("Choose exactly one of --plan or --apply.");
       options.mode = argument.slice(2);
     } else if (argument === "--environment") options.environment = argv[++index];
@@ -103,8 +103,23 @@ async function main() {
     console.log(`Approval confirmation: ${plan.confirmation}`);
     return;
   }
-  if (!options.approvedPlan || !options.confirmation) throw new Error("Apply requires --approved-plan and its exact --confirmation value.");
+  if (!options.approvedPlan || !options.confirmation) throw new Error("Apply/reconcile requires --approved-plan and its exact --confirmation value.");
   const plan = readJson(options.approvedPlan, "approved deployment plan");
+  if (options.mode === "reconcile") {
+    assertReconciliationPlan({ plan, confirmation: options.confirmation, metadata: context.metadata, artifactManifest: context.artifactManifest, migrationNames: before.migrationNames });
+    const plannedBefore = {
+      latestVersionId: plan.preDeployment.latestVersionId,
+      versionIds: plan.preDeployment.versionIds,
+      deployment: { versions: plan.preDeployment.traffic },
+    };
+    const receipt = createApplyReceipt({ plan, before: plannedBefore, after: before.workerState });
+    receipt.commandOutcome = "RECONCILED_AFTER_UNCERTAIN_OUTCOME";
+    receipt.outcome = "APPLIED_AND_REMOTE_RECONCILED";
+    writeOwnerOnlyJson(options.output, receipt);
+    console.log(`Staging web deployment reconciled at Worker version ${receipt.deployment.workerVersion}.`);
+    console.log(`Owner-only reconciliation receipt written to ${options.output}`);
+    return;
+  }
   assertApprovedPlan({ plan, confirmation: options.confirmation, metadata: context.metadata, artifactManifest: context.artifactManifest, migrationNames: before.migrationNames, workerState: before.workerState });
   const command = deployOpenNext(context.registry, context.metadata.config);
   try {

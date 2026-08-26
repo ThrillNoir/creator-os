@@ -163,10 +163,8 @@ export function parseWorkerVersionsJson(stdout) {
   });
   const versionIds = versions.map((entry) => entry.id);
   if (new Set(versionIds).size !== versionIds.length) throw new Error("Wrangler versions metadata contained duplicate version ids.");
-  // The command currently returns the most recent version first, but staging
-  // verification below binds to Wrangler's acknowledged version id rather
-  // than relying on that ordering.
-  return { latestVersionId: versionIds[0], versionIds };
+  // Wrangler returns its retained version window oldest-to-newest.
+  return { latestVersionId: versionIds.at(-1), versionIds };
 }
 
 export function parseD1WriteAuthorizationPreflightJson(stdout) {

@@ -96,6 +96,16 @@ npm run deploy -- --apply --environment staging --component web \
 
 The plan binds the clean Git identity, verified artifact digest, exact authoritative D1 ledger, required secret names, and observed Worker versions/traffic. Apply rechecks every bound input before invoking the pinned OpenNext deployment through Wrangler OAuth in the OS keychain. It then requires exactly one fresh Worker version at 100% traffic and verifies all required secret **names** on that version; secret values are never requested or printed. An ambiguous result produces an owner-only uncertain-outcome receipt and must be reconciled before any retry. Production and every non-web component remain unreachable through this mutation path.
 
+If apply reports an uncertain outcome, do not retry it. The read-only reconciliation mode compares the approved pre-deployment inventory with current Cloudflare version, traffic, binding, secret-name, and D1 observations and can produce the apply receipt only when exactly one fresh 100%-traffic version is proven:
+
+```sh
+npm run deploy -- --reconcile --environment staging --component web \
+  --artifact-manifest cloudflare/thot-os-next/.open-next/staging-artifact-manifest.json \
+  --approved-plan /absolute/owner-only/staging-web-plan.json \
+  --confirmation 'deploy:<digest-prefix>' \
+  --output /absolute/owner-only/staging-web-reconciliation-receipt.json
+```
+
 Use the preflight directly for repository/CI validation:
 
 ```sh

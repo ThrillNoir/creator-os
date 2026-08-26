@@ -54,7 +54,7 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
   return { ...plan, planSha256: digest, confirmation: confirmationForDigest(digest) };
 }
 
-export function assertApprovedPlan({ plan, confirmation, metadata, artifactManifest, migrationNames, workerState }) {
+function assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, migrationNames }) {
   if (plan?.schemaVersion !== 1 || plan?.kind !== deploymentPlanKind || plan?.mode !== "plan") throw new Error("Approved deployment plan has an unsupported schema or kind.");
   const digest = planDigest(plan);
   if (plan.planSha256 !== digest || plan.confirmation !== confirmationForDigest(digest)) throw new Error("Approved deployment plan checksum is invalid.");
@@ -63,6 +63,15 @@ export function assertApprovedPlan({ plan, confirmation, metadata, artifactManif
   if (plan.source?.gitSha !== metadata.gitSha || plan.source?.gitBranch !== metadata.gitBranch) throw new Error("Current Git identity differs from the approved deployment plan.");
   if (plan.artifact?.sha256 !== artifactManifest.artifact?.sha256 || plan.artifact?.buildTime !== artifactManifest.build?.timestamp) throw new Error("Current artifact differs from the approved deployment plan.");
   if (JSON.stringify(plan.migration?.names) !== JSON.stringify(migrationNames)) throw new Error("Current staging migration state differs from the approved deployment plan.");
+  return true;
+}
+
+export function assertReconciliationPlan(input) {
+  return assertPlanIdentity(input);
+}
+
+export function assertApprovedPlan({ plan, confirmation, metadata, artifactManifest, migrationNames, workerState }) {
+  assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, migrationNames });
   const current = {
     latestVersionId: workerState.latestVersionId,
     versionIds: workerState.versionIds,
@@ -99,7 +108,7 @@ export function createApplyReceipt({ plan, before, after, observedAt = new Date(
     deployment: {
       worker: plan.target.worker,
       previousTraffic: before.deployment.versions,
-      previousLatestVersion: before.latestVersionId,
+      previousLatestVersion: before.deployment.versions.length === 1 && before.deployment.versions[0].percentage === 100 ? before.deployment.versions[0].versionId : before.latestVersionId,
       workerVersion,
       traffic: after.deployment.versions,
       requiredSecretNamesVerified: [...plan.requiredSecretNames],

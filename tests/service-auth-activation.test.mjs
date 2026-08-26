@@ -286,7 +286,7 @@ test("Worker metadata is strictly parsed and proves secret staging did not route
   assert.equal(comparison.addedSecretNames.length, 5);
   assert.throws(() => compareWorkerMetadata(before, { ...after, deployment: { versions: [{ versionId: "unpublished-secret-version", percentage: 100 }] } }, plan.principals.map((principal) => principal.secretName)), /deployment|traffic/i);
   assert.throws(() => captureStagedWorkerMetadata(before, registry, "missing-version", runner), /absent|acknowledged/i);
-  assert.deepEqual(parseWorkerVersionsJson(JSON.stringify([{ id: "newest" }, { id: "older" }])), { latestVersionId: "newest", versionIds: ["newest", "older"] });
+  assert.deepEqual(parseWorkerVersionsJson(JSON.stringify([{ id: "older" }, { id: "newest" }])), { latestVersionId: "newest", versionIds: ["older", "newest"] });
   assert.deepEqual(parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "newest", resources: { bindings: [{ type: "secret_text", name: "SAFE_SECRET" }, { type: "plain_text", name: "SAFE_VAR" }] } }), "newest"), { versionId: "newest", secretNames: ["SAFE_SECRET"] });
   assert.throws(() => parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "wrong", resources: { bindings: [] } }), "newest"), /did not match/i);
   assert.doesNotMatch(JSON.stringify(comparison), /value|Bearer|token_hash/i);
