@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { migrationState, validateTargetAuthority, verifyExpectedMigrations } from "./reconciliation-lib.mjs";
-import { assertExactMigrationHistory, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateReleaseExportPlan } from "../bounded-d1-migrations-lib.mjs";
+import { assertExactMigrationHistory, hashCanonicalJson, hashFileBytes, inventoryFromLedger, validateReleaseExportPlan } from "../bounded-d1-migrations-lib.mjs";
 import { projectRoot } from "../deployment-preflight.mjs";
 
 const cloudflareEnvironmentOverride = /^(?:CLOUDFLARE_|CF_|WRANGLER_)/;
@@ -69,12 +69,14 @@ export function exportTarget({ environment, output, approvedPlan }) {
   if (environment !== "staging" || !output || !path.isAbsolute(output)) throw new Error(`Only a staging target export to an absolute local path is permitted. ${usage()}`);
   const target = validateTargetAuthority({ environment });
   const plan = approvedPlan ? readApprovedPlan(approvedPlan) : null;
-  const inventory = plan ? inventoryFromDirectory(path.join(projectRoot, "cloudflare/thot-os-app/migrations"), readdirSync) : null;
+  const inventory = plan ? inventoryFromLedger(path.join(projectRoot, "cloudflare/thot-os-app/migrations"), JSON.parse(readFileSync(path.join(projectRoot, "config/staging-d1-migration-ledger.json"), "utf8")), readdirSync) : null;
   const releaseBaseline = plan ? validateReleaseExportPlan({ plan, target, inventory }) : null;
   const sqlPath = path.resolve(output);
   const parsePath = `${sqlPath}.sqlite`;
   if (existsSync(sqlPath) || existsSync(parsePath)) throw new Error("Refusing to overwrite an existing target export or parse database.");
-  mkdirSync(path.dirname(sqlPath), { recursive: true });
+  const outputDirectory = path.dirname(sqlPath);
+  mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+  chmodSync(outputDirectory, 0o700);
   const wrangler = path.join(projectRoot, "cloudflare/thot-os-next/node_modules/.bin/wrangler");
   try {
     execFileSync(wrangler, ["--cwd", path.join(projectRoot, "cloudflare/thot-os-next"), "d1", "export", target.databaseName, "--remote", "--skip-confirmation", "--output", sqlPath], {
@@ -86,6 +88,7 @@ export function exportTarget({ environment, output, approvedPlan }) {
   } catch {
     throw new Error("Read-only staging D1 export failed; no SQL output is trusted.");
   }
+  chmodSync(sqlPath, 0o600);
   try {
     const parse = new Database(parsePath);
     parse.exec(readFileSync(sqlPath, "utf8"));
@@ -93,13 +96,14 @@ export function exportTarget({ environment, output, approvedPlan }) {
     if (releaseBaseline) assertExactMigrationHistory(target.migrations, releaseBaseline.preMigrationState, "Export migration history");
     else verifyExpectedMigrations(target.migrations);
     parse.close();
+    chmodSync(parsePath, 0o600);
   } catch (error) {
     if (existsSync(parsePath)) unlinkSync(parsePath);
     throw error;
   }
   const receipt = receiptFor({ target, plan, preMigrationState: releaseBaseline?.preMigrationState, sqlPath, parsePath });
   const receiptPath = `${sqlPath}.receipt.json`;
-  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   return { sqlPath, parsePath, receiptPath, receipt };
 }
 
