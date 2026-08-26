@@ -79,13 +79,22 @@ The EXPAND boundary must use the repository-owned bounded executor described
 in [THOT_OS_BOUNDED_D1_MIGRATIONS.md](THOT_OS_BOUNDED_D1_MIGRATIONS.md), not
 `wrangler d1 migrations apply`: normal Wrangler would also apply `0032`.
 
-`npm run deploy` can no longer deploy ambiguously. With no arguments it fails. The only Phase 1A-supported form is a non-mutating plan:
+`npm run deploy` cannot deploy ambiguously. With no arguments it fails. The repository-controlled mutation path is limited to the canonical `staging/web` Worker and requires a verified OpenNext artifact plus a two-step plan/apply approval:
 
 ```sh
-npm run deploy -- --plan --environment staging --component web
+npm run artifact:staging
+npm run deploy -- --plan --environment staging --component web \
+  --artifact-manifest cloudflare/thot-os-next/.open-next/staging-artifact-manifest.json \
+  --output /absolute/owner-only/staging-web-plan.json
+
+npm run deploy -- --apply --environment staging --component web \
+  --artifact-manifest cloudflare/thot-os-next/.open-next/staging-artifact-manifest.json \
+  --approved-plan /absolute/owner-only/staging-web-plan.json \
+  --confirmation 'deploy:<digest-prefix>' \
+  --output /absolute/owner-only/staging-web-apply-receipt.json
 ```
 
-The plan requires an explicit environment, exactly one component (or `--all`), and a clean Git working tree. It runs the static registry/Wrangler validation and prints the target, but it does not invoke Wrangler or make a remote change.
+The plan binds the clean Git identity, verified artifact digest, exact authoritative D1 ledger, required secret names, and observed Worker versions/traffic. Apply rechecks every bound input before invoking the pinned OpenNext deployment through Wrangler OAuth in the OS keychain. It then requires exactly one fresh Worker version at 100% traffic and verifies all required secret **names** on that version; secret values are never requested or printed. An ambiguous result produces an owner-only uncertain-outcome receipt and must be reconciled before any retry. Production and every non-web component remain unreachable through this mutation path.
 
 Use the preflight directly for repository/CI validation:
 
@@ -116,7 +125,7 @@ The values are supplied at build time through `THOT_OS_COMPONENT`, `THOT_OS_ENVI
 
 ## Controlled migration and deployment flow
 
-Application deployment and D1 migration are separate operations. A future approved staging change follows this order:
+Application deployment and D1 migration are separate operations. An approved staging change follows this order:
 
 ```mermaid
 flowchart LR
@@ -129,7 +138,7 @@ flowchart LR
   G --> H["Versioned deployment receipt"]
 ```
 
-Normal application deployment must not apply a migration. A migration requires a fresh export/snapshot, an explicit target and migration review, a checked migration state, and post-migration smoke testing. The current Phase 1A work does not apply migrations.
+Normal application deployment does not apply a migration. A migration requires a fresh export/snapshot, an explicit target and migration review, a checked migration state, and post-migration smoke testing.
 
 After an actually successful deployment, generate a durable, versioned receipt only from a clean tree, a verified artifact manifest, and remote-observed evidence. The evidence bundle is created by the approved release runbook from Cloudflare version/deployment observations, D1 migration observations, and authenticated smoke output; it is not assembled from command-line claims.
 

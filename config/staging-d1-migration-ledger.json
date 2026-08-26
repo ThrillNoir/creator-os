@@ -284,10 +284,9 @@
       }
     },
     {
-      "remoteId": null,
+      "remoteId": 51,
       "name": "0049_creator_onboarding_access_vault.sql",
-      "sha256": "e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f",
-      "pending": true
+      "sha256": "e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f"
     }
   ]
 }
