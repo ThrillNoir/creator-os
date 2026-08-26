@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
 import { verifyStagingArtifactManifest } from "./staging-artifact-lib.mjs";
-import { captureWorkerMetadata, createActivationD1ReadClient, mutationWranglerEnvironment } from "./service-auth-activate.mjs";
+import { captureWorkerMetadata, createActivationD1ReadClient, mutationWranglerEnvironment, runWranglerMetadataRead } from "./service-auth-activate.mjs";
 import { assertApprovedPlan, createApplyReceipt, createDeploymentPlan } from "./staging-web-deployment-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,7 +73,12 @@ function targetContext(options) {
 async function observeStaging(context) {
   const migrationNames = await createActivationD1ReadClient().readMigrationHistory(context.d1Target);
   if (JSON.stringify(migrationNames) !== JSON.stringify(context.migrationNames)) throw new Error("Remote staging D1 migration history differs from the authoritative repository ledger.");
-  return { migrationNames, workerState: captureWorkerMetadata(context.registry) };
+  let secretInventory;
+  try { secretInventory = JSON.parse(runWranglerMetadataRead(["secret", "list", "--format", "json", "--config", context.metadata.config], context.registry)); } catch { throw new Error("Wrangler staging secret-name inventory was not clean JSON."); }
+  if (!Array.isArray(secretInventory) || !secretInventory.every((entry) => entry && typeof entry === "object" && /^[A-Z][A-Z0-9_]*$/.test(entry.name))) throw new Error("Wrangler staging secret-name inventory was malformed.");
+  const secretNames = secretInventory.map((entry) => entry.name).sort();
+  if (new Set(secretNames).size !== secretNames.length) throw new Error("Wrangler staging secret-name inventory contained duplicate names.");
+  return { migrationNames, workerState: { ...captureWorkerMetadata(context.registry), secretNames } };
 }
 
 function deployOpenNext(registry, config) {

@@ -9,8 +9,11 @@ const requiredSecretNames = ["VAULT_MASTER_KEY_V1", "VAULT_PIN_PEPPER"];
 const workerState = {
   latestVersionId: "before",
   versionIds: ["before", "older"],
+  secretNames: requiredSecretNames,
   deployment: { versions: [{ versionId: "before", percentage: 100 }] },
-  latestSecretVersion: { versionId: "before", trafficPercentage: 100, secretNames: requiredSecretNames },
+  // Worker-level secret inventory is authoritative before deploy; the routed
+  // version may predate a separately staged secret version.
+  latestSecretVersion: { versionId: "before", trafficPercentage: 100, secretNames: [] },
 };
 
 test("staging deployment plan binds source, artifact, ledger, secrets, and Worker state", () => {

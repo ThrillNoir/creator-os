@@ -27,9 +27,9 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
   }
   if (!Array.isArray(migrationNames) || migrationNames.length === 0) throw new Error("Deployment plan requires an exact staging migration ledger.");
   if (!Array.isArray(requiredSecretNames) || requiredSecretNames.length === 0) throw new Error("Deployment plan requires reviewed secret names.");
-  const latestSecrets = new Set(workerState?.latestSecretVersion?.secretNames ?? []);
-  const missing = requiredSecretNames.filter((name) => !latestSecrets.has(name));
-  if (missing.length) throw new Error(`Latest staging Worker version is missing required secret names: ${missing.join(", ")}.`);
+  const remoteSecrets = new Set(workerState?.secretNames ?? []);
+  const missing = requiredSecretNames.filter((name) => !remoteSecrets.has(name));
+  if (missing.length) throw new Error(`Staging Worker secret inventory is missing required names: ${missing.join(", ")}.`);
 
   const plan = {
     schemaVersion: 1,
@@ -46,7 +46,7 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
       latestVersionId: workerState.latestVersionId,
       versionIds: [...workerState.versionIds],
       traffic: workerState.deployment.versions,
-      latestVersionSecretNames: [...workerState.latestSecretVersion.secretNames].sort(),
+      workerSecretNames: [...workerState.secretNames].sort(),
     },
     createdAt,
   };
@@ -67,7 +67,7 @@ export function assertApprovedPlan({ plan, confirmation, metadata, artifactManif
     latestVersionId: workerState.latestVersionId,
     versionIds: workerState.versionIds,
     traffic: workerState.deployment.versions,
-    latestVersionSecretNames: [...workerState.latestSecretVersion.secretNames].sort(),
+    workerSecretNames: [...workerState.secretNames].sort(),
   };
   if (JSON.stringify(plan.preDeployment) !== JSON.stringify(current)) throw new Error("Current staging Worker version, traffic, or secret-name state differs from the approved deployment plan.");
   return true;
