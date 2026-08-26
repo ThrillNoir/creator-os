@@ -21,6 +21,8 @@ interface __BaseEnv_CloudflareEnv {
 	INTERNAL_TELEGRAM_BRIDGE_TOKEN: string;
 	INTERNAL_VAULT_CATALOGUE_TOKEN: string;
 	INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN: string;
+	VAULT_MASTER_KEY_V1: string;
+	VAULT_PIN_PEPPER: string;
 	WORKER_SELF_REFERENCE: Service<typeof import("./.open-next/worker").default>;
 	REDDIT_SCHEDULER: Fetcher /* thot-os-reddit-scheduler-staging */;
 	INSTAGRAM_SCHEDULER: Fetcher /* thot-os-instagram-scheduler-staging */;

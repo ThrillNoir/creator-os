@@ -8,6 +8,7 @@ import { humanAuditActor, identityAuditStatement } from "@/lib/audit-identity";
 import { requireCreatorContext, getCreatorIdentity } from "@/lib/identity";
 import { getOnboardingResult, validateOnboardingRequest } from "@/lib/creator-onboarding";
 import { isAgencyStaffRole } from "@/lib/authorization";
+import { revokeStepUpSessions, STEP_UP_COOKIE } from "@/lib/access-vault";
 import type { CreatorRole } from "@/lib/identity";
 
 const membershipRoles = new Set<CreatorRole>(["agency_admin", "operator", "creator", "viewer"]);
@@ -30,7 +31,13 @@ export async function switchCreatorAction(formData: FormData) {
   const { DB } = cloudflareEnv();
   await identityAuditStatement(DB, humanAuditActor({ email: identity.email, creator: membership }), "creator_workspace_selected", creatorId, { administrativeAction: true }).run();
   const localBypass = (cloudflareEnv() as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string }).LOCAL_ACCESS_BYPASS;
-  (await cookies()).set("thot_os_creator", creatorId, { httpOnly: true, sameSite: "lax", secure: localBypass !== "1", path: "/", maxAge: 60 * 60 * 24 * 365 });
+  const cookieStore = await cookies();
+  const priorCreatorId = cookieStore.get("thot_os_creator")?.value;
+  if (priorCreatorId && priorCreatorId !== creatorId) {
+    await revokeStepUpSessions(identity.email);
+    cookieStore.delete(STEP_UP_COOKIE);
+  }
+  cookieStore.set("thot_os_creator", creatorId, { httpOnly: true, sameSite: "lax", secure: localBypass !== "1", path: "/", maxAge: 60 * 60 * 24 * 365 });
   redirect("/");
 }
 
