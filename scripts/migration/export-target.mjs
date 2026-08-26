@@ -91,10 +91,16 @@ export function exportTarget({ environment, output, approvedPlan }) {
   chmodSync(sqlPath, 0o600);
   try {
     const parse = new Database(parsePath);
+    // D1 exports schema objects in SQLite's catalog order, which can place a
+    // child table before its parent. Replaying that trusted read-only export
+    // with enforcement enabled rejects a valid dump before its full schema is
+    // loaded. Validate the completed parse with foreign_key_check instead.
+    parse.pragma("foreign_keys = OFF");
     parse.exec(readFileSync(sqlPath, "utf8"));
     target.migrations = migrationState(parse);
     if (releaseBaseline) assertExactMigrationHistory(target.migrations, releaseBaseline.preMigrationState, "Export migration history");
     else verifyExpectedMigrations(target.migrations);
+    if (parse.pragma("foreign_key_check").length !== 0) throw new Error("Read-only staging export has foreign-key violations.");
     parse.close();
     chmodSync(parsePath, 0o600);
   } catch (error) {
