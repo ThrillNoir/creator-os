@@ -46,6 +46,14 @@
 -- 0041_creator_profile_appearance.sql 88e3e139d41bf64285a334ac9731bee70fd7e50af7ab85232d62bfba9db37977
 -- 0042_creator_profile_image_derivatives.sql 5c727792884d1eca6919be804633e0b20d7f911433b013492b7464abde09f352
 -- 0043_creator_profile_projection_delivery.sql 64d84accfe04a9c968c1121f6a6750ee69dbb24b8ebd2fa6656973629004063e
+-- 0044_onlyfans_upload_bridge.sql 0e05068cace10bf881d5d5de95c96bd6063db9dee46ccf6caae542bb30995413
+-- 0045_onlyfans_authorized_delivery.sql 9d71946d845db2a3024f6c6350e305b108bd00a22927516e71ebc676e59202b7
+-- 0046_onlyfans_sequential_batches.sql aaa6819075edb50d1a97d4e2b35c078df663b5827e3d4d2d27af1b111c3063ef
+-- 0047_onlyfans_supervised_delivery.sql 8b3a0212d0f21917b0bac1dba7a7bb58c7cfc4bf943496fea2a3ad2bfe859233
+-- 0048_onlyfans_grouped_message_delivery.sql 6a4be245fe175490f067c5c08ee2b03a528df04d4e31440582b68596ce11c34d
+-- 0044_creator_r2_library.sql 0f3d0a0f618ecb45c23b5655f543a7e6687fe541535e58c39d5b5bac724e4ff2
+-- 0045_finished_media_uploads.sql aa43dafebb51faaf994eb732a3881af47597e3110c3450eefaa15692ba49a886
+-- 0049_creator_onboarding_access_vault.sql e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f
 
 PRAGMA foreign_keys = ON;
 
@@ -93,6 +101,14 @@ INSERT INTO d1_migrations (id, name) VALUES (40, '0040_creator_profile_interacti
 INSERT INTO d1_migrations (id, name) VALUES (41, '0041_creator_profile_appearance.sql');
 INSERT INTO d1_migrations (id, name) VALUES (42, '0042_creator_profile_image_derivatives.sql');
 INSERT INTO d1_migrations (id, name) VALUES (43, '0043_creator_profile_projection_delivery.sql');
+INSERT INTO d1_migrations (id, name) VALUES (44, '0044_onlyfans_upload_bridge.sql');
+INSERT INTO d1_migrations (id, name) VALUES (45, '0045_onlyfans_authorized_delivery.sql');
+INSERT INTO d1_migrations (id, name) VALUES (46, '0046_onlyfans_sequential_batches.sql');
+INSERT INTO d1_migrations (id, name) VALUES (47, '0047_onlyfans_supervised_delivery.sql');
+INSERT INTO d1_migrations (id, name) VALUES (48, '0048_onlyfans_grouped_message_delivery.sql');
+INSERT INTO d1_migrations (id, name) VALUES (49, '0044_creator_r2_library.sql');
+INSERT INTO d1_migrations (id, name) VALUES (50, '0045_finished_media_uploads.sql');
+INSERT INTO d1_migrations (id, name) VALUES (51, '0049_creator_onboarding_access_vault.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -139,6 +155,23 @@ CREATE TABLE asset_destinations (
   PRIMARY KEY(asset_id, destination)
 );
 
+CREATE TABLE asset_ingest_sessions (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  storage_object_id TEXT REFERENCES asset_storage_objects(id) ON DELETE SET NULL,
+  source_revision TEXT,
+  expected_sha256 TEXT NOT NULL CHECK(expected_sha256 GLOB '[0-9a-f]*' AND length(expected_sha256)=64),
+  expected_bytes INTEGER NOT NULL CHECK(expected_bytes >= 0),
+  expected_mime_type TEXT NOT NULL CHECK(length(expected_mime_type) BETWEEN 1 AND 160),
+  status TEXT NOT NULL CHECK(status IN ('created','uploading','finalized','aborted','expired','failed')),
+  expires_at TEXT NOT NULL,
+  failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, asset_id, source_revision, expected_sha256)
+);
+
 CREATE TABLE asset_paid_consent_attestations (
   asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -176,6 +209,32 @@ CREATE TABLE asset_preview_jobs (
   UNIQUE(creator_id, asset_id)
 );
 
+CREATE TABLE asset_storage_objects (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK(provider IN ('r2','dropbox')),
+  storage_role TEXT NOT NULL CHECK(storage_role IN ('canonical_original','source_fallback','ephemeral_delivery')),
+  bucket_role TEXT NOT NULL CHECK(bucket_role IN ('library_media','dropbox_source','delivery_ephemeral')),
+  object_key TEXT NOT NULL CHECK(length(object_key) BETWEEN 1 AND 1024),
+  original_filename TEXT NOT NULL CHECK(length(original_filename) BETWEEN 1 AND 512),
+  byte_count INTEGER NOT NULL CHECK(byte_count >= 0),
+  verified_mime_type TEXT NOT NULL CHECK(length(verified_mime_type) BETWEEN 1 AND 160),
+  sha256 TEXT NOT NULL CHECK(sha256 GLOB '[0-9a-f]*' AND length(sha256)=64),
+  source_provider TEXT NOT NULL CHECK(source_provider IN ('dropbox','m1_direct')),
+  source_revision TEXT,
+  ingest_status TEXT NOT NULL CHECK(ingest_status IN ('pending','uploading','verified','failed','archived')),
+  storage_class TEXT NOT NULL DEFAULT 'Standard' CHECK(storage_class IN ('Standard','InfrequentAccess')),
+  uploaded_at TEXT,
+  verified_at TEXT,
+  archived_at TEXT,
+  failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, asset_id, storage_role, sha256),
+  UNIQUE(bucket_role, object_key)
+);
+
 CREATE TABLE assets (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -209,7 +268,7 @@ CREATE TABLE bridge_credentials (
   expires_at TEXT NOT NULL,
   last_seen_at TEXT,
   revoked_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_extension_version TEXT, last_protocol_version TEXT,
   FOREIGN KEY (profile_id, creator_id) REFERENCES browser_profiles(id, creator_id) ON DELETE CASCADE
 );
 
@@ -222,9 +281,24 @@ CREATE TABLE browser_profiles (
   status TEXT NOT NULL DEFAULT 'registered' CHECK(status IN ('registered','paired','revoked')),
   last_seen_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, chrome_login_email TEXT NOT NULL DEFAULT '', device_label TEXT NOT NULL DEFAULT '', expected_platforms_json TEXT NOT NULL DEFAULT '[]', native_identity_verified_at TEXT,
   UNIQUE(creator_id, label),
   UNIQUE(id, creator_id)
+);
+
+CREATE TABLE creator_about_profiles (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  short_bio TEXT NOT NULL DEFAULT '', long_bio TEXT NOT NULL DEFAULT '', interests TEXT NOT NULL DEFAULT '',
+  approved_background_facts TEXT NOT NULL DEFAULT '', location_disclosure_preference TEXT NOT NULL DEFAULT 'private',
+  relationship_disclosure_preference TEXT NOT NULL DEFAULT 'private', approved_identifying_features TEXT NOT NULL DEFAULT '',
+  public_talking_points TEXT NOT NULL DEFAULT '', private_facts TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_access_audit_events (
+  id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor_email TEXT NOT NULL COLLATE NOCASE, actor_role TEXT NOT NULL,
+  event_type TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE creator_adult_link_entities (
@@ -330,6 +404,33 @@ CREATE TABLE creator_adult_profiles (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE creator_brand_positioning (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  current_positioning TEXT NOT NULL DEFAULT '', desired_positioning TEXT NOT NULL DEFAULT '',
+  primary_audience TEXT NOT NULL DEFAULT '', niches_themes TEXT NOT NULL DEFAULT '', differentiators TEXT NOT NULL DEFAULT '',
+  visual_style TEXT NOT NULL DEFAULT '', content_pillars TEXT NOT NULL DEFAULT '', paid_content_proposition TEXT NOT NULL DEFAULT '',
+  growth_priorities TEXT NOT NULL DEFAULT '', hard_boundaries TEXT NOT NULL DEFAULT '', inspiration_references TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_brand_voice_profiles (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  voice_summary TEXT NOT NULL DEFAULT '', tone_personality TEXT NOT NULL DEFAULT '', common_vocabulary TEXT NOT NULL DEFAULT '',
+  phrases_to_avoid TEXT NOT NULL DEFAULT '', emoji_style TEXT NOT NULL DEFAULT '', caption_length_preference TEXT NOT NULL DEFAULT '',
+  humour_style TEXT NOT NULL DEFAULT '', flirting_intensity TEXT NOT NULL DEFAULT '', forbidden_topics_claims TEXT NOT NULL DEFAULT '',
+  creator_examples TEXT NOT NULL DEFAULT '', platform_variations TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_compliance_records (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  legal_name TEXT NOT NULL DEFAULT '',
+  date_of_birth TEXT NOT NULL DEFAULT '',
+  adult_verified_at TEXT,
+  activated_by TEXT COLLATE NOCASE REFERENCES users(email),
+  activated_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE creator_exceptions (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE RESTRICT,
@@ -382,6 +483,28 @@ CREATE TABLE creator_memberships (
   PRIMARY KEY (creator_id, user_email)
 );
 
+CREATE TABLE creator_onboarding_profiles (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  stage_name TEXT NOT NULL DEFAULT '',
+  preferred_name TEXT NOT NULL DEFAULT '',
+  contact_email TEXT NOT NULL DEFAULT '',
+  contact_phone TEXT NOT NULL DEFAULT '',
+  country TEXT NOT NULL DEFAULT '',
+  time_zone TEXT NOT NULL DEFAULT '',
+  uses_chrome INTEGER NOT NULL DEFAULT 0 CHECK(uses_chrome IN (0,1)),
+  adult_verification_status TEXT NOT NULL DEFAULT 'not_started'
+    CHECK(adult_verification_status IN ('not_started','submitted','verified','rejected')),
+  contract_status TEXT NOT NULL DEFAULT 'not_started'
+    CHECK(contract_status IN ('not_started','pending','active','expired','terminated')),
+  consent_status TEXT NOT NULL DEFAULT 'not_recorded'
+    CHECK(consent_status IN ('not_recorded','pending','recorded','withdrawn')),
+  restricted_admin_notes TEXT NOT NULL DEFAULT '',
+  workflow_state TEXT NOT NULL DEFAULT 'draft'
+    CHECK(workflow_state IN ('draft','creator_review','admin_review','active')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE creator_onboarding_receipts (
   id TEXT PRIMARY KEY,
   idempotency_key TEXT NOT NULL UNIQUE,
@@ -390,6 +513,16 @@ CREATE TABLE creator_onboarding_receipts (
   request_fingerprint TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('completed')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_onboarding_sections (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  section_key TEXT NOT NULL CHECK(section_key IN ('identity','social_profiles','paid_platforms','chrome_access','brand_voice','positioning','about_me')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','creator_review','admin_review','complete')),
+  updated_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT,
+  PRIMARY KEY(creator_id,section_key)
 );
 
 CREATE TABLE creator_profile_image_attachments (
@@ -757,6 +890,23 @@ CREATE TABLE instagram_sync_state (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE media_fetch_tickets (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  storage_object_id TEXT NOT NULL REFERENCES asset_storage_objects(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK(purpose IN ('instagram_container','telegram_private_download')),
+  platform TEXT NOT NULL CHECK(platform IN ('instagram','telegram')),
+  receipt_correlation_id TEXT,
+  token_hash TEXT NOT NULL UNIQUE,
+  max_fetches INTEGER NOT NULL DEFAULT 1 CHECK(max_fetches BETWEEN 1 AND 20),
+  fetch_count INTEGER NOT NULL DEFAULT 0 CHECK(fetch_count >= 0),
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_fetched_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE message_attachments (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL,
@@ -901,6 +1051,95 @@ CREATE TABLE migration_runs (
   detail TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE onlyfans_delivery_controls (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'disabled' CHECK(status IN ('disabled','enabled','paused','emergency_stopped')),
+  changed_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reason TEXT, batch_delivery_verified_by TEXT COLLATE NOCASE REFERENCES users(email), batch_delivery_verified_at TEXT, delivery_mode TEXT NOT NULL DEFAULT 'supervised'
+  CHECK(delivery_mode IN ('supervised','automatic')), minimum_bridge_version TEXT NOT NULL DEFAULT '0.22.0',
+  PRIMARY KEY (creator_id, account_id)
+);
+
+CREATE TABLE onlyfans_upload_batches (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  target_id TEXT NOT NULL REFERENCES onlyfans_upload_targets(id) ON DELETE RESTRICT,
+  profile_id TEXT NOT NULL REFERENCES browser_profiles(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','paused','emergency_stopped','blocked','message_delivery_complete','vault_verified')),
+  asset_count INTEGER NOT NULL CHECK(asset_count BETWEEN 1 AND 50),
+  authorized_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  authorized_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  paused_by TEXT COLLATE NOCASE REFERENCES users(email),
+  paused_at TEXT,
+  stopped_by TEXT COLLATE NOCASE REFERENCES users(email),
+  stopped_at TEXT,
+  blocked_at TEXT,
+  message_delivery_completed_at TEXT,
+  vault_verified_by TEXT COLLATE NOCASE REFERENCES users(email),
+  vault_verified_at TEXT,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE onlyfans_upload_events (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES onlyfans_upload_jobs(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  actor_role TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE onlyfans_upload_jobs (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  target_id TEXT NOT NULL REFERENCES onlyfans_upload_targets(id) ON DELETE RESTRICT,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL CHECK(platform='onlyfans'),
+  status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','claimed','attaching','send_authorized','staged','verified','failed','outcome_uncertain','cancelled')),
+  approved_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  approved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  claimed_at TEXT,
+  send_authorized_at TEXT,
+  sent_at TEXT,
+  completed_at TEXT,
+  verified_by TEXT COLLATE NOCASE REFERENCES users(email),
+  verified_at TEXT,
+  error TEXT,
+  receipt TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, send_authorized_by TEXT COLLATE NOCASE REFERENCES users(email), attachment_attempt_started_at TEXT, send_attempt_started_at TEXT, send_attempt_installation_id TEXT, message_verified_at TEXT, vault_verified_at TEXT, batch_id TEXT REFERENCES onlyfans_upload_batches(id) ON DELETE RESTRICT, batch_sequence INTEGER, asset_source_revision TEXT, frozen_media_key TEXT, frozen_media_sha256 TEXT, frozen_media_bytes INTEGER, frozen_media_content_type TEXT, media_staged_at TEXT, native_attachment_verified_at TEXT, awaiting_human_send_at TEXT, native_message_id TEXT, attempt_id TEXT,
+  UNIQUE(creator_id,account_id,asset_id)
+);
+
+CREATE TABLE onlyfans_upload_targets (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
+  profile_id TEXT NOT NULL REFERENCES browser_profiles(id) ON DELETE RESTRICT,
+  platform TEXT NOT NULL CHECK(platform='onlyfans'),
+  expected_recipient_handle TEXT NOT NULL,
+  native_thread_path TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  configured_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  configured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  verified_by TEXT COLLATE NOCASE REFERENCES users(email),
+  verified_at TEXT,
+  revoked_by TEXT COLLATE NOCASE REFERENCES users(email),
+  revoked_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, account_id),
+  UNIQUE(creator_id, native_thread_path),
+  FOREIGN KEY (profile_id, creator_id) REFERENCES browser_profiles(id, creator_id) ON DELETE RESTRICT
+);
+
 CREATE TABLE operation_outbox (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -931,7 +1170,7 @@ CREATE TABLE operational_accounts (
   last_checked_at TEXT,
   last_success_at TEXT,
   source_updated_at TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, account_kind TEXT NOT NULL DEFAULT 'social' CHECK(account_kind IN ('social','paid','other')), login_email TEXT NOT NULL DEFAULT '', profile_url TEXT NOT NULL DEFAULT '', account_purpose TEXT NOT NULL DEFAULT '', is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)), connection_method TEXT NOT NULL DEFAULT 'not_configured', creator_visible INTEGER NOT NULL DEFAULT 1 CHECK(creator_visible IN (0,1)), administrator_notes TEXT NOT NULL DEFAULT '', native_identity_verified_at TEXT, pairing_state TEXT NOT NULL DEFAULT 'not_paired', bridge_last_seen_at TEXT, capabilities_json TEXT NOT NULL DEFAULT '[]', private_upload_destination TEXT NOT NULL DEFAULT '',
   UNIQUE(creator_id, platform, label)
 );
 
@@ -1241,6 +1480,23 @@ CREATE TABLE telegram_connector_state (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE telegram_media_handoffs (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  storage_object_id TEXT NOT NULL REFERENCES asset_storage_objects(id) ON DELETE RESTRICT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK(status IN ('blocked','queued','sending','sent','failed','uncertain','cancelled')),
+  provider_message_id TEXT,
+  sha256 TEXT NOT NULL CHECK(sha256 GLOB '[0-9a-f]*' AND length(sha256)=64),
+  byte_count INTEGER NOT NULL CHECK(byte_count >= 0),
+  error_code TEXT CHECK(error_code IS NULL OR length(error_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id, asset_id, storage_object_id, idempotency_key)
+);
+
 CREATE TABLE telegram_poll_runs (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -1298,6 +1554,47 @@ CREATE TABLE vault_bridge_tokens (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE vault_credentials (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  account_id TEXT REFERENCES operational_accounts(id) ON DELETE SET NULL,
+  credential_group TEXT NOT NULL CHECK(credential_group IN ('social','paid','chrome','other')),
+  label TEXT NOT NULL,
+  username TEXT NOT NULL DEFAULT '', login_email TEXT NOT NULL DEFAULT '',
+  wrapped_dek BLOB NOT NULL, wrapped_dek_nonce BLOB NOT NULL,
+  ciphertext BLOB NOT NULL, ciphertext_nonce BLOB NOT NULL,
+  key_version INTEGER NOT NULL CHECK(key_version > 0),
+  created_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  shared_with_creator INTEGER NOT NULL DEFAULT 0 CHECK(shared_with_creator IN (0,1)),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  last_native_password_confirmation_at TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TEXT,
+  UNIQUE(id,creator_id)
+);
+
+CREATE TABLE vault_pin_verifiers (
+  id TEXT PRIMARY KEY,
+  identity_email TEXT NOT NULL COLLATE NOCASE REFERENCES users(email) ON DELETE CASCADE,
+  creator_id TEXT REFERENCES creators(id) ON DELETE CASCADE,
+  pin_scope TEXT NOT NULL CHECK(pin_scope IN ('creator','administrator')),
+  salt BLOB NOT NULL, verifier BLOB NOT NULL, kdf_iterations INTEGER NOT NULL,
+  failure_count INTEGER NOT NULL DEFAULT 0, failure_cycles INTEGER NOT NULL DEFAULT 0,
+  locked_until TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK((pin_scope='creator' AND creator_id IS NOT NULL) OR (pin_scope='administrator' AND creator_id IS NULL)),
+  UNIQUE(identity_email,creator_id,pin_scope)
+);
+
+CREATE TABLE vault_step_up_sessions (
+  id TEXT PRIMARY KEY,
+  identity_email TEXT NOT NULL COLLATE NOCASE REFERENCES users(email) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  actor_role TEXT NOT NULL CHECK(actor_role IN ('agency_admin','operator','creator')),
+  pin_scope TEXT NOT NULL CHECK(pin_scope IN ('creator','administrator')),
+  expires_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE vault_upload_events (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL REFERENCES vault_upload_jobs(id) ON DELETE CASCADE,
@@ -1335,11 +1632,20 @@ CREATE INDEX asset_classifications_creator_safety
 CREATE INDEX asset_destinations_creator_destination
   ON asset_destinations(creator_id, destination, asset_id);
 
+CREATE INDEX asset_ingest_sessions_expiry
+  ON asset_ingest_sessions(status, expires_at);
+
 CREATE INDEX asset_people_creator_asset
   ON asset_people(creator_id, asset_id);
 
 CREATE INDEX asset_preview_jobs_creator_status
   ON asset_preview_jobs(creator_id, status, updated_at DESC);
+
+CREATE INDEX asset_storage_objects_asset_source_revision
+  ON asset_storage_objects(creator_id, asset_id, source_provider, source_revision, sha256);
+
+CREATE INDEX asset_storage_objects_creator_asset_status
+  ON asset_storage_objects(creator_id, asset_id, storage_role, ingest_status, updated_at DESC);
 
 CREATE INDEX assets_creator_available_modified
   ON assets(creator_id, source_available, modified_at DESC);
@@ -1349,6 +1655,8 @@ CREATE UNIQUE INDEX assets_id_creator_pair
 
 CREATE INDEX bridge_credentials_scope
   ON bridge_credentials(creator_id, account_id, profile_id, platform, status, expires_at);
+
+CREATE INDEX creator_access_audit_scope ON creator_access_audit_events(creator_id,created_at DESC);
 
 CREATE INDEX creator_adult_profile_media_render
   ON creator_adult_profile_media(profile_version_id, enabled, sort_order);
@@ -1432,6 +1740,9 @@ CREATE UNIQUE INDEX instagram_reply_drafts_one_active_body
   ON instagram_reply_drafts(creator_id, thread_id, body)
   WHERE status IN ('draft','approved','sending');
 
+CREATE INDEX media_fetch_tickets_lookup
+  ON media_fetch_tickets(token_hash, expires_at, revoked_at);
+
 CREATE INDEX message_threads_creator_activity
   ON message_threads(creator_id, last_message_at DESC, updated_at DESC);
 
@@ -1452,6 +1763,24 @@ CREATE INDEX migration_ledger_records_creator_domain_created
 
 CREATE INDEX migration_ledger_runs_creator_created
   ON migration_ledger_runs(creator_id, created_at DESC);
+
+CREATE INDEX onlyfans_upload_batches_scope_queue
+  ON onlyfans_upload_batches(creator_id,account_id,profile_id,status,created_at);
+
+CREATE INDEX onlyfans_upload_events_scope ON onlyfans_upload_events(creator_id,job_id,created_at);
+
+CREATE INDEX onlyfans_upload_jobs_authorized_queue
+  ON onlyfans_upload_jobs(creator_id,account_id,status,send_authorized_at,created_at);
+
+CREATE INDEX onlyfans_upload_jobs_batch_queue
+  ON onlyfans_upload_jobs(batch_id,batch_sequence,status,created_at);
+
+CREATE INDEX onlyfans_upload_jobs_frozen_media
+  ON onlyfans_upload_jobs(creator_id,account_id,status,frozen_media_key);
+
+CREATE INDEX onlyfans_upload_jobs_queue ON onlyfans_upload_jobs(creator_id,account_id,status,created_at);
+
+CREATE INDEX onlyfans_upload_targets_scope ON onlyfans_upload_targets(creator_id,account_id,status);
 
 CREATE INDEX operation_outbox_creator_created
   ON operation_outbox(creator_id, created_at DESC);
@@ -1520,6 +1849,9 @@ CREATE INDEX social_posts_creator_platform_status
 CREATE UNIQUE INDEX social_posts_id_creator_pair
   ON social_posts(id, creator_id);
 
+CREATE INDEX telegram_media_handoffs_creator_status
+  ON telegram_media_handoffs(creator_id, status, created_at DESC);
+
 CREATE INDEX telegram_poll_runs_creator_time
   ON telegram_poll_runs(creator_id, started_at DESC);
 
@@ -1528,6 +1860,16 @@ CREATE INDEX telegram_send_log_creator_time
 
 CREATE INDEX vault_bridge_tokens_lookup
   ON vault_bridge_tokens(token_hash,status,expires_at);
+
+CREATE INDEX vault_credentials_creator_account ON vault_credentials(creator_id,account_id,status);
+
+CREATE INDEX vault_credentials_creator_group ON vault_credentials(creator_id,credential_group,status,updated_at DESC);
+
+CREATE UNIQUE INDEX vault_pin_admin_identity ON vault_pin_verifiers(identity_email) WHERE pin_scope='administrator';
+
+CREATE UNIQUE INDEX vault_pin_creator_identity ON vault_pin_verifiers(identity_email,creator_id) WHERE pin_scope='creator';
+
+CREATE INDEX vault_step_up_scope ON vault_step_up_sessions(identity_email,creator_id,expires_at);
 
 CREATE UNIQUE INDEX vault_upload_jobs_active_asset
   ON vault_upload_jobs(creator_id,account_id,asset_id)
@@ -1594,6 +1936,18 @@ BEGIN
   SELECT RAISE(ABORT, 'asset_destination_creator_mismatch');
 END;
 
+CREATE TRIGGER asset_ingest_session_creator_scope_insert
+BEFORE INSERT ON asset_ingest_sessions
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.storage_object_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id))
+BEGIN SELECT RAISE(ABORT,'asset_ingest_session_creator_mismatch'); END;
+
+CREATE TRIGGER asset_ingest_session_creator_scope_update
+BEFORE UPDATE OF creator_id,asset_id,storage_object_id ON asset_ingest_sessions
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.storage_object_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id))
+BEGIN SELECT RAISE(ABORT,'asset_ingest_session_creator_mismatch'); END;
+
 CREATE TRIGGER asset_paid_consent_creator_insert
 BEFORE INSERT ON asset_paid_consent_attestations
 WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
@@ -1625,6 +1979,24 @@ WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id
 BEGIN
   SELECT RAISE(ABORT, 'asset_person_creator_mismatch');
 END;
+
+CREATE TRIGGER asset_storage_object_creator_scope_insert
+BEFORE INSERT ON asset_storage_objects
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'asset_storage_object_creator_mismatch'); END;
+
+CREATE TRIGGER asset_storage_object_creator_scope_update
+BEFORE UPDATE OF creator_id,asset_id ON asset_storage_objects
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'asset_storage_object_creator_mismatch'); END;
+
+CREATE TRIGGER creator_access_audit_actor_scope BEFORE INSERT ON creator_access_audit_events
+WHEN NOT EXISTS (SELECT 1 FROM creator_memberships WHERE creator_id=NEW.creator_id AND lower(user_email)=lower(NEW.actor_email) AND role=NEW.actor_role AND status='active')
+BEGIN SELECT RAISE(ABORT,'creator_access_audit_actor_scope_invalid'); END;
+
+CREATE TRIGGER creator_access_audit_immutable_delete BEFORE DELETE ON creator_access_audit_events BEGIN SELECT RAISE(ABORT,'creator_access_audit_append_only'); END;
+
+CREATE TRIGGER creator_access_audit_immutable_update BEFORE UPDATE ON creator_access_audit_events BEGIN SELECT RAISE(ABORT,'creator_access_audit_append_only'); END;
 
 CREATE TRIGGER creator_adult_link_revision_draft_only
 BEFORE INSERT ON creator_adult_link_revisions
@@ -2026,6 +2398,18 @@ BEGIN
   SELECT RAISE(ABORT, 'audit_service_actor_scope_invalid');
 END;
 
+CREATE TRIGGER media_fetch_ticket_creator_scope_insert
+BEFORE INSERT ON media_fetch_tickets
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id AND o.ingest_status='verified')
+BEGIN SELECT RAISE(ABORT,'media_fetch_ticket_creator_mismatch'); END;
+
+CREATE TRIGGER media_fetch_ticket_creator_scope_update
+BEFORE UPDATE OF creator_id,asset_id,storage_object_id ON media_fetch_tickets
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id AND o.ingest_status='verified')
+BEGIN SELECT RAISE(ABORT,'media_fetch_ticket_creator_mismatch'); END;
+
 CREATE TRIGGER messaging_audit_actor_role_contract_insert
 BEFORE INSERT ON messaging_audit_events
 WHEN NEW.actor_role IS NULL OR NEW.actor_role NOT IN ('agency_admin','operator','creator','viewer','service')
@@ -2105,6 +2489,72 @@ BEFORE UPDATE ON migration_ledger_runs
 BEGIN
   SELECT RAISE(ABORT,'migration_ledger_append_only');
 END;
+
+CREATE TRIGGER onlyfans_batch_scope_insert
+BEFORE INSERT ON onlyfans_upload_batches
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+  OR NOT EXISTS (SELECT 1 FROM onlyfans_upload_targets WHERE id=NEW.target_id AND creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id AND status='active' AND verified_at IS NOT NULL)
+  OR NOT EXISTS (SELECT 1 FROM account_browser_profiles WHERE creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id AND platform='onlyfans')
+BEGIN SELECT RAISE(ABORT, 'onlyfans_upload_batch_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_batch_scope_update
+BEFORE UPDATE OF creator_id,account_id,target_id,profile_id ON onlyfans_upload_batches
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+  OR NOT EXISTS (SELECT 1 FROM onlyfans_upload_targets WHERE id=NEW.target_id AND creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id)
+  OR NOT EXISTS (SELECT 1 FROM account_browser_profiles WHERE creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id AND platform='onlyfans')
+BEGIN SELECT RAISE(ABORT, 'onlyfans_upload_batch_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_delivery_control_scope_insert
+BEFORE INSERT ON onlyfans_delivery_controls
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+BEGIN SELECT RAISE(ABORT, 'onlyfans_delivery_control_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_delivery_control_scope_update
+BEFORE UPDATE OF creator_id,account_id ON onlyfans_delivery_controls
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+BEGIN SELECT RAISE(ABORT, 'onlyfans_delivery_control_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_job_batch_scope_insert
+BEFORE INSERT ON onlyfans_upload_jobs
+WHEN NEW.batch_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM onlyfans_upload_batches b
+  WHERE b.id=NEW.batch_id AND b.creator_id=NEW.creator_id AND b.account_id=NEW.account_id AND b.target_id=NEW.target_id
+)
+BEGIN SELECT RAISE(ABORT, 'onlyfans_upload_job_batch_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_job_batch_scope_update
+BEFORE UPDATE OF batch_id,creator_id,account_id,target_id ON onlyfans_upload_jobs
+WHEN NEW.batch_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM onlyfans_upload_batches b
+  WHERE b.id=NEW.batch_id AND b.creator_id=NEW.creator_id AND b.account_id=NEW.account_id AND b.target_id=NEW.target_id
+)
+BEGIN SELECT RAISE(ABORT, 'onlyfans_upload_job_batch_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_job_scope_insert
+BEFORE INSERT ON onlyfans_upload_jobs
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+  OR NOT EXISTS (SELECT 1 FROM onlyfans_upload_targets WHERE id=NEW.target_id AND creator_id=NEW.creator_id AND account_id=NEW.account_id AND status='active')
+  OR NOT EXISTS (SELECT 1 FROM assets WHERE id=NEW.asset_id AND creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT, 'onlyfans_upload_job_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_job_scope_update
+BEFORE UPDATE OF creator_id,account_id,target_id,asset_id,platform ON onlyfans_upload_jobs
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+  OR NOT EXISTS (SELECT 1 FROM onlyfans_upload_targets WHERE id=NEW.target_id AND creator_id=NEW.creator_id AND account_id=NEW.account_id)
+  OR NOT EXISTS (SELECT 1 FROM assets WHERE id=NEW.asset_id AND creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT, 'onlyfans_upload_job_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_target_account_scope_insert
+BEFORE INSERT ON onlyfans_upload_targets
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+  OR NOT EXISTS (SELECT 1 FROM account_browser_profiles WHERE creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id AND platform='onlyfans')
+BEGIN SELECT RAISE(ABORT, 'onlyfans_target_scope_mismatch'); END;
+
+CREATE TRIGGER onlyfans_target_account_scope_update
+BEFORE UPDATE OF creator_id,account_id,profile_id,platform ON onlyfans_upload_targets
+WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
+  OR NOT EXISTS (SELECT 1 FROM account_browser_profiles WHERE creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id AND platform='onlyfans')
+BEGIN SELECT RAISE(ABORT, 'onlyfans_target_scope_mismatch'); END;
 
 CREATE TRIGGER public_profile_version_approval_transition
 BEFORE UPDATE OF status, approved_by, approved_at ON creator_public_profile_versions
@@ -2262,6 +2712,30 @@ WHEN (NEW.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM operational_accou
 BEGIN
   SELECT RAISE(ABORT, 'social_post_creator_mismatch');
 END;
+
+CREATE TRIGGER telegram_media_handoff_creator_scope_insert
+BEFORE INSERT ON telegram_media_handoffs
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id AND o.ingest_status='verified' AND o.sha256=NEW.sha256 AND o.byte_count=NEW.byte_count)
+BEGIN SELECT RAISE(ABORT,'telegram_media_handoff_creator_mismatch'); END;
+
+CREATE TRIGGER telegram_media_handoff_creator_scope_update
+BEFORE UPDATE OF creator_id,asset_id,storage_object_id,sha256,byte_count ON telegram_media_handoffs
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id AND o.ingest_status='verified' AND o.sha256=NEW.sha256 AND o.byte_count=NEW.byte_count)
+BEGIN SELECT RAISE(ABORT,'telegram_media_handoff_creator_mismatch'); END;
+
+CREATE TRIGGER vault_credentials_account_scope_insert BEFORE INSERT ON vault_credentials
+WHEN NEW.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'vault_credential_creator_scope_invalid'); END;
+
+CREATE TRIGGER vault_credentials_account_scope_update BEFORE UPDATE OF creator_id,account_id ON vault_credentials
+WHEN NEW.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'vault_credential_creator_scope_invalid'); END;
+
+CREATE TRIGGER vault_step_up_membership_scope BEFORE INSERT ON vault_step_up_sessions
+WHEN NOT EXISTS (SELECT 1 FROM creator_memberships WHERE creator_id=NEW.creator_id AND lower(user_email)=lower(NEW.identity_email) AND role=NEW.actor_role AND status='active')
+BEGIN SELECT RAISE(ABORT,'vault_step_up_actor_scope_invalid'); END;
 
 CREATE TRIGGER vault_upload_actor_role_contract_insert
 BEFORE INSERT ON vault_upload_events

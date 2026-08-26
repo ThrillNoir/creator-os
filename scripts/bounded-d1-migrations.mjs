@@ -3,12 +3,13 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSy
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, validateBackup } from "./bounded-d1-migrations-lib.mjs";
+import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashCanonicalJson, hashFileBytes, inventoryFromLedger, validateBackup } from "./bounded-d1-migrations-lib.mjs";
 import { createActivationD1ReadClient } from "./service-auth-activate.mjs";
 import { readDeploymentRegistry, readJsoncFile } from "./deployment-preflight.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const policyPath = path.join(root, "config/bounded-d1-migrations.json");
+const stagingLedgerPath = path.join(root, "config/staging-d1-migration-ledger.json");
 const registryPath = path.join(root, "config/deployments.json");
 const canonicalConfigPath = path.join(root, "cloudflare/thot-os-next/wrangler.jsonc");
 const wrangler = path.join(root, "cloudflare/thot-os-next/node_modules/.bin/wrangler");
@@ -52,7 +53,9 @@ function loadAuthority() {
   if (!d1) throw new Error("Canonical Web Wrangler configuration has no DB binding.");
   const target = registry.environments?.staging?.resources?.d1?.[d1.database_name];
   if (config.account_id !== registry.environments?.staging?.accountId || !target || target.id !== d1.database_id || target.migrationsDir !== d1.migrations_dir) throw new Error("Registry and canonical Web D1 binding disagree.");
-  return { registry, policy, config, target };
+  const ledger = parseTrustedJson(readFileSync(stagingLedgerPath, "utf8"), "Reviewed staging migration ledger");
+  if (ledger.environment !== "staging" || ledger.databaseId !== target.id) throw new Error("Reviewed staging migration ledger target does not match the canonical staging D1 binding.");
+  return { registry, policy, config, target, ledger };
 }
 export function parseTrustedJson(source, label) {
   try {
@@ -149,7 +152,7 @@ export async function makePlan(options, d1Client = createActivationD1ReadClient(
   if (options.environment !== "staging") throw new Error("An explicit staging environment is required.");
   const authority = loadAuthority();
   const inventoryDirectory = path.resolve(path.dirname(canonicalConfigPath), authority.target.migrationsDir);
-  const inventory = inventoryFromDirectory(inventoryDirectory, readdirSync);
+  const inventory = inventoryFromLedger(inventoryDirectory, authority.ledger, readdirSync);
   const gitState = gitIdentity();
   if (!gitClean()) throw new Error("Planning requires a clean Git working tree.");
   gitState.clean = true;
