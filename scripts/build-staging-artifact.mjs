@@ -62,7 +62,7 @@ export function buildStagingArtifact() {
   // isolated release worktrees. Webpack is explicit so the same pinned build
   // remains reproducible in both the canonical checkout and safe worktrees.
   execFileSync(process.execPath, [nextBinary, "build", "--webpack"], { cwd: webDirectory, env, stdio: "inherit" });
-  execFileSync(process.execPath, [openNextBinary, "build"], { cwd: webDirectory, env, stdio: "inherit" });
+  execFileSync(process.execPath, [openNextBinary, "build", "--skipNextBuild"], { cwd: webDirectory, env, stdio: "inherit" });
   assertCompiledHealthMetadata({ artifactPath: healthArtifact, metadata });
   const manifest = createStagingArtifactManifest({ artifactDirectory, lockfilePath, metadata });
   writeFileSync(artifactManifest, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
