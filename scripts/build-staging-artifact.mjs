@@ -40,6 +40,10 @@ function buildEnvironment(metadata) {
   return {
     ...process.env,
     CI: "1",
+    // Match the standalone/output-tracing mode OpenNext sets when it owns the
+    // Next build, while retaining the explicit worktree-safe Webpack command.
+    NEXT_PRIVATE_STANDALONE: "true",
+    NEXT_PRIVATE_OUTPUT_TRACE_ROOT: webDirectory,
     THOT_OS_COMPONENT: metadata.component,
     THOT_OS_ENVIRONMENT: metadata.environment,
     THOT_OS_GIT_SHA: metadata.gitSha,
