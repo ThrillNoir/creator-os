@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { migrationState, validateTargetAuthority, verifyExpectedMigrations } from "./reconciliation-lib.mjs";
+import { validateTargetAuthority, verifyExpectedMigrations } from "./reconciliation-lib.mjs";
 import { assertExactMigrationHistory, hashCanonicalJson, hashFileBytes, inventoryFromLedger, validateReleaseExportPlan } from "../bounded-d1-migrations-lib.mjs";
 import { projectRoot } from "../deployment-preflight.mjs";
 
@@ -65,6 +65,14 @@ function receiptFor({ target, plan, preMigrationState, sqlPath, parsePath }) {
   return receipt;
 }
 
+function exportMigrationHistory(database) {
+  const rows = database.prepare("SELECT id,name FROM d1_migrations ORDER BY id").all();
+  if (!rows.every((row, index) => Number.isInteger(row.id) && row.id > 0 && (index === 0 || row.id > rows[index - 1].id) && typeof row.name === "string" && /^\d{4}_[a-z0-9][a-z0-9_-]*\.sql$/i.test(row.name))) {
+    throw new Error("Read-only staging export has malformed D1 migration history.");
+  }
+  return rows.map((row) => row.name);
+}
+
 export function exportTarget({ environment, output, approvedPlan }) {
   if (environment !== "staging" || !output || !path.isAbsolute(output)) throw new Error(`Only a staging target export to an absolute local path is permitted. ${usage()}`);
   const target = validateTargetAuthority({ environment });
@@ -97,7 +105,7 @@ export function exportTarget({ environment, output, approvedPlan }) {
     // loaded. Validate the completed parse with foreign_key_check instead.
     parse.pragma("foreign_keys = OFF");
     parse.exec(readFileSync(sqlPath, "utf8"));
-    target.migrations = migrationState(parse);
+    target.migrations = exportMigrationHistory(parse);
     if (releaseBaseline) assertExactMigrationHistory(target.migrations, releaseBaseline.preMigrationState, "Export migration history");
     else verifyExpectedMigrations(target.migrations);
     if (parse.pragma("foreign_key_check").length !== 0) throw new Error("Read-only staging export has foreign-key violations.");
