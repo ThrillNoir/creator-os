@@ -4,7 +4,10 @@ import { cloudflareEnv } from "./cloudflare";
 import type { CreatorRole } from "./authorization";
 
 const encoder = new TextEncoder();
-const PIN_ITERATIONS = 310_000;
+// Cloudflare Workers Web Crypto rejects PBKDF2 counts above 100,000. The
+// verifier also includes a per-record random salt and the secret vault pepper.
+const PIN_ITERATIONS = 100_000;
+const MAX_PIN_ITERATIONS = 100_000;
 export const STEP_UP_COOKIE = "thot_os_access_step_up";
 
 type CredentialCipher = {
@@ -62,12 +65,13 @@ export function validatePin(value: unknown) {
   return pin;
 }
 
-async function pinVerifier(pin: string, salt: ArrayBuffer | Uint8Array) {
+async function pinVerifier(pin: string, salt: ArrayBuffer | Uint8Array, iterations = PIN_ITERATIONS) {
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > MAX_PIN_ITERATIONS) throw new Error("Access PIN verifier is unavailable.");
   const combinedSalt = new Uint8Array((salt instanceof Uint8Array ? salt : new Uint8Array(salt)).byteLength + pinPepper().byteLength);
   combinedSalt.set(salt instanceof Uint8Array ? salt : new Uint8Array(salt));
   combinedSalt.set(pinPepper(), combinedSalt.byteLength - pinPepper().byteLength);
   const key = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
-  return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: combinedSalt, iterations: PIN_ITERATIONS }, key, 256));
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: combinedSalt, iterations }, key, 256));
 }
 
 export async function encryptCredentialPassword(input: { creatorId: string; credentialId: string; accountId: string | null; password: string }): Promise<CredentialCipher> {
@@ -117,17 +121,17 @@ export async function savePinVerifier(input: { email: string; creatorId: string;
   return scope;
 }
 
-type PinRow = { id: string; pin_scope: "creator" | "administrator"; salt: ArrayBuffer; verifier: ArrayBuffer; locked_until: string | null };
+type PinRow = { id: string; pin_scope: "creator" | "administrator"; salt: ArrayBuffer; verifier: ArrayBuffer; kdf_iterations: number; locked_until: string | null };
 
 export async function verifyPinAndCreateSession(input: { email: string; creatorId: string; role: CreatorRole; pin: string }) {
   const DB = cloudflareEnv().DB;
   const scopes: Array<"administrator" | "creator"> = input.role === "agency_admin" ? ["administrator", "creator"] : ["creator"];
-  const row = await DB.prepare(`SELECT id,pin_scope,salt,verifier,locked_until FROM vault_pin_verifiers
+  const row = await DB.prepare(`SELECT id,pin_scope,salt,verifier,kdf_iterations,locked_until FROM vault_pin_verifiers
     WHERE lower(identity_email)=lower(?) AND ((pin_scope='administrator' AND creator_id IS NULL) OR (pin_scope='creator' AND creator_id=?))
     ORDER BY CASE pin_scope WHEN 'administrator' THEN 0 ELSE 1 END LIMIT 1`).bind(input.email, input.creatorId).first<PinRow>();
   if (!row || !scopes.includes(row.pin_scope)) throw new Error("Set up your Access PIN before continuing.");
   if (row.locked_until && Date.parse(row.locked_until) > Date.now()) throw new Error("Access PIN is temporarily locked. Try again later.");
-  const candidate = await pinVerifier(input.pin, row.salt);
+  const candidate = await pinVerifier(input.pin, row.salt, row.kdf_iterations);
   if (!equal(candidate, new Uint8Array(row.verifier))) {
     // This conditional increment is the concurrency boundary: the fifth failed
     // request locks the verifier before any concurrent request can reset it.
