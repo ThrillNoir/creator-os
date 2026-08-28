@@ -17,11 +17,10 @@ export async function POST(request: Request) {
   const env = cloudflareEnv();
   const { DB } = env;
   if (backend === "r2") {
-    // Instagram and Reddit still have Dropbox-only implementations. D1 rows
-    // alone cannot prove their live routed versions, so this release keeps the
-    // global cutover mechanically unavailable until a later coordinator can
-    // authenticate and version-bind every consumer in the same approval flow.
-    return noStoreJson({ ok: false, error: "cross_service_cutover_not_implemented" }, 409);
+    // R2 activation is deliberately not a browser mutation. The bounded
+    // coordinator verifies creator coverage, live Worker metadata and
+    // authenticated readiness evidence before it can update this state.
+    return noStoreJson({ ok: false, error: "bounded_cutover_plan_required" }, 409);
   } else {
     await DB.batch([
       DB.prepare("UPDATE creator_media_source_states SET active_backend='dropbox',migration_state='rollback',dropbox_fallback_enabled=1,cutover_by=?,cutover_at=CURRENT_TIMESTAMP,rollback_reason=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(context.email, reason || "manual_rollback", context.creator.creator_id),

@@ -401,13 +401,22 @@ async function sourceMediaHealth(request: Request, env: Env) {
   }
   const workerVersion = (env as Env & { WORKER_VERSION?: { id?: string } }).WORKER_VERSION?.id ?? "";
   await internalServiceAuditStatement(env.DB, service, "/internal/source-media/health").run();
+  const ok = hardening?.applied === 1 && probe.ok && Boolean(workerVersion) && Boolean(env.LIBRARY_MEDIA);
+  const reasonCode = hardening?.applied !== 1 ? "hardening_migration_missing"
+    : !env.LIBRARY_MEDIA ? "library_media_binding_missing"
+      : !workerVersion ? "worker_version_missing"
+        : !probe.assetBound ? "no_eligible_canonical_object"
+          : !probe.ok ? "canonical_object_integrity_failed"
+            : "ready";
   return json(request, {
-    ok: hardening?.applied === 1 && probe.ok && Boolean(workerVersion),
+    ok,
     service: "vault",
     sourceMediaCapability: "r2-source-v2",
     workerVersion,
     probe,
     migration: migration?.name ?? "none",
+    bindings: { libraryMedia: Boolean(env.LIBRARY_MEDIA) },
+    reasonCode,
   });
 }
 

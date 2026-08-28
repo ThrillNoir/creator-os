@@ -13,9 +13,10 @@ export async function GET() {
     if (!env.VAULT_BRIDGE) return { compatible: false };
     try {
       const response = await fetchInternalService(env, "vault_catalogue", "vault.source_media.health", env.VAULT_BRIDGE, "https://vault-bridge/internal/source-media/health", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: context.creator.creator_id }) });
-      const body = await response.json() as { ok?: boolean; sourceMediaCapability?: string; bindings?: { libraryMedia?: boolean } };
-      return { compatible: response.ok && body.ok === true && body.sourceMediaCapability === "r2-source-v2" && body.bindings?.libraryMedia === true };
-    } catch { return { compatible: false }; }
+      const body = await response.json() as { ok?: boolean; sourceMediaCapability?: string; bindings?: { libraryMedia?: boolean }; reasonCode?: unknown };
+      const compatible = response.ok && body.ok === true && body.sourceMediaCapability === "r2-source-v2" && body.bindings?.libraryMedia === true;
+      return { compatible, reason: compatible ? "ready" : typeof body.reasonCode === "string" ? body.reasonCode : "vault_health_contract_failed" };
+    } catch { return { compatible: false, reason: "vault_health_unavailable" }; }
   })()]);
   const deployment = getDeploymentMetadata();
   return Response.json({ ok: true, service: deployment.component, environment: deployment.environment, runtime: "nextjs-opennext", deployment, creatorId: context.creator.creator_id, sourceMediaCapability: "r2-source-v2", consumers: { vault: vaultCapability, instagram: { compatible: false, reason: "r2_source_not_deployed" }, reddit: { compatible: false, reason: "r2_source_not_deployed" } }, database: { connected: true, migration: migration?.name ?? "none", assets: counts?.assets ?? 0, previews: counts?.previews ?? 0 }, bindings: { d1: Boolean(env.DB), media: Boolean(env.MEDIA), previews: Boolean(env.PREVIEWS), libraryMedia: Boolean(env.LIBRARY_MEDIA), instagramScheduler: Boolean(env.INSTAGRAM_SCHEDULER), redditScheduler: Boolean(env.REDDIT_SCHEDULER), telegramBridge: Boolean(env.TELEGRAM_BRIDGE), vaultBridge: Boolean(env.VAULT_BRIDGE) }, timestamp: new Date().toISOString() }, { headers: { "cache-control": "no-store" } });

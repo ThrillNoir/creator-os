@@ -2,9 +2,10 @@ import { findPublishedImage, imageMimeType, parseMediaLease, parseRedditFlairCho
 
 type UnknownRecord = Record<string, unknown>;
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
+import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 type DuePost = {
   id: string; creator_id: string; asset_id: string; title: string; caption: string;
-  content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; bytes: number; dropbox_root: string;
+  content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; extension: string; bytes: number; dropbox_root: string;
   community_name: string; flair_required: number; allows_nsfw: number; reddit_flair_id: string | null; reddit_flair_text: string | null;
 };
 
@@ -99,6 +100,31 @@ async function getDropboxTemporaryLink(env: Env, post: DuePost) {
   return response.data.link;
 }
 
+type CanonicalR2Source = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string };
+
+async function approvedRedditImage(env: Env, post: DuePost) {
+  const state = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(post.creator_id).first<{ active_backend: "dropbox" | "r2" }>();
+  if (state?.active_backend !== "r2") {
+    const source = await fetch(await getDropboxTemporaryLink(env, post));
+    if (!source.ok) throw new Error(`Dropbox image download failed (${source.status}).`);
+    return { bytes: await source.arrayBuffer(), mimeType: imageMimeType(post.basename, source.headers.get("content-type") || ""), source: "dropbox" as const };
+  }
+  if (!env.LIBRARY_MEDIA) throw new Error("r2_source_media_binding_missing");
+  const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
+    FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+    WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
+      AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.source_provider='dropbox'
+      AND o.source_revision IS a.dropbox_revision AND o.byte_count=a.bytes AND a.source_available=1
+      AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL
+    ORDER BY o.verified_at DESC LIMIT 1`).bind(post.creator_id, post.asset_id).first<CanonicalR2Source>();
+  if (!record) throw new Error("r2_source_media_not_available");
+  const object = await env.LIBRARY_MEDIA.get(record.object_key, { onlyIf: { etagMatches: record.r2_etag } });
+  if (!object || !("body" in object) || !immutableR2IdentityMatches(record, object)) throw new Error("r2_source_media_integrity_failed");
+  const bytes = await object.arrayBuffer();
+  if (bytes.byteLength !== record.byte_count) throw new Error("r2_source_media_integrity_failed");
+  return { bytes, mimeType: imageMimeType(post.basename, record.verified_mime_type), source: "r2" as const };
+}
+
 async function markFailed(env: Env, post: DuePost, message: string, uncertain = false) {
   const safeMessage = `${uncertain ? "Outcome uncertain; verify Reddit before retrying. " : ""}${message}`.slice(0, 2000);
   await env.DB.batch([
@@ -146,11 +172,10 @@ async function publishPost(env: Env, post: DuePost) {
     throw new Error(`Composio is authorized as u/${identity.name}, not ${expected.handle}. Reconnect the correct account.`);
   }
 
-  const source = await fetch(await getDropboxTemporaryLink(env, post));
-  if (!source.ok) throw new Error(`Dropbox image download failed (${source.status}).`);
-  const image = await source.arrayBuffer();
+  const source = await approvedRedditImage(env, post);
+  const image = source.bytes;
   if (!image.byteLength || image.byteLength > MAX_REDDIT_IMAGE_BYTES) throw new Error("The approved Reddit image is empty or larger than 20 MB.");
-  const mimeType = imageMimeType(post.basename, source.headers.get("content-type") || "");
+  const mimeType = source.mimeType;
   const operationId = await beginRedditPublish(env, post);
   const leaseQuery = new URLSearchParams({ filepath: post.basename, mimetype: mimeType });
   const lease = parseMediaLease(await composioProxy<unknown>(env, connection.connected_account_id, `/api/media/asset.json?${leaseQuery}`, "POST"));
@@ -224,7 +249,7 @@ async function publishPost(env: Env, post: DuePost) {
 
 async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
-    SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.bytes,c.dropbox_root,
+    SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,c.dropbox_root,
       rc.name AS community_name,rc.flair_required,rc.allows_nsfw
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
@@ -262,7 +287,7 @@ async function processDue(env: Env, triggerType: string) {
   let claimed = 0, published = 0, failed = 0;
   try {
     const due = await env.DB.prepare(`
-      SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.bytes,c.dropbox_root,
+      SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,c.dropbox_root,
         rc.name AS community_name,rc.flair_required,rc.allows_nsfw
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id

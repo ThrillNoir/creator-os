@@ -113,7 +113,7 @@
           "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_REDDIT_AUTH_CONFIG_ID"],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": [],
+            "r2": ["thot-os-library-media-staging"],
             "queues": [],
             "services": {}
           }

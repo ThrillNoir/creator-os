@@ -56,6 +56,7 @@
 -- 0049_creator_onboarding_access_vault.sql e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f
 -- 0050_r2_native_source_media.sql c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801
 -- 0051_r2_source_media_hardening.sql 52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1
+-- 0052_creator_scoped_r2_readiness.sql 18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939
 
 PRAGMA foreign_keys = ON;
 
@@ -113,6 +114,7 @@ INSERT INTO d1_migrations (id, name) VALUES (50, '0045_finished_media_uploads.sq
 INSERT INTO d1_migrations (id, name) VALUES (51, '0049_creator_onboarding_access_vault.sql');
 INSERT INTO d1_migrations (id, name) VALUES (52, '0050_r2_native_source_media.sql');
 INSERT INTO d1_migrations (id, name) VALUES (53, '0051_r2_source_media_hardening.sql');
+INSERT INTO d1_migrations (id, name) VALUES (54, '0052_creator_scoped_r2_readiness.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -491,6 +493,19 @@ CREATE TABLE creator_media_release_attestations (
   CHECK((status='draft' AND approved_by IS NULL AND approved_at IS NULL) OR (status<>'draft' AND approved_by IS NOT NULL AND approved_at IS NOT NULL))
 );
 
+CREATE TABLE creator_media_source_cutover_receipts (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  plan_sha256 TEXT NOT NULL UNIQUE CHECK(length(plan_sha256)=64),
+  git_sha TEXT NOT NULL CHECK(length(git_sha)=40),
+  asset_coverage_sha256 TEXT NOT NULL CHECK(length(asset_coverage_sha256)=64),
+  readiness_evidence_sha256 TEXT NOT NULL CHECK(length(readiness_evidence_sha256)=64),
+  applied_by TEXT NOT NULL,
+  rollback_of_plan_sha256 TEXT CHECK(rollback_of_plan_sha256 IS NULL OR length(rollback_of_plan_sha256)=64),
+  action TEXT NOT NULL CHECK(action IN ('r2_cutover','dropbox_rollback')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE creator_media_source_events (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -770,6 +785,22 @@ CREATE TABLE creator_public_profiles (
   created_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_source_media_consumer_readiness (
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  service_name TEXT NOT NULL CHECK(service_name IN ('web','vault','instagram','reddit')),
+  capability TEXT NOT NULL DEFAULT 'r2-source-v2' CHECK(capability='r2-source-v2'),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','compatible','blocked','revoked')),
+  worker_version TEXT,
+  deployment_evidence_sha256 TEXT CHECK(deployment_evidence_sha256 IS NULL OR length(deployment_evidence_sha256)=64),
+  health_evidence_sha256 TEXT CHECK(health_evidence_sha256 IS NULL OR length(health_evidence_sha256)=64),
+  asset_coverage_sha256 TEXT CHECK(asset_coverage_sha256 IS NULL OR length(asset_coverage_sha256)=64),
+  reason_code TEXT NOT NULL DEFAULT 'not_verified' CHECK(length(reason_code) BETWEEN 1 AND 120),
+  verified_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(creator_id,service_name),
+  CHECK(status <> 'compatible' OR (worker_version IS NOT NULL AND deployment_evidence_sha256 IS NOT NULL AND health_evidence_sha256 IS NOT NULL AND asset_coverage_sha256 IS NOT NULL AND verified_at IS NOT NULL))
 );
 
 CREATE TABLE creators (
@@ -1722,6 +1753,9 @@ CREATE INDEX creator_adult_profile_media_render
 CREATE INDEX creator_exceptions_open_scope
   ON creator_exceptions(creator_id, status, severity, last_observed_at DESC);
 
+CREATE INDEX creator_media_source_cutover_receipts_creator_created
+  ON creator_media_source_cutover_receipts(creator_id,created_at DESC);
+
 CREATE INDEX creator_media_source_events_creator_created
   ON creator_media_source_events(creator_id,created_at DESC);
 
@@ -1753,6 +1787,9 @@ CREATE INDEX creator_public_profile_publications_creator_created
 
 CREATE INDEX creator_public_profile_versions_profile_status
   ON creator_public_profile_versions(profile_id, status, version_number DESC);
+
+CREATE INDEX creator_source_media_readiness_creator_status
+  ON creator_source_media_consumer_readiness(creator_id,status,service_name);
 
 CREATE INDEX external_operation_receipts_reconcile
   ON external_operation_receipts(provider, status, updated_at);
@@ -2421,6 +2458,17 @@ BEFORE UPDATE OF status ON creator_public_profile_versions
 WHEN OLD.status<>'draft' AND NEW.status='draft'
 BEGIN
   SELECT RAISE(ABORT, 'public_profile_version_cannot_return_to_draft');
+END;
+
+CREATE TRIGGER creator_source_media_readiness_creator_insert
+AFTER INSERT ON creators
+BEGIN
+  INSERT OR IGNORE INTO creator_source_media_consumer_readiness (creator_id,service_name,status,reason_code)
+  VALUES
+    (NEW.id,'web','pending','awaiting_creator_coverage'),
+    (NEW.id,'vault','blocked','consumer_not_verified'),
+    (NEW.id,'instagram','blocked','consumer_not_verified'),
+    (NEW.id,'reddit','blocked','consumer_not_verified');
 END;
 
 CREATE TRIGGER external_operation_receipt_creator_insert

@@ -795,6 +795,13 @@ async function beginInstagramPublish(env: Env, post: DuePost) {
 
 async function publishPost(env: Env, post: DuePost) {
   const connection = await currentInstagramConnection(env, post.creator_id);
+  const sourceState = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(post.creator_id).first<{ active_backend: "dropbox" | "r2" }>();
+  // The Graph container workflow accepts a provider-fetched URL, not a
+  // bounded authenticated upload stream.  Do not turn a private R2 original
+  // into a public or presigned URL merely to satisfy that API: while an R2
+  // backend is active, publishing remains mechanically blocked until a
+  // provider-private handoff is separately implemented and reviewed.
+  if (sourceState?.active_backend === "r2") throw new Error("instagram_r2_provider_handoff_not_implemented");
   const dropbox = await currentDropboxConnection(env, post.creator_id);
   const operationId = await beginInstagramPublish(env, post);
   const instagramUserId = storedInstagramComposioUserId(connection);

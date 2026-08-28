@@ -20,6 +20,7 @@
     "migration:automated-reconcile": "node scripts/migration/automated-reconcile.mjs",
     "source-media:migration": "node scripts/source-media-migration.mjs",
     "source-media:reconcile": "node scripts/reconcile-staging-source-media.mjs",
+    "source-media:cutover": "node scripts/source-media-cutover.mjs",
     "d1:migrations:plan": "node scripts/bounded-d1-migrations.mjs --plan",
     "d1:migrations:apply": "node scripts/bounded-d1-migrations.mjs --apply",
     "d1:production-baseline:build": "node scripts/build-d1-production-baseline.mjs",

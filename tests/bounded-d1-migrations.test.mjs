@@ -31,7 +31,7 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger preserves historical duplicate prefixes and selects only pending 0051", () => {
+test("reviewed staging ledger preserves historical duplicate prefixes and selects only pending 0052", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
@@ -39,8 +39,8 @@ test("reviewed staging ledger preserves historical duplicate prefixes and select
   assert.deepEqual(inventory.slice(43, 50).map((entry) => entry.name), [
     "0044_onlyfans_upload_bridge.sql", "0045_onlyfans_authorized_delivery.sql", "0046_onlyfans_sequential_batches.sql", "0047_onlyfans_supervised_delivery.sql", "0048_onlyfans_grouped_message_delivery.sql", "0044_creator_r2_library.sql", "0045_finished_media_uploads.sql",
   ]);
-  const plan = buildBoundedPlan({ environment: "staging", releaseId: "r2-source-media-hardening", from: "0051", through: "0051", inventory, remoteApplied: inventory.slice(0, 52).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git });
-  assert.deepEqual(plan.execution.map((entry) => entry.name), ["0051_r2_source_media_hardening.sql"]);
+  const plan = buildBoundedPlan({ environment: "staging", releaseId: "creator-scoped-r2-readiness", from: "0052", through: "0052", inventory, remoteApplied: inventory.slice(0, 53).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git });
+  assert.deepEqual(plan.execution.map((entry) => entry.name), ["0052_creator_scoped_r2_readiness.sql"]);
   assert.equal(plan.excludedPending.length, 0);
   assert.throws(() => buildBoundedPlan({ environment: "staging", releaseId: "ambiguous", from: "0044", through: "0049", inventory, remoteApplied: inventory.slice(0, 43).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git }), /ambiguous/);
 });

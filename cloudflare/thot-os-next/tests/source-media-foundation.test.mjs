@@ -33,7 +33,7 @@ test("private source-media ingestion is creator-scoped, no-store, and multipart 
   assert.match(finalize, /hashAndValidateR2Object/);
   assert.match(finalize, /source_media_verification_failed/);
   assert.match(finalize, /multipart_upload_id=NULL/);
-  assert.match(cutover, /cross_service_cutover_not_implemented/);
+  assert.match(cutover, /bounded_cutover_plan_required/);
   assert.match(cutover, /active_backend='dropbox'/);
   assert.match(delivery, /active_backend !== "r2"/);
   assert.match(delivery, /source_object_integrity_failed/);

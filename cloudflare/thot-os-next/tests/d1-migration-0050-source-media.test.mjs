@@ -19,7 +19,7 @@ async function findDatabase(directory) {
   return null;
 }
 
-test("0050 and 0051 keep source ingestion creator-scoped and bind verified rows to immutable R2 identity", async () => {
+test("0050 through 0052 keep source ingestion and cutover readiness creator-scoped", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "thot-os-source-media-"));
   let db;
   try {
@@ -35,6 +35,10 @@ test("0050 and 0051 keep source ingestion creator-scoped and bind verified rows 
     const evidence = "e".repeat(64);
     db.prepare("UPDATE source_media_consumer_capabilities SET status='compatible',worker_version='version',evidence_sha256=? WHERE service_name IN ('web','vault')").run(evidence);
     assert.equal(db.prepare("SELECT COUNT(*) AS ready FROM source_media_consumer_capabilities WHERE status='compatible' AND worker_version IS NOT NULL AND evidence_sha256 IS NOT NULL").get().ready, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) AS rows FROM creator_source_media_consumer_readiness WHERE creator_id IN ('adelaide','second')").get().rows, 8);
+    assert.throws(() => db.prepare("UPDATE creator_source_media_consumer_readiness SET status='compatible' WHERE creator_id='adelaide' AND service_name='web'").run(), /CHECK constraint failed/);
+    db.prepare("UPDATE creator_source_media_consumer_readiness SET status='compatible',worker_version='version',deployment_evidence_sha256=?,health_evidence_sha256=?,asset_coverage_sha256=?,verified_at=CURRENT_TIMESTAMP,reason_code='ready' WHERE creator_id='adelaide' AND service_name='web'").run(evidence, evidence, evidence);
+    assert.deepEqual(db.prepare("SELECT status,reason_code FROM creator_source_media_consumer_readiness WHERE creator_id='adelaide' AND service_name='web'").get(), { status: "compatible", reason_code: "ready" });
     assert.deepEqual(db.prepare("SELECT active_backend,migration_state,dropbox_fallback_enabled FROM creator_media_source_states WHERE creator_id='second'").get(), { active_backend: "dropbox", migration_state: "dropbox", dropbox_fallback_enabled: 1 });
     db.prepare("INSERT INTO assets (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,indexed_at) VALUES ('source-a','adelaide','source-a.jpg','source-a.jpg','jpg',10,CURRENT_TIMESTAMP,'other',CURRENT_TIMESTAMP)").run();
     db.prepare("INSERT INTO assets (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,indexed_at) VALUES ('source-b','second','source-b.jpg','source-b.jpg','jpg',10,CURRENT_TIMESTAMP,'other',CURRENT_TIMESTAMP)").run();
@@ -58,6 +62,8 @@ test("0050 and 0051 keep source ingestion creator-scoped and bind verified rows 
     assert.deepEqual(db.prepare("SELECT status,finalization_state,multipart_upload_id FROM asset_ingest_sessions WHERE id='session-a'").get(), { status: "finalized", finalization_state: "verified", multipart_upload_id: null });
     db.prepare("UPDATE creator_media_source_states SET active_backend='r2',migration_state='r2_active',dropbox_fallback_enabled=0 WHERE creator_id='adelaide'").run();
     assert.deepEqual(db.prepare("SELECT active_backend,migration_state,dropbox_fallback_enabled FROM creator_media_source_states WHERE creator_id='adelaide'").get(), { active_backend: "r2", migration_state: "r2_active", dropbox_fallback_enabled: 0 });
+    db.prepare("INSERT INTO creator_media_source_cutover_receipts (id,creator_id,plan_sha256,git_sha,asset_coverage_sha256,readiness_evidence_sha256,applied_by,action) VALUES ('cutover:test','adelaide',?,?,?,?,?,'r2_cutover')").run(evidence, "b".repeat(40), evidence, evidence, "service:test");
+    assert.equal(db.prepare("SELECT COUNT(*) AS receipts FROM creator_media_source_cutover_receipts WHERE creator_id='adelaide' AND action='r2_cutover'").get().receipts, 1);
     assert.equal(db.pragma("quick_check", { simple: true }), "ok");
     assert.deepEqual(db.pragma("foreign_key_check"), []);
   } finally { db?.close(); await rm(root, { recursive: true, force: true }); }
