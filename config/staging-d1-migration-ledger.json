@@ -305,13 +305,12 @@
       "name": "0052_creator_scoped_r2_readiness.sql",
       "sha256": "18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939",
       "purpose": "Applied bounded staging migration: creator-scoped R2 consumer readiness and auditable cutover receipts."
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
+      "remoteId": 55,
       "name": "0053_native_asset_authority.sql",
       "sha256": "5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7",
-      "purpose": "Planned bounded staging migration: per-asset Cloudflare-native authority and resumable native-image session identity. It is not yet applied to staging."
+      "purpose": "Applied bounded staging migration: per-asset Cloudflare-native authority and resumable native-image session identity."
     }
   ]
 }

@@ -31,11 +31,19 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger preserves historical duplicate prefixes and selects the pending 0053", () => {
+test("reviewed staging ledger preserves historical duplicate prefixes and records applied 0053", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
+  assert.equal(ledger.migrations.length, 55);
+  assert.equal(ledger.pendingMigrations, undefined);
+  assert.deepEqual(inventory.at(-1), {
+    number: 53,
+    name: "0053_native_asset_authority.sql",
+    sha256: "5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7",
+    ledgerIndex: 55,
+  });
   assert.deepEqual(inventory.slice(43, 50).map((entry) => entry.name), [
     "0044_onlyfans_upload_bridge.sql", "0045_onlyfans_authorized_delivery.sql", "0046_onlyfans_sequential_batches.sql", "0047_onlyfans_supervised_delivery.sql", "0048_onlyfans_grouped_message_delivery.sql", "0044_creator_r2_library.sql", "0045_finished_media_uploads.sql",
   ]);
