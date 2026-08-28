@@ -24,7 +24,7 @@
     { "principalName": "thot-os-web-instagram", "creatorId": "adelaide", "capabilities": ["instagram.status.read", "instagram.connection.manage", "instagram.publish.execute", "instagram.sync.execute", "instagram.messages.sync", "instagram.messages.write"] },
     { "principalName": "thot-os-web-reddit", "creatorId": "adelaide", "capabilities": ["reddit.status.read", "reddit.connection.manage", "reddit.communities.read", "reddit.publish.execute"] },
     { "principalName": "thot-os-web-telegram", "creatorId": "adelaide", "capabilities": ["telegram.status.read", "telegram.connection.manage", "telegram.messages.sync", "telegram.messages.write"] },
-    { "principalName": "thot-os-web-vault-catalogue", "creatorId": "adelaide", "capabilities": ["vault.catalogue.refresh"] },
+    { "principalName": "thot-os-web-vault-catalogue", "creatorId": "adelaide", "capabilities": ["vault.catalogue.refresh", "vault.source_media.health"] },
     { "principalName": "thot-os-web-public-links", "creatorId": "adelaide", "capabilities": ["public.profile.publish", "public.profile.withdraw", "adult.profile.publish", "adult.profile.withdraw"] }
   ]
 }

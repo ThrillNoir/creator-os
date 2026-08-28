@@ -23,6 +23,26 @@ test("staging deployment plan binds source, artifact, ledger, secrets, and Worke
   assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest, migrationNames, workerState }), true);
 });
 
+test("Vault uses the same bounded plan/apply/reconcile contract", () => {
+  const vaultMetadata = { ...metadata, component: "vault", worker: "thot-os-vault-bridge-staging", config: "cloudflare/vault-bridge/wrangler.jsonc" };
+  const vaultState = { ...workerState, secretNames: ["COMPOSIO_API_KEY"] };
+  const plan = createDeploymentPlan({ metadata: vaultMetadata, artifactManifest, migrationNames, requiredSecretNames: ["COMPOSIO_API_KEY"], workerState: vaultState });
+  assert.equal(plan.kind, "staging-vault-deployment-plan");
+  assert.equal(plan.artifact.versionTag, `creatoros-${artifactManifest.artifact.sha256.slice(0, 48)}`);
+  assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: vaultMetadata, artifactManifest, migrationNames, workerState: vaultState }), true);
+  assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest, migrationNames, workerState }), /unsupported schema or kind/);
+});
+
+test("Vault receipt binds the fresh Worker version to the reviewed artifact tag", () => {
+  const vaultMetadata = { ...metadata, component: "vault", worker: "thot-os-vault-bridge-staging", config: "cloudflare/vault-bridge/wrangler.jsonc" };
+  const vaultState = { ...workerState, secretNames: ["COMPOSIO_API_KEY"] };
+  const plan = createDeploymentPlan({ metadata: vaultMetadata, artifactManifest, migrationNames, requiredSecretNames: ["COMPOSIO_API_KEY"], workerState: vaultState });
+  const after = { latestVersionId: "after", versionIds: ["after", "before", "older"], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: ["COMPOSIO_API_KEY"], versionTag: plan.artifact.versionTag } };
+  assert.equal(createApplyReceipt({ plan, before: vaultState, after }).deployment.workerVersion, "after");
+  after.latestSecretVersion.versionTag = "creatoros-unrelated";
+  assert.throws(() => createApplyReceipt({ plan, before: vaultState, after }), /not tagged with the reviewed artifact identity/);
+});
+
 test("apply refuses drift from the approved Worker state", () => {
   const plan = createDeploymentPlan({ metadata, artifactManifest, migrationNames, requiredSecretNames, workerState });
   const drifted = structuredClone(workerState);

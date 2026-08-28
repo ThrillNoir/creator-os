@@ -293,6 +293,12 @@
       "name": "0050_r2_native_source_media.sql",
       "sha256": "c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801",
       "purpose": "Private R2 source-media multipart sessions and explicit creator cutover state; pending bounded staging review."
+    },
+    {
+      "remoteId": null,
+      "name": "0051_r2_source_media_hardening.sql",
+      "sha256": "52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1",
+      "purpose": "Pending bounded staging migration: immutable R2 identity, recoverable multipart finalization, and creator-scoped Vault capability."
     }
   ]
 }

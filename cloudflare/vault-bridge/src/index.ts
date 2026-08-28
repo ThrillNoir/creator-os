@@ -1,5 +1,6 @@
 import { verifyRedditPostMetadata, type RedditPublicPost } from "./reddit-verification";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
+import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 
 type BridgeIdentity = { creator_id: string; account_id: string; profile_id: string; platform: "fansly" };
 type RedditBridgeIdentity = { creator_id: string; account_id: string; profile_id: string };
@@ -52,7 +53,7 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-type LibraryObject = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string };
+type LibraryObject = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string | null; r2_etag: string | null };
 type ResolvedCreatorMedia = { kind: "r2"; object: R2ObjectBody; record: LibraryObject } | { kind: "dropbox"; response: Response; contentType: string; length: string | null };
 
 /**
@@ -63,13 +64,15 @@ type ResolvedCreatorMedia = { kind: "r2"; object: R2ObjectBody; record: LibraryO
 async function resolveCreatorMedia(env: Env, creatorId: string, assetId: string): Promise<ResolvedCreatorMedia> {
   const state = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(creatorId).first<{ active_backend: "dropbox" | "r2" }>();
   if (state?.active_backend === "r2") {
-    const record = await env.DB.prepare(`SELECT object_key,byte_count,verified_mime_type,sha256
-      FROM asset_storage_objects WHERE creator_id=? AND asset_id=? AND provider='r2'
-        AND storage_role='canonical_original' AND bucket_role='library_media' AND ingest_status='verified'
-      ORDER BY verified_at DESC LIMIT 1`).bind(creatorId, assetId).first<LibraryObject>();
-    if (!record || !env.LIBRARY_MEDIA) throw new Error("r2_source_media_not_available");
-    const object = await env.LIBRARY_MEDIA.get(record.object_key);
-    if (!object || object.size !== record.byte_count) throw new Error("r2_source_media_integrity_failed");
+    const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
+      FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+      WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
+        AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.source_provider='dropbox'
+        AND o.source_revision IS a.dropbox_revision AND o.byte_count=a.bytes AND a.source_available=1
+      ORDER BY o.verified_at DESC LIMIT 1`).bind(creatorId, assetId).first<LibraryObject>();
+    if (!record || !record.r2_version || !record.r2_etag || !env.LIBRARY_MEDIA) throw new Error("r2_source_media_not_available");
+    const object = await env.LIBRARY_MEDIA.get(record.object_key, { onlyIf: { etagMatches: record.r2_etag } });
+    if (!object || !("body" in object) || !immutableR2IdentityMatches(record, object)) throw new Error("r2_source_media_integrity_failed");
     return { kind: "r2", object, record };
   }
   const source = await env.DB.prepare(`SELECT a.relative_path,c.dropbox_root
@@ -371,6 +374,41 @@ async function refreshDropboxCatalogue(request: Request, env: Env) {
     WHERE creator_id=? AND source_available=1 AND indexed_at<>?`).bind(creatorId, now).run();
   const previews = await enqueueDropboxPreviews(env, creatorId);
   return json(request, { ok: true, assets: files.length, previews });
+}
+
+async function sourceMediaHealth(request: Request, env: Env) {
+  const input = await request.json().catch(() => null) as { creatorId?: unknown } | null;
+  const creatorId = typeof input?.creatorId === "string" ? input.creatorId.trim() : "";
+  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
+  let service;
+  try {
+    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue", "vault.source_media.health");
+  } catch {
+    return json(request, { ok: false, error: "unauthorized" }, 401);
+  }
+  const migration = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>();
+  const hardening = await env.DB.prepare("SELECT COUNT(*) AS applied FROM d1_migrations WHERE name='0051_r2_source_media_hardening.sql'").first<{ applied: number }>();
+  const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.r2_version,o.r2_etag
+    FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+    WHERE o.creator_id=? AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
+      AND o.ingest_status='verified' AND o.source_provider='dropbox' AND o.source_revision IS a.dropbox_revision
+      AND o.byte_count=a.bytes AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL AND a.source_available=1
+    ORDER BY o.verified_at DESC LIMIT 1`).bind(creatorId).first<{ object_key: string; byte_count: number; r2_version: string; r2_etag: string }>();
+  let probe = { ok: false, assetBound: false };
+  if (record && env.LIBRARY_MEDIA) {
+    const object = await env.LIBRARY_MEDIA.head(record.object_key).catch(() => null);
+    probe = { ok: immutableR2IdentityMatches(record, object), assetBound: true };
+  }
+  const workerVersion = (env as Env & { WORKER_VERSION?: { id?: string } }).WORKER_VERSION?.id ?? "";
+  await internalServiceAuditStatement(env.DB, service, "/internal/source-media/health").run();
+  return json(request, {
+    ok: hardening?.applied === 1 && probe.ok && Boolean(workerVersion),
+    service: "vault",
+    sourceMediaCapability: "r2-source-v2",
+    workerVersion,
+    probe,
+    migration: migration?.name ?? "none",
+  });
 }
 
 function isJpeg(bytes: ArrayBuffer) {
@@ -869,6 +907,7 @@ export default {
     try {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/pair") return pairingPage();
+      if (request.method === "POST" && url.pathname === "/internal/source-media/health") return sourceMediaHealth(request, env);
       if (request.method === "POST" && url.pathname === "/catalogue/refresh") return refreshDropboxCatalogue(request, env);
       if (request.method === "POST" && url.pathname === "/catalogue/dropbox/reconnect") return startDropboxReconnect(request, env);
       if (url.pathname === "/reddit" || url.pathname.startsWith("/reddit/")) {

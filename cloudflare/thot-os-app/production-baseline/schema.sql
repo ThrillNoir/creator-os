@@ -55,6 +55,7 @@
 -- 0045_finished_media_uploads.sql aa43dafebb51faaf994eb732a3881af47597e3110c3450eefaa15692ba49a886
 -- 0049_creator_onboarding_access_vault.sql e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f
 -- 0050_r2_native_source_media.sql c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801
+-- 0051_r2_source_media_hardening.sql 52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1
 
 PRAGMA foreign_keys = ON;
 
@@ -111,6 +112,7 @@ INSERT INTO d1_migrations (id, name) VALUES (49, '0044_creator_r2_library.sql');
 INSERT INTO d1_migrations (id, name) VALUES (50, '0045_finished_media_uploads.sql');
 INSERT INTO d1_migrations (id, name) VALUES (51, '0049_creator_onboarding_access_vault.sql');
 INSERT INTO d1_migrations (id, name) VALUES (52, '0050_r2_native_source_media.sql');
+INSERT INTO d1_migrations (id, name) VALUES (53, '0051_r2_source_media_hardening.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -183,7 +185,8 @@ CREATE TABLE asset_ingest_sessions (
   expires_at TEXT NOT NULL,
   failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, object_key TEXT, multipart_upload_id TEXT, chunk_bytes INTEGER, uploaded_bytes INTEGER NOT NULL DEFAULT 0, actor_email TEXT, actor_role TEXT CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, object_key TEXT, multipart_upload_id TEXT, chunk_bytes INTEGER, uploaded_bytes INTEGER NOT NULL DEFAULT 0, actor_email TEXT, actor_role TEXT CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')), finalization_state TEXT NOT NULL DEFAULT 'incomplete'
+  CHECK(finalization_state IN ('incomplete','completing','completed_unreconciled','verifying','verified','failed','quarantined','expired','aborted')), completed_r2_version TEXT, completed_r2_etag TEXT, completion_observed_at TEXT, reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts >= 0),
   UNIQUE(creator_id, asset_id, source_revision, expected_sha256)
 );
 
@@ -245,7 +248,7 @@ CREATE TABLE asset_storage_objects (
   archived_at TEXT,
   failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, r2_version TEXT, r2_etag TEXT,
   UNIQUE(creator_id, asset_id, storage_role, sha256),
   UNIQUE(bucket_role, object_key)
 );
@@ -1493,6 +1496,16 @@ CREATE TABLE social_posts (
   UNIQUE(creator_id, platform, source_local_id)
 );
 
+CREATE TABLE source_media_consumer_capabilities (
+  service_name TEXT PRIMARY KEY CHECK(service_name IN ('web','vault','instagram','reddit')),
+  capability TEXT NOT NULL DEFAULT 'r2-source-v2' CHECK(capability='r2-source-v2'),
+  status TEXT NOT NULL CHECK(status IN ('pending','compatible','blocked','revoked')),
+  worker_version TEXT,
+  evidence_sha256 TEXT CHECK(evidence_sha256 IS NULL OR length(evidence_sha256)=64),
+  verified_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE telegram_bot_state (
   id TEXT PRIMARY KEY,
   next_update_id INTEGER NOT NULL DEFAULT 0,
@@ -1676,6 +1689,9 @@ CREATE INDEX asset_ingest_parts_session_status
 
 CREATE INDEX asset_ingest_sessions_expiry
   ON asset_ingest_sessions(status, expires_at);
+
+CREATE INDEX asset_ingest_sessions_finalization
+  ON asset_ingest_sessions(finalization_state,updated_at);
 
 CREATE INDEX asset_people_creator_asset
   ON asset_people(creator_id, asset_id);
@@ -2050,6 +2066,18 @@ CREATE TRIGGER asset_storage_object_creator_scope_update
 BEFORE UPDATE OF creator_id,asset_id ON asset_storage_objects
 WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
 BEGIN SELECT RAISE(ABORT,'asset_storage_object_creator_mismatch'); END;
+
+CREATE TRIGGER asset_storage_object_r2_identity_insert
+BEFORE INSERT ON asset_storage_objects
+WHEN NEW.provider='r2' AND NEW.ingest_status='verified'
+  AND (NEW.r2_version IS NULL OR length(NEW.r2_version)=0 OR NEW.r2_etag IS NULL OR length(NEW.r2_etag)=0)
+BEGIN SELECT RAISE(ABORT,'verified_r2_identity_required'); END;
+
+CREATE TRIGGER asset_storage_object_r2_identity_update
+BEFORE UPDATE OF provider,ingest_status,r2_version,r2_etag ON asset_storage_objects
+WHEN NEW.provider='r2' AND NEW.ingest_status='verified'
+  AND (NEW.r2_version IS NULL OR length(NEW.r2_version)=0 OR NEW.r2_etag IS NULL OR length(NEW.r2_etag)=0)
+BEGIN SELECT RAISE(ABORT,'verified_r2_identity_required'); END;
 
 CREATE TRIGGER creator_access_audit_actor_scope BEFORE INSERT ON creator_access_audit_events
 WHEN NOT EXISTS (SELECT 1 FROM creator_memberships WHERE creator_id=NEW.creator_id AND lower(user_email)=lower(NEW.actor_email) AND role=NEW.actor_role AND status='active')

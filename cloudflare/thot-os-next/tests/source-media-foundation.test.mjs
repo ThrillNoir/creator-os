@@ -23,18 +23,22 @@ test("private source-media ingestion is creator-scoped, no-store, and multipart 
   assert.match(intent, /isSameOriginRequest/);
   assert.match(intent, /requireCreatorContext\("mutate"\)/);
   assert.match(intent, /asset\.basename !== filename/);
+  assert.match(intent, /source_revision_is_server_managed/);
+  assert.match(intent, /'source_fallback','library_media'/);
+  assert.match(intent, /!mimeType\.startsWith\("image\/"\)/);
   assert.match(intent, /createMultipartUpload/);
   assert.doesNotMatch(intent, /presign|signedUrl|objectKey:\s*objectKey/i);
   assert.ok(part.indexOf("INSERT OR IGNORE INTO asset_ingest_parts") < part.indexOf("uploadPart"));
   assert.match(part, /part_replayed/);
-  assert.match(finalize, /hashAndDetectR2Object/);
+  assert.match(finalize, /hashAndValidateR2Object/);
   assert.match(finalize, /source_media_verification_failed/);
   assert.match(finalize, /multipart_upload_id=NULL/);
-  assert.match(cutover, /verified_inventory_required/);
-  assert.match(cutover, /active_backend='r2'/);
+  assert.match(cutover, /cross_service_cutover_not_implemented/);
   assert.match(cutover, /active_backend='dropbox'/);
   assert.match(delivery, /active_backend !== "r2"/);
   assert.match(delivery, /source_object_integrity_failed/);
+  assert.match(delivery, /o\.source_provider='dropbox'/);
+  assert.match(delivery, /o\.source_revision IS a\.dropbox_revision/);
 });
 
 test("paired device delivery follows an explicit R2 cutover and never redirects an original", async () => {
@@ -43,6 +47,8 @@ test("paired device delivery follows an explicit R2 cutover and never redirects 
   assert.match(flow, /creator_media_source_states/);
   assert.match(flow, /active_backend === "r2"/);
   assert.match(flow, /r2_source_media_integrity_failed/);
+  assert.match(flow, /o\.source_provider='dropbox'/);
+  assert.match(flow, /o\.source_revision IS a\.dropbox_revision/);
   assert.match(flow, /resolvedMediaResponse/);
   assert.doesNotMatch(flow, /status:\s*302|location:\s*temporary\.link/);
   assert.match(flow, /cache-control.*private, no-store/);

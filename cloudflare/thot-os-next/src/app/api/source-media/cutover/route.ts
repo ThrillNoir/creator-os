@@ -14,21 +14,14 @@ export async function POST(request: Request) {
   const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 240) : "";
   if (!backend) return noStoreJson({ ok: false, error: "invalid_cutover" }, 400);
   const context = await requireCreatorContext("manage_identity");
-  const { DB } = cloudflareEnv();
+  const env = cloudflareEnv();
+  const { DB } = env;
   if (backend === "r2") {
-    const counts = await DB.prepare(`SELECT
-      SUM(CASE WHEN source_available=1 THEN 1 ELSE 0 END) AS source_assets,
-      SUM(CASE WHEN source_available=1 AND EXISTS (
-        SELECT 1 FROM asset_storage_objects o WHERE o.creator_id=assets.creator_id AND o.asset_id=assets.id
-          AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified'
-      ) THEN 1 ELSE 0 END) AS verified_assets
-      FROM assets WHERE creator_id=?`).bind(context.creator.creator_id).first<{ source_assets: number; verified_assets: number }>();
-    if (!counts?.source_assets || counts.verified_assets !== counts.source_assets) return noStoreJson({ ok: false, error: "verified_inventory_required" }, 409);
-    await DB.batch([
-      DB.prepare("UPDATE creator_media_source_states SET active_backend='r2',migration_state='r2_active',dropbox_fallback_enabled=0,cutover_by=?,cutover_at=CURRENT_TIMESTAMP,rollback_reason='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(context.email, context.creator.creator_id),
-      DB.prepare("INSERT INTO creator_media_source_events (id,creator_id,actor_email,actor_role,event_type,detail) VALUES (?,?,?,?, 'cutover_completed',?)").bind(crypto.randomUUID(), context.creator.creator_id, context.email, context.creator.role, JSON.stringify({ backend: "r2", verifiedAssets: counts.verified_assets })),
-      identityAuditStatement(DB, humanAuditActor(context), "source_media_cutover_completed", context.creator.creator_id, { backend: "r2", verifiedAssets: counts.verified_assets }),
-    ]);
+    // Instagram and Reddit still have Dropbox-only implementations. D1 rows
+    // alone cannot prove their live routed versions, so this release keeps the
+    // global cutover mechanically unavailable until a later coordinator can
+    // authenticate and version-bind every consumer in the same approval flow.
+    return noStoreJson({ ok: false, error: "cross_service_cutover_not_implemented" }, 409);
   } else {
     await DB.batch([
       DB.prepare("UPDATE creator_media_source_states SET active_backend='dropbox',migration_state='rollback',dropbox_fallback_enabled=1,cutover_by=?,cutover_at=CURRENT_TIMESTAMP,rollback_reason=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(context.email, reason || "manual_rollback", context.creator.creator_id),

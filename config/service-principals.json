@@ -51,7 +51,8 @@
       "secretName": "INTERNAL_VAULT_CATALOGUE_TOKEN",
       "receiver": "vault",
       "capabilities": [
-        "vault.catalogue.refresh"
+        "vault.catalogue.refresh",
+        "vault.source_media.health"
       ]
     },
     {

@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
@@ -10,12 +12,9 @@ import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, creat
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const registryPath = path.join(root, "config/deployments.json");
 const ledgerPath = path.join(root, "config/staging-d1-migration-ledger.json");
-const webDirectory = path.join(root, "cloudflare/thot-os-next");
-const lockfilePath = path.join(webDirectory, "package-lock.json");
-const openNextBinary = path.join(webDirectory, "node_modules/.bin/opennextjs-cloudflare");
 
 function usage() {
-  return "Usage: npm run deploy -- --plan|--apply|--reconcile --environment staging --component web --artifact-manifest <path> --output <owner-only-json> [--approved-plan <path> --confirmation <deploy:...>]";
+  return "Usage: npm run deploy -- --plan|--apply|--reconcile --environment staging --component web|vault --artifact-manifest <path> --output <owner-only-json> [--approved-plan <path> --confirmation <deploy:...>]";
 }
 
 function parseArguments(argv) {
@@ -48,15 +47,17 @@ function writeOwnerOnlyJson(file, value) {
 }
 
 function targetContext(options) {
-  if (options.environment !== "staging" || options.component !== "web") throw new Error("Controlled deployment requires explicit --environment staging --component web.");
+  if (options.environment !== "staging" || !["web", "vault"].includes(options.component)) throw new Error("Controlled deployment requires explicit --environment staging --component web|vault.");
   if (!options.artifactManifest || !options.output) throw new Error(usage());
   const registry = readJson(registryPath, "deployment registry");
-  const component = registry.environments?.staging?.components?.web;
+  const component = registry.environments?.staging?.components?.[options.component];
   const database = registry.environments?.staging?.resources?.d1?.["thot-os-staging"];
-  if (!component || component.worker !== "thot-os-staging" || !database) throw new Error("Reviewed staging deployment target is unavailable.");
+  const expectedWorker = options.component === "web" ? "thot-os-staging" : "thot-os-vault-bridge-staging";
+  if (!component || component.worker !== expectedWorker || !database) throw new Error("Reviewed staging deployment target is unavailable.");
   const artifactManifest = readJson(options.artifactManifest, "artifact manifest");
-  const preflight = runPreflight({ environment: "staging", component: "web", all: false, requireClean: true, registry: registryPath, gitSha: artifactManifest.source?.gitSha, gitBranch: artifactManifest.source?.gitBranch, buildTime: artifactManifest.build?.timestamp });
+  const preflight = runPreflight({ environment: "staging", component: options.component, all: false, requireClean: true, registry: registryPath, gitSha: artifactManifest.source?.gitSha, gitBranch: artifactManifest.source?.gitBranch, buildTime: artifactManifest.build?.timestamp });
   if (!preflight.ok || preflight.results.length !== 1) throw new Error(`Deployment preflight failed: ${preflight.results.flatMap((result) => result.errors).join(" ")}`);
+  const lockfilePath = path.join(root, component.directory, "package-lock.json");
   verifyStagingArtifactManifest({ artifactDirectory: path.dirname(options.artifactManifest), lockfilePath, manifest: artifactManifest, expectedMetadata: preflight.results[0].metadata });
   const ledger = readJson(ledgerPath, "staging migration ledger");
   if (ledger.environment !== "staging" || ledger.databaseId !== database.id || !ledger.migrations?.length || ledger.migrations.some((entry) => !Number.isInteger(entry.remoteId))) throw new Error("Staging migration ledger is not a fully applied authoritative ledger.");
@@ -66,6 +67,11 @@ function targetContext(options) {
     metadata: { ...preflight.results[0].metadata, accountId: registry.environments.staging.accountId, config: component.config, databaseId: database.id },
     migrationNames: ledger.migrations.map((entry) => entry.name),
     requiredSecretNames: component.requiredSecrets,
+    artifactEntrypoint: options.component === "vault" ? (() => {
+      const candidates = artifactManifest.artifact.files.filter((entry) => entry.path.endsWith(".js") && !entry.path.endsWith(".js.map"));
+      if (candidates.length !== 1) throw new Error("Reviewed Vault artifact must contain exactly one deployable JavaScript entrypoint.");
+      return { path: path.join(path.dirname(options.artifactManifest), candidates[0].path), bytes: candidates[0].bytes, sha256: candidates[0].sha256 };
+    })() : null,
     d1Target: { accountId: registry.environments.staging.accountId, databaseId: database.id, databaseName: "thot-os-staging" },
   };
 }
@@ -78,15 +84,38 @@ async function observeStaging(context) {
   if (!Array.isArray(secretInventory) || !secretInventory.every((entry) => entry && typeof entry === "object" && /^[A-Z][A-Z0-9_]*$/.test(entry.name))) throw new Error("Wrangler staging secret-name inventory was malformed.");
   const secretNames = secretInventory.map((entry) => entry.name).sort();
   if (new Set(secretNames).size !== secretNames.length) throw new Error("Wrangler staging secret-name inventory contained duplicate names.");
-  return { migrationNames, workerState: { ...captureWorkerMetadata(context.registry), secretNames } };
+  return { migrationNames, workerState: { ...captureWorkerMetadata(context.registry, context.metadata.component), secretNames } };
 }
 
-function deployOpenNext(registry, config) {
+function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
+  let sourceDescriptor; let deployableArtifact; let temporaryDirectory;
   try {
-    execFileSync(openNextBinary, ["deploy", "--config", path.join(root, config)], { cwd: webDirectory, env: { ...mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }), CI: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+    const directory = path.join(root, registry.environments.staging.components[metadata.component].directory);
+    const executable = metadata.component === "web" ? path.join(directory, "node_modules/.bin/opennextjs-cloudflare") : path.join(directory, "node_modules/.bin/wrangler");
+    if (metadata.component === "vault") {
+      const lexical = lstatSync(artifactEntrypoint.path); if (!lexical.isFile() || lexical.isSymbolicLink()) throw new Error("reviewed_artifact_replaced");
+      sourceDescriptor = openSync(artifactEntrypoint.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const opened = fstatSync(sourceDescriptor);
+      if (!opened.isFile() || opened.size !== artifactEntrypoint.bytes || opened.size > 64 * 1024 ** 2) throw new Error("reviewed_artifact_replaced");
+      const bytes = Buffer.alloc(opened.size); let offset = 0;
+      while (offset < bytes.length) { const count = readSync(sourceDescriptor, bytes, offset, bytes.length - offset, offset); if (!count) throw new Error("reviewed_artifact_replaced"); offset += count; }
+      if (createHash("sha256").update(bytes).digest("hex") !== artifactEntrypoint.sha256) throw new Error("reviewed_artifact_replaced");
+      closeSync(sourceDescriptor); sourceDescriptor = undefined;
+      // Deploy an anonymous owner-only snapshot made from the verified buffer.
+      // Wrangler never rereads the mutable artifact inode or pathname.
+      temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "creatoros-vault-deploy-")); chmodSync(temporaryDirectory, 0o700);
+      const snapshotPath = path.join(temporaryDirectory, "worker.js"); deployableArtifact = openSync(snapshotPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR, 0o600);
+      offset = 0; while (offset < bytes.length) { const count = writeSync(deployableArtifact, bytes, offset, bytes.length - offset, offset); if (!count) throw new Error("reviewed_artifact_snapshot_failed"); offset += count; }
+      unlinkSync(snapshotPath); rmSync(temporaryDirectory, { recursive: false }); temporaryDirectory = undefined;
+    }
+    const args = metadata.component === "web" ? ["deploy", "--config", path.join(root, metadata.config)] : ["deploy", "/dev/fd/3", "--no-bundle", "--config", path.join(root, metadata.config), "--strict", "--tag", plan.artifact.versionTag, "--message", `Creator OS reviewed artifact ${plan.artifact.sha256}`];
+    execFileSync(executable, args, { cwd: directory, env: { ...mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }), CI: "1" }, stdio: metadata.component === "vault" ? ["ignore", "pipe", "pipe", deployableArtifact] : ["ignore", "pipe", "pipe"], encoding: "utf8" });
     return { commandOutcome: "SUCCEEDED" };
   } catch {
-    return { commandOutcome: "NONZERO_OR_TRANSPORT_FAILURE" };
+    throw new Error("reviewed_deployment_command_failed");
+  } finally {
+    if (sourceDescriptor !== undefined) closeSync(sourceDescriptor);
+    if (deployableArtifact !== undefined) closeSync(deployableArtifact);
+    if (temporaryDirectory !== undefined) rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }
 
@@ -99,7 +128,7 @@ async function main() {
   if (options.mode === "plan") {
     const plan = createDeploymentPlan({ ...context, migrationNames: before.migrationNames, workerState: before.workerState });
     writeOwnerOnlyJson(options.output, plan);
-    console.log(`Staging/web deployment plan written to ${options.output}`);
+    console.log(`Staging/${options.component} deployment plan written to ${options.output}`);
     console.log(`Approval confirmation: ${plan.confirmation}`);
     return;
   }
@@ -116,22 +145,27 @@ async function main() {
     receipt.commandOutcome = "RECONCILED_AFTER_UNCERTAIN_OUTCOME";
     receipt.outcome = "APPLIED_AND_REMOTE_RECONCILED";
     writeOwnerOnlyJson(options.output, receipt);
-    console.log(`Staging web deployment reconciled at Worker version ${receipt.deployment.workerVersion}.`);
+    console.log(`Staging ${options.component} deployment reconciled at Worker version ${receipt.deployment.workerVersion}.`);
     console.log(`Owner-only reconciliation receipt written to ${options.output}`);
     return;
   }
   assertApprovedPlan({ plan, confirmation: options.confirmation, metadata: context.metadata, artifactManifest: context.artifactManifest, migrationNames: before.migrationNames, workerState: before.workerState });
-  const command = deployOpenNext(context.registry, context.metadata.config);
+  let command;
+  try { command = deployReviewedComponent(context.registry, context.metadata, plan, context.artifactEntrypoint); }
+  catch {
+    writeOwnerOnlyJson(options.output, { schemaVersion: 1, kind: `staging-${options.component}-deployment-uncertain-outcome`, environment: "staging", component: options.component, observedAt: new Date().toISOString(), planSha256: plan.planSha256, commandOutcome: "NONZERO_OR_TRANSPORT_FAILURE", outcome: "UNKNOWN_REQUIRES_READ_ONLY_RECONCILIATION", previousLatestVersion: before.workerState.latestVersionId, previousTraffic: before.workerState.deployment.versions, diagnosticCategory: "DEPLOYMENT_COMMAND_FAILED" });
+    throw new Error("Deployment command failed; do not attribute any subsequently observed Worker version to this artifact. Reconcile before retrying.");
+  }
   try {
-    const after = captureWorkerMetadata(context.registry);
+    const after = captureWorkerMetadata(context.registry, options.component);
     const receipt = createApplyReceipt({ plan, before: before.workerState, after });
     receipt.commandOutcome = command.commandOutcome;
     receipt.outcome = "APPLIED_AND_REMOTE_VERIFIED";
     writeOwnerOnlyJson(options.output, receipt);
-    console.log(`Staging web deployment remotely verified at Worker version ${receipt.deployment.workerVersion}.`);
+    console.log(`Staging ${options.component} deployment remotely verified at Worker version ${receipt.deployment.workerVersion}.`);
     console.log(`Owner-only apply receipt written to ${options.output}`);
   } catch (error) {
-    writeOwnerOnlyJson(options.output, { schemaVersion: 1, kind: "staging-web-deployment-uncertain-outcome", environment: "staging", component: "web", observedAt: new Date().toISOString(), planSha256: plan.planSha256, commandOutcome: command.commandOutcome, outcome: "UNKNOWN_REQUIRES_READ_ONLY_RECONCILIATION", previousLatestVersion: before.workerState.latestVersionId, previousTraffic: before.workerState.deployment.versions, diagnosticCategory: "REMOTE_POST_DEPLOYMENT_VERIFICATION_FAILED" });
+    writeOwnerOnlyJson(options.output, { schemaVersion: 1, kind: `staging-${options.component}-deployment-uncertain-outcome`, environment: "staging", component: options.component, observedAt: new Date().toISOString(), planSha256: plan.planSha256, commandOutcome: command.commandOutcome, outcome: "UNKNOWN_REQUIRES_READ_ONLY_RECONCILIATION", previousLatestVersion: before.workerState.latestVersionId, previousTraffic: before.workerState.deployment.versions, diagnosticCategory: "REMOTE_POST_DEPLOYMENT_VERIFICATION_FAILED" });
     throw new Error(`Deployment outcome could not be proven; do not retry. Reconcile Cloudflare version and traffic metadata first. ${error instanceof Error ? error.message : String(error)}`);
   }
 }
