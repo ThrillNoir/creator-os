@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "kind": "staging-web-rollback-receipt",
+  "verification": "remote-observed",
+  "environment": "staging",
+  "component": "web",
+  "observedAt": "2026-08-28T10:29:12Z",
+  "approval": {
+    "planSha256": "7b7c51876464c932d7a9971a463f23885f1e35aa09dd27844ee9898faff7d9d1",
+    "confirmation": "rollback:7b7c51876464c932"
+  },
+  "rollback": {
+    "worker": "thot-os-staging",
+    "fromVersion": "7719d64e-f5b7-4a21-a8c6-01300feeeed7",
+    "toVersion": "0dde31cb-a9e8-4db2-8a5b-3e1a6e090a94",
+    "deploymentId": "a0d80cc4-c8ed-4a0a-aeb4-ef690920b331",
+    "traffic": [
+      {
+        "versionId": "0dde31cb-a9e8-4db2-8a5b-3e1a6e090a94",
+        "percentage": 100
+      }
+    ],
+    "sourceGitSha": "694d66bf19b0592f86ec06737e6ada2d13737488"
+  },
+  "database": {
+    "migrationCount": 56,
+    "latestMigration": "0054_native_video_intake.sql",
+    "quickCheck": "ok",
+    "foreignKeyCheck": "ok",
+    "schemaOrDataMutationByRollback": false
+  },
+  "storage": {
+    "r2MutationByRollback": false,
+    "uploadOrMediaMutationByRollback": false
+  },
+  "smokeTests": {
+    "authenticatedNativeLibrary": {
+      "verified": true,
+      "status": "PASS",
+      "detail": "The restored authenticated native Library rendered successfully with no Error 1102."
+    },
+    "authenticatedHealth": {
+      "verified": false,
+      "status": "NOT_VERIFIED_BY_AUTOMATION",
+      "detail": "The local browser-control client blocked direct navigation to the protected health endpoint and no CLI Access credential was available."
+    }
+  },
+  "outcome": "APPLIED_AND_REMOTE_VERIFIED_WITH_HEALTH_AUTOMATION_LIMITATION"
+}
