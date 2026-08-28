@@ -12,6 +12,7 @@ const current = () => ({
     service_name: service, status: "compatible", worker_version: `version-${service}`,
     deployment_evidence_sha256: sha(String(index + 1)), health_evidence_sha256: sha(String(index + 5)), asset_coverage_sha256: sha(String(index + 9)), reason_code: "ready",
   }))),
+  health: { services: ["web", "vault", "instagram", "reddit"].map((service) => ({ service, compatible: true, reasonCode: "ready" })) },
   workerMetadata: ["web", "vault", "instagram", "reddit"].map((component) => ({ component, latestVersionId: `version-${component}`, completeTraffic: true, secretNames: [] })),
 });
 

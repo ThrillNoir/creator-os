@@ -13,17 +13,22 @@ export function coverageSummary(rows) {
   return { availableAssets: available, eligibleAssets: eligible, complete: available > 0 && available === eligible };
 }
 
-export function readinessSummary(rows) {
+export function readinessSummary(rows, live = null) {
   const expected = ["web", "vault", "instagram", "reddit"];
   const byService = new Map(rows.map((row) => [row.service_name, row]));
   const services = expected.map((service) => {
     const row = byService.get(service);
-    return { service, status: row?.status ?? "missing", workerVersion: row?.worker_version ?? null, deploymentEvidenceSha256: row?.deployment_evidence_sha256 ?? null, healthEvidenceSha256: row?.health_evidence_sha256 ?? null, assetCoverageSha256: row?.asset_coverage_sha256 ?? null, reasonCode: row?.reason_code ?? "missing" };
+    const worker = live?.workers?.find((entry) => entry.component === service);
+    const health = live?.health?.services?.find((entry) => entry.service === service);
+    const deploymentHash = worker ? digest(worker) : null; const healthHash = health ? digest(health) : null;
+    const evidenceMatches = !live || (row?.worker_version === worker?.latestVersionId && row?.deployment_evidence_sha256 === deploymentHash && row?.health_evidence_sha256 === healthHash && row?.asset_coverage_sha256 === digest(live.coverage));
+    const compatible = row?.status === "compatible" && Boolean(row.worker_version && row.deployment_evidence_sha256 && row.health_evidence_sha256 && row.asset_coverage_sha256) && (!live || (worker?.completeTraffic === true && worker?.secretsVerified === true && health?.compatible === true && evidenceMatches));
+    return { service, status: compatible ? "compatible" : "blocked", workerVersion: row?.worker_version ?? null, deploymentEvidenceSha256: row?.deployment_evidence_sha256 ?? null, healthEvidenceSha256: row?.health_evidence_sha256 ?? null, assetCoverageSha256: row?.asset_coverage_sha256 ?? null, reasonCode: compatible ? "ready" : !health?.compatible && live ? (health?.reasonCode ?? "health_not_compatible") : !evidenceMatches && live ? "readiness_evidence_stale" : (row?.reason_code ?? "missing") };
   });
   return { services, complete: services.every((service) => service.status === "compatible" && service.workerVersion && service.deploymentEvidenceSha256 && service.healthEvidenceSha256 && service.assetCoverageSha256) };
 }
 
-export function createCutoverPlan({ creatorId, action, git, authority, state, coverage, readiness, workerMetadata, createdAt = new Date().toISOString() }) {
+export function createCutoverPlan({ creatorId, action, git, authority, state, coverage, health, readiness, workerMetadata, createdAt = new Date().toISOString() }) {
   if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId) || !["r2_cutover", "dropbox_rollback"].includes(action)) throw new Error("cutover_scope_invalid");
   const coverageSha256 = digest(coverage);
   const readinessSha256 = digest(readiness);
@@ -36,10 +41,11 @@ export function createCutoverPlan({ creatorId, action, git, authority, state, co
   const completeWorkers = Array.isArray(workerMetadata) && workerMetadata.length === expectedServices.length
     && new Set(workerMetadata.map((worker) => worker?.component)).size === expectedServices.length
     && expectedServices.every((name) => workerMetadata.some((worker) => worker?.component === name && worker.completeTraffic === true));
+  const healthComplete = Array.isArray(health?.services) && expectedServices.every((name) => health.services.some((service) => service?.service === name && service.compatible === true));
   const eligible = action === "r2_cutover"
-    ? state.activeBackend === expectedState && coverageComplete && readinessComplete && completeWorkers
+    ? state.activeBackend === expectedState && coverageComplete && readinessComplete && completeWorkers && healthComplete
     : state.activeBackend === expectedState;
-  const plan = { schemaVersion: 1, kind: "creator-source-media-cutover-plan", mode: "plan", environment: "staging", creatorId, action, git, authority, state, coverage, coverageSha256, readiness, readinessSha256, workerMetadata, eligible, createdAt };
+  const plan = { schemaVersion: 1, kind: "creator-source-media-cutover-plan", mode: "plan", environment: "staging", creatorId, action, git, authority, state, coverage, coverageSha256, health, readiness, readinessSha256, workerMetadata, eligible, createdAt };
   const planSha256 = digest(plan);
   return { ...plan, planSha256, confirmation: eligible ? confirmationFor(planSha256) : null };
 }
@@ -49,6 +55,6 @@ export function assertApprovedCutoverPlan(plan, confirmation, current) {
   const unsigned = { ...plan }; delete unsigned.planSha256; delete unsigned.confirmation;
   if (plan.planSha256 !== digest(unsigned) || plan.confirmation !== confirmationFor(plan.planSha256) || confirmation !== plan.confirmation) throw new Error("cutover_plan_integrity_invalid");
   const observed = { ...current, coverageSha256: digest(current.coverage), readinessSha256: digest(current.readiness) };
-  for (const key of ["git", "authority", "state", "coverageSha256", "readinessSha256", "workerMetadata"]) if (stableJson(plan[key]) !== stableJson(observed[key])) throw new Error("cutover_plan_drift");
+  for (const key of ["git", "authority", "state", "coverageSha256", "readinessSha256", "health", "workerMetadata"]) if (stableJson(plan[key]) !== stableJson(observed[key])) throw new Error("cutover_plan_drift");
   return true;
 }

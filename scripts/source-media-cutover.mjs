@@ -10,6 +10,7 @@ import { assertApprovedCutoverPlan, coverageSummary, createCutoverPlan, readines
 const registry = JSON.parse(readFileSync(path.join(projectRoot, "config/deployments.json"), "utf8"));
 const git = (args) => execFileSync("git", args, { cwd: projectRoot, encoding: "utf8" }).trim();
 const target = (authority) => ({ accountId: authority.accountId, databaseId: authority.databaseId, databaseName: authority.databaseName });
+const healthUrl = "https://thot-os-staging.thot-os.workers.dev/health";
 
 function parse(argv) {
   const value = new Set(["--creator", "--output", "--approved-plan", "--confirmation"]); const options = {};
@@ -29,6 +30,15 @@ function parse(argv) {
 }
 function safeCreator(value) { if (typeof value !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(value)) throw new Error("creator_required"); return value; }
 function readPlan(file) { return JSON.parse(readFileSync(file, "utf8")); }
+async function authenticatedHealth(creatorId) {
+  const token = process.env.THOT_OS_ACCESS_TOKEN?.trim(); const cookie = process.env.THOT_OS_ACCESS_COOKIE?.trim();
+  if (!token && !cookie) throw new Error("authenticated_health_credential_missing");
+  const headers = new Headers({ accept: "application/json" }); if (token) headers.set("cf-access-token", token); if (cookie) headers.set("cookie", `CF_Authorization=${cookie}`);
+  const response = await fetch(healthUrl, { headers, redirect: "manual" }); const body = await response.json().catch(() => null);
+  if (!response.ok || !body || body.creatorId !== creatorId || body.sourceMediaCapability !== "r2-source-v2") throw new Error("authenticated_health_contract_invalid");
+  const entries = [{ service: "web", compatible: body.ok === true && body.bindings?.libraryMedia === true, reasonCode: body.bindings?.libraryMedia ? "health_not_ready" : "library_media_binding_missing" }, ...["vault", "instagram", "reddit"].map((service) => ({ service, compatible: body.consumers?.[service]?.compatible === true, reasonCode: typeof body.consumers?.[service]?.reason === "string" ? body.consumers[service].reason : "health_contract_failed" }))];
+  return { services: entries };
+}
 
 async function observed(creatorId) {
   const authority = await loadAuthority(); const d1 = createActivationD1ReadClient(); const context = target(authority);
@@ -44,9 +54,11 @@ async function observed(creatorId) {
   ]);
   const workers = ["web", "vault", "instagram", "reddit"].map((component) => {
     const metadata = captureWorkerMetadata(registry, component);
-    return { component, latestVersionId: metadata.latestVersionId, completeTraffic: metadata.deployment.versions.length === 1 && metadata.deployment.versions[0].versionId === metadata.latestVersionId && metadata.deployment.versions[0].percentage === 100, secretNames: metadata.secretNames };
+    const secretNames = metadata.latestSecretVersion.secretNames; const requiredSecretNames = registry.environments.staging.components[component].requiredSecrets;
+    return { component, latestVersionId: metadata.latestVersionId, completeTraffic: metadata.deployment.versions.length === 1 && metadata.deployment.versions[0].versionId === metadata.latestVersionId && metadata.deployment.versions[0].percentage === 100, secretNames, secretsVerified: requiredSecretNames.every((name) => secretNames.includes(name)) };
   });
-  return { authority, git: { sha: git(["rev-parse", "HEAD"]), branch: git(["branch", "--show-current"]), clean: git(["status", "--porcelain"]) === "" }, state: { activeBackend: stateResult.rows[0]?.active_backend ?? "missing", migrationState: stateResult.rows[0]?.migration_state ?? "missing", dropboxFallbackEnabled: stateResult.rows[0]?.dropbox_fallback_enabled ?? null }, coverage: coverageSummary(coverageResult.rows), readiness: readinessSummary(readinessResult.rows), workerMetadata: workers };
+  const coverage = coverageSummary(coverageResult.rows); const health = await authenticatedHealth(creatorId);
+  return { authority, git: { sha: git(["rev-parse", "HEAD"]), branch: git(["branch", "--show-current"]), clean: git(["status", "--porcelain"]) === "" }, state: { activeBackend: stateResult.rows[0]?.active_backend ?? "missing", migrationState: stateResult.rows[0]?.migration_state ?? "missing", dropboxFallbackEnabled: stateResult.rows[0]?.dropbox_fallback_enabled ?? null }, coverage, health, readiness: readinessSummary(readinessResult.rows, { workers, health, coverage }), workerMetadata: workers };
 }
 
 function applySql(plan) {
