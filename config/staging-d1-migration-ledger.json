@@ -301,10 +301,10 @@
       "purpose": "Applied bounded staging migration: immutable R2 identity, recoverable multipart finalization, and creator-scoped Vault capability."
     },
     {
-      "remoteId": null,
+      "remoteId": 54,
       "name": "0052_creator_scoped_r2_readiness.sql",
       "sha256": "18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939",
-      "purpose": "Pending bounded staging migration: creator-scoped R2 consumer readiness and auditable cutover receipts."
+      "purpose": "Applied bounded staging migration: creator-scoped R2 consumer readiness and auditable cutover receipts."
     }
   ]
 }
