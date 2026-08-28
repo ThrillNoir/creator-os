@@ -78,7 +78,7 @@ test("Reddit publishing survives extension service-worker suspension and always 
   assert.match(redditClaim, /oa\.publishing_mode='local_bridge'/);
   assert.match(redditClaim, /oa\.publishing_authority='device_only'/);
   const redditMedia = bridge.slice(bridge.indexOf("async function redditMediaResponse"), bridge.indexOf("async function recordRedditReceipt"));
-  assert.match(redditMedia, /return new Response\(source\.body/);
+  assert.match(redditMedia, /resolvedMediaResponse\(request, await resolveCreatorMedia/);
   assert.match(redditMedia, /oa\.publishing_mode='local_bridge'/);
   assert.match(redditMedia, /oa\.publishing_authority='device_only'/);
   assert.doesNotMatch(redditMedia, /status: 302|location: temporary\.link/);

@@ -52,6 +52,53 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+type LibraryObject = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string };
+type ResolvedCreatorMedia = { kind: "r2"; object: R2ObjectBody; record: LibraryObject } | { kind: "dropbox"; response: Response; contentType: string; length: string | null };
+
+/**
+ * The per-creator cutover record is authoritative. When R2 is active, a
+ * missing or invalid object is a hard error: silently falling back to Dropbox
+ * could conceal a partial migration or serve the wrong source revision.
+ */
+async function resolveCreatorMedia(env: Env, creatorId: string, assetId: string): Promise<ResolvedCreatorMedia> {
+  const state = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(creatorId).first<{ active_backend: "dropbox" | "r2" }>();
+  if (state?.active_backend === "r2") {
+    const record = await env.DB.prepare(`SELECT object_key,byte_count,verified_mime_type,sha256
+      FROM asset_storage_objects WHERE creator_id=? AND asset_id=? AND provider='r2'
+        AND storage_role='canonical_original' AND bucket_role='library_media' AND ingest_status='verified'
+      ORDER BY verified_at DESC LIMIT 1`).bind(creatorId, assetId).first<LibraryObject>();
+    if (!record || !env.LIBRARY_MEDIA) throw new Error("r2_source_media_not_available");
+    const object = await env.LIBRARY_MEDIA.get(record.object_key);
+    if (!object || object.size !== record.byte_count) throw new Error("r2_source_media_integrity_failed");
+    return { kind: "r2", object, record };
+  }
+  const source = await env.DB.prepare(`SELECT a.relative_path,c.dropbox_root
+    FROM assets a JOIN creators c ON c.id=a.creator_id
+    WHERE a.id=? AND a.creator_id=? AND a.source_available=1`).bind(assetId, creatorId).first<{ relative_path: string; dropbox_root: string }>();
+  if (!source) throw new Error("creator_media_not_available");
+  const temporary = await executeDropbox<{ link?: string }>(env, creatorId, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(source.dropbox_root, source.relative_path) });
+  if (!temporary.link) throw new Error("dropbox_media_unavailable");
+  const response = await fetch(temporary.link);
+  if (!response.ok || !response.body) throw new Error("dropbox_media_download_failed");
+  return { kind: "dropbox", response, contentType: response.headers.get("content-type") ?? "application/octet-stream", length: response.headers.get("content-length") };
+}
+
+function resolvedMediaResponse(request: Request, media: ResolvedCreatorMedia) {
+  if (media.kind === "r2") {
+    const headers = new Headers({ "cache-control": "private, no-store", "x-content-type-options": "nosniff", ...cors(request) });
+    media.object.writeHttpMetadata(headers);
+    headers.set("content-type", media.record.verified_mime_type);
+    headers.set("content-length", String(media.record.byte_count));
+    headers.set("content-disposition", "attachment");
+    return new Response(media.object.body, { status: 200, headers });
+  }
+  return new Response(media.response.body, { status: 200, headers: {
+    "content-type": media.contentType,
+    ...(media.length ? { "content-length": media.length } : {}),
+    "cache-control": "private, no-store", "x-content-type-options": "nosniff", "content-disposition": "attachment", ...cors(request),
+  } });
+}
+
 async function authenticate(request: Request, env: Env) {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
@@ -494,16 +541,13 @@ async function claimJob(request: Request, env: Env, identity: BridgeIdentity) {
 
 async function mediaRedirect(request: Request, env: Env, identity: BridgeIdentity, jobId: string) {
   const job = await env.DB.prepare(`
-    SELECT a.relative_path,c.dropbox_root
+    SELECT j.asset_id
     FROM vault_upload_jobs j
     JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
-    JOIN creators c ON c.id=j.creator_id
     WHERE j.id=? AND j.creator_id=? AND j.account_id=? AND j.platform='fansly' AND j.status IN ('claimed','staged')
-  `).bind(jobId, identity.creator_id, identity.account_id).first<{ relative_path: string; dropbox_root: string }>();
+  `).bind(jobId, identity.creator_id, identity.account_id).first<{ asset_id: string }>();
   if (!job) return json(request, { ok: false, error: "Vault media is not available for this device." }, 404);
-  const temporary = await executeDropbox<{ link?: string }>(env, identity.creator_id, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(job.dropbox_root, job.relative_path) });
-  if (!temporary.link) return json(request, { ok: false, error: "Dropbox did not return the approved file." }, 502);
-  return new Response(null, { status: 302, headers: { location: temporary.link, "cache-control": "no-store", ...cors(request) } });
+  return resolvedMediaResponse(request, await resolveCreatorMedia(env, identity.creator_id, job.asset_id));
 }
 
 async function recordReceipt(request: Request, env: Env, identity: BridgeIdentity, jobId: string) {
@@ -723,29 +767,15 @@ async function claimRedditJob(request: Request, env: Env, identity: RedditBridge
 
 async function redditMediaResponse(request: Request, env: Env, identity: RedditBridgeIdentity, postId: string) {
   const media = await env.DB.prepare(`
-    SELECT a.relative_path,c.dropbox_root
+    SELECT p.asset_id
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    JOIN creators c ON c.id=p.creator_id
     JOIN operational_accounts oa ON oa.id=p.account_id AND oa.creator_id=p.creator_id
     WHERE p.id=? AND p.creator_id=? AND p.account_id=? AND p.platform='reddit' AND p.status='publishing' AND p.device_claimed_at IS NOT NULL
       AND oa.publishing_mode='local_bridge' AND oa.publishing_authority='device_only'
-  `).bind(postId, identity.creator_id, identity.account_id).first<{ relative_path: string; dropbox_root: string }>();
+  `).bind(postId, identity.creator_id, identity.account_id).first<{ asset_id: string }>();
   if (!media) return json(request, { ok: false, error: "Reddit media is not available for this paired device." }, 404);
-  const temporary = await executeDropbox<{ link?: string }>(env, identity.creator_id, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(media.dropbox_root, media.relative_path) });
-  if (!temporary.link) return json(request, { ok: false, error: "Dropbox did not return the approved file." }, 502);
-  const source = await fetch(temporary.link);
-  if (!source.ok || !source.body) return json(request, { ok: false, error: `Dropbox media download failed (${source.status}).` }, 502);
-  return new Response(source.body, {
-    status: 200,
-    headers: {
-      "content-type": source.headers.get("content-type") ?? "application/octet-stream",
-      ...(source.headers.get("content-length") ? { "content-length": source.headers.get("content-length")! } : {}),
-      "cache-control": "private, no-store",
-      "x-content-type-options": "nosniff",
-      ...cors(request),
-    },
-  });
+  return resolvedMediaResponse(request, await resolveCreatorMedia(env, identity.creator_id, media.asset_id));
 }
 
 async function verifyRedditNativePost(externalUrl: URL, externalId: string, post: { title: string; expected_handle: string; community_name: string }, deviceMetadata?: RedditPublicPost) {

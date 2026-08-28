@@ -18,6 +18,7 @@
     "migration:reconcile": "node scripts/migration/reconcile.mjs",
     "migration:plan": "node scripts/migration/plan.mjs",
     "migration:automated-reconcile": "node scripts/migration/automated-reconcile.mjs",
+    "source-media:migration": "node scripts/source-media-migration.mjs",
     "d1:migrations:plan": "node scripts/bounded-d1-migrations.mjs --plan",
     "d1:migrations:apply": "node scripts/bounded-d1-migrations.mjs --apply",
     "d1:production-baseline:build": "node scripts/build-d1-production-baseline.mjs",

@@ -287,6 +287,12 @@
       "remoteId": 51,
       "name": "0049_creator_onboarding_access_vault.sql",
       "sha256": "e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f"
+    },
+    {
+      "remoteId": 52,
+      "name": "0050_r2_native_source_media.sql",
+      "sha256": "c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801",
+      "purpose": "Private R2 source-media multipart sessions and explicit creator cutover state; pending bounded staging review."
     }
   ]
 }

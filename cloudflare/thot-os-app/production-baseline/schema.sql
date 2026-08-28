@@ -54,6 +54,7 @@
 -- 0044_creator_r2_library.sql 0f3d0a0f618ecb45c23b5655f543a7e6687fe541535e58c39d5b5bac724e4ff2
 -- 0045_finished_media_uploads.sql aa43dafebb51faaf994eb732a3881af47597e3110c3450eefaa15692ba49a886
 -- 0049_creator_onboarding_access_vault.sql e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f
+-- 0050_r2_native_source_media.sql c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801
 
 PRAGMA foreign_keys = ON;
 
@@ -109,6 +110,7 @@ INSERT INTO d1_migrations (id, name) VALUES (48, '0048_onlyfans_grouped_message_
 INSERT INTO d1_migrations (id, name) VALUES (49, '0044_creator_r2_library.sql');
 INSERT INTO d1_migrations (id, name) VALUES (50, '0045_finished_media_uploads.sql');
 INSERT INTO d1_migrations (id, name) VALUES (51, '0049_creator_onboarding_access_vault.sql');
+INSERT INTO d1_migrations (id, name) VALUES (52, '0050_r2_native_source_media.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -155,6 +157,19 @@ CREATE TABLE asset_destinations (
   PRIMARY KEY(asset_id, destination)
 );
 
+CREATE TABLE asset_ingest_parts (
+  session_id TEXT NOT NULL REFERENCES asset_ingest_sessions(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  part_number INTEGER NOT NULL CHECK(part_number BETWEEN 1 AND 10000),
+  byte_count INTEGER NOT NULL CHECK(byte_count > 0),
+  etag TEXT,
+  status TEXT NOT NULL CHECK(status IN ('uploading','uploaded','failed')),
+  failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(session_id,part_number)
+);
+
 CREATE TABLE asset_ingest_sessions (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -168,7 +183,7 @@ CREATE TABLE asset_ingest_sessions (
   expires_at TEXT NOT NULL,
   failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, object_key TEXT, multipart_upload_id TEXT, chunk_bytes INTEGER, uploaded_bytes INTEGER NOT NULL DEFAULT 0, actor_email TEXT, actor_role TEXT CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')),
   UNIQUE(creator_id, asset_id, source_revision, expected_sha256)
 );
 
@@ -471,6 +486,30 @@ CREATE TABLE creator_media_release_attestations (
   UNIQUE(id, creator_id),
   FOREIGN KEY(asset_id, creator_id) REFERENCES assets(id, creator_id) ON DELETE RESTRICT,
   CHECK((status='draft' AND approved_by IS NULL AND approved_at IS NULL) OR (status<>'draft' AND approved_by IS NOT NULL AND approved_at IS NOT NULL))
+);
+
+CREATE TABLE creator_media_source_events (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+  session_id TEXT REFERENCES asset_ingest_sessions(id) ON DELETE SET NULL,
+  actor_email TEXT NOT NULL,
+  actor_role TEXT NOT NULL CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')),
+  event_type TEXT NOT NULL CHECK(event_type IN ('intent_created','part_uploaded','ingest_verified','ingest_failed','cutover_requested','cutover_completed','rollback_completed')),
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_media_source_states (
+  creator_id TEXT PRIMARY KEY REFERENCES creators(id) ON DELETE CASCADE,
+  active_backend TEXT NOT NULL DEFAULT 'dropbox' CHECK(active_backend IN ('dropbox','r2')),
+  migration_state TEXT NOT NULL DEFAULT 'dropbox' CHECK(migration_state IN ('dropbox','planned','transferring','verified','r2_active','rollback','retired')),
+  dropbox_fallback_enabled INTEGER NOT NULL DEFAULT 1 CHECK(dropbox_fallback_enabled IN (0,1)),
+  cutover_by TEXT,
+  cutover_at TEXT,
+  rollback_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE creator_memberships (
@@ -1632,6 +1671,9 @@ CREATE INDEX asset_classifications_creator_safety
 CREATE INDEX asset_destinations_creator_destination
   ON asset_destinations(creator_id, destination, asset_id);
 
+CREATE INDEX asset_ingest_parts_session_status
+  ON asset_ingest_parts(session_id,status,part_number);
+
 CREATE INDEX asset_ingest_sessions_expiry
   ON asset_ingest_sessions(status, expires_at);
 
@@ -1663,6 +1705,9 @@ CREATE INDEX creator_adult_profile_media_render
 
 CREATE INDEX creator_exceptions_open_scope
   ON creator_exceptions(creator_id, status, severity, last_observed_at DESC);
+
+CREATE INDEX creator_media_source_events_creator_created
+  ON creator_media_source_events(creator_id,created_at DESC);
 
 CREATE INDEX creator_memberships_user
   ON creator_memberships(user_email, status, creator_id);
@@ -1936,6 +1981,22 @@ BEGIN
   SELECT RAISE(ABORT, 'asset_destination_creator_mismatch');
 END;
 
+CREATE TRIGGER asset_ingest_part_creator_scope_insert
+BEFORE INSERT ON asset_ingest_parts
+WHEN NOT EXISTS (
+  SELECT 1 FROM asset_ingest_sessions s
+  WHERE s.id=NEW.session_id AND s.creator_id=NEW.creator_id
+)
+BEGIN SELECT RAISE(ABORT,'asset_ingest_part_creator_mismatch'); END;
+
+CREATE TRIGGER asset_ingest_part_creator_scope_update
+BEFORE UPDATE OF session_id,creator_id ON asset_ingest_parts
+WHEN NOT EXISTS (
+  SELECT 1 FROM asset_ingest_sessions s
+  WHERE s.id=NEW.session_id AND s.creator_id=NEW.creator_id
+)
+BEGIN SELECT RAISE(ABORT,'asset_ingest_part_creator_mismatch'); END;
+
 CREATE TRIGGER asset_ingest_session_creator_scope_insert
 BEFORE INSERT ON asset_ingest_sessions
 WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
@@ -2109,6 +2170,19 @@ CREATE TRIGGER creator_adult_profile_version_requires_approval
 BEFORE UPDATE OF status,approved_by,approved_at ON creator_adult_profile_versions
 WHEN OLD.status='draft' AND NEW.status IN ('approved','published') AND (NEW.approved_by IS NULL OR NEW.approved_at IS NULL)
 BEGIN SELECT RAISE(ABORT,'adult_profile_version_requires_explicit_approval'); END;
+
+CREATE TRIGGER creator_media_source_event_creator_scope_insert
+BEFORE INSERT ON creator_media_source_events
+WHEN (NEW.asset_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id))
+  OR (NEW.session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM asset_ingest_sessions s WHERE s.id=NEW.session_id AND s.creator_id=NEW.creator_id))
+BEGIN SELECT RAISE(ABORT,'creator_media_source_event_creator_mismatch'); END;
+
+CREATE TRIGGER creator_media_source_state_creator_insert
+AFTER INSERT ON creators
+BEGIN
+  INSERT OR IGNORE INTO creator_media_source_states (creator_id,active_backend,migration_state,dropbox_fallback_enabled)
+  VALUES (NEW.id,'dropbox','dropbox',1);
+END;
 
 CREATE TRIGGER creator_memberships_creator_workspace_insert
 BEFORE INSERT ON creator_memberships

@@ -24,7 +24,8 @@
     }
   ],
   "r2_buckets": [
-    { "binding": "PREVIEWS", "bucket_name": "thot-os-previews-staging" }
+    { "binding": "PREVIEWS", "bucket_name": "thot-os-previews-staging" },
+    { "binding": "LIBRARY_MEDIA", "bucket_name": "thot-os-library-media-staging" }
   ],
   "queues": {
     "producers": [
