@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 2,
+  "component": "web",
+  "service": "thot-os-web",
+  "environment": "staging",
+  "source": {
+    "gitSha": "e28b8bd6029a1f54d3414de9143a73f0ad217b0a",
+    "gitBranch": "codex/r2-video-h265",
+    "artifactSha256": "586e4a7c9dec3dbf81516a39c2a99c488863a311b38f4540a2c1ec6ebcf87ecf"
+  },
+  "buildTime": "2026-08-28T08:49:14.496Z",
+  "worker": {
+    "name": "thot-os-staging",
+    "version": "7719d64e-f5b7-4a21-a8c6-01300feeeed7",
+    "traffic": [
+      {
+        "versionId": "7719d64e-f5b7-4a21-a8c6-01300feeeed7",
+        "percentage": 100
+      }
+    ],
+    "observedAt": "2026-08-28T08:56:24Z",
+    "evidenceSource": "cloudflare"
+  },
+  "migration": {
+    "state": "56 migrations; latest 0054_native_video_intake.sql",
+    "observedAt": "2026-08-28T08:56:24Z",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "AUTHENTICATED_NATIVE_VIDEO_LIBRARY_UI_PASS",
+    "observedAt": "2026-08-28T08:56:24Z",
+    "verified": true,
+    "detail": "Authenticated staging Library rendered the Cloudflare-native video uploader with private R2, MP4/MOV, H.264/H.265 preservation, 5 GB, and Stream-gated playback messaging. No media was uploaded."
+  },
+  "operator": "Codex",
+  "tool": "controlled-deployment-receipt",
+  "verification": "remote-observed"
+}
