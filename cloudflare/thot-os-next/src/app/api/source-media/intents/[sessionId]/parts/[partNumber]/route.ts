@@ -3,7 +3,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { expectedPartBytes, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
-type Session = { id: string; asset_id: string; object_key: string | null; multipart_upload_id: string | null; expected_bytes: number; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string };
+type Session = { id: string; asset_id: string; object_key: string | null; multipart_upload_id: string | null; expected_bytes: number; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string; ingest_kind: "legacy_direct" | "native_image" };
 
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
@@ -15,7 +15,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ sess
   const context = await requireCreatorContext("mutate");
   const { DB, LIBRARY_MEDIA } = cloudflareEnv() as CloudflareEnv & { LIBRARY_MEDIA?: R2Bucket };
   if (!LIBRARY_MEDIA) return noStoreJson({ ok: false, error: "source_media_unavailable" }, 503);
-  const session = await DB.prepare(`SELECT id,asset_id,object_key,multipart_upload_id,expected_bytes,chunk_bytes,status,finalization_state,expires_at
+  const session = await DB.prepare(`SELECT id,asset_id,object_key,multipart_upload_id,expected_bytes,chunk_bytes,status,finalization_state,expires_at,ingest_kind
     FROM asset_ingest_sessions WHERE id=? AND creator_id=?`).bind(sessionId, context.creator.creator_id).first<Session>();
   if (!session) return noStoreJson({ ok: false, error: "session_not_found" }, 404);
   if (session.status === "finalized") return noStoreJson({ ok: false, error: "session_finalized" }, 409);
@@ -36,7 +36,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ sess
   const declaredLength = Number(request.headers.get("content-length"));
   if (!Number.isSafeInteger(declaredLength) || declaredLength !== expectedBytes) return noStoreJson({ ok: false, error: "part_size_mismatch" }, 400);
   const existing = await DB.prepare("SELECT status FROM asset_ingest_parts WHERE session_id=? AND part_number=?").bind(session.id, partNumber).first<{ status: string }>();
-  if (existing?.status === "uploaded") return noStoreJson({ ok: false, error: "part_replayed" }, 409);
+  if (existing?.status === "uploaded") {
+    if (session.ingest_kind === "native_image") return noStoreJson({ ok: true, partNumber, byteCount: expectedBytes, replay: true });
+    return noStoreJson({ ok: false, error: "part_replayed" }, 409);
+  }
   if (existing?.status === "uploading") return noStoreJson({ ok: false, error: "part_in_progress" }, 409);
   if (existing?.status === "failed") {
     const reclaimed = await DB.prepare("UPDATE asset_ingest_parts SET status='uploading',failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE session_id=? AND part_number=? AND status='failed'").bind(session.id, partNumber).run();

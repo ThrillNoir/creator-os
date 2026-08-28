@@ -86,9 +86,9 @@ export function inventoryFromDirectory(directory, readdir) {
  * historical, already-applied sequence with duplicate numeric prefixes.
  */
 export function inventoryFromLedger(directory, ledger, readdir) {
-  if (ledger?.schemaVersion !== 1 || !Array.isArray(ledger.migrations) || ledger.migrations.length === 0) throw new Error("Reviewed staging migration ledger is invalid.");
+  if (ledger?.schemaVersion !== 1 || !Array.isArray(ledger.migrations) || ledger.migrations.length === 0 || (ledger.pendingMigrations !== undefined && !Array.isArray(ledger.pendingMigrations))) throw new Error("Reviewed staging migration ledger is invalid.");
   const names = readdir(directory).filter((name) => name.endsWith(".sql"));
-  const reviewed = ledger.migrations.map((entry, index) => {
+  const reviewed = [...ledger.migrations, ...(ledger.pendingMigrations ?? [])].map((entry, index) => {
     if (!entry || typeof entry.name !== "string" || !migrationPattern.test(entry.name) || !/^[a-f0-9]{64}$/i.test(entry.sha256 ?? "")) throw new Error("Reviewed staging migration ledger contains an invalid entry.");
     const match = entry.name.match(migrationPattern);
     const file = path.join(directory, entry.name);

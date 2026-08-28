@@ -19,7 +19,7 @@ async function findDatabase(directory) {
   return null;
 }
 
-test("0050 through 0052 keep source ingestion and cutover readiness creator-scoped", async () => {
+test("0050 through 0053 keep source ingestion, native authority, and cutover readiness creator-scoped", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "thot-os-source-media-"));
   let db;
   try {
@@ -52,6 +52,12 @@ test("0050 through 0052 keep source ingestion and cutover readiness creator-scop
     assert.throws(() => db.prepare("UPDATE asset_storage_objects SET ingest_status='verified' WHERE id='object-a'").run(), /verified_r2_identity_required/);
     db.prepare("UPDATE asset_storage_objects SET ingest_status='verified',r2_version='version-a',r2_etag='etag-a' WHERE id='object-a'").run();
     assert.deepEqual(db.prepare("SELECT r2_version,r2_etag FROM asset_storage_objects WHERE id='object-a'").get(), { r2_version: "version-a", r2_etag: "etag-a" });
+    db.prepare("INSERT INTO asset_media_authorities (asset_id,creator_id,authority_kind,ingest_channel,canonical_storage_object_id,state) VALUES ('source-a','adelaide','r2_native','cloudflare_direct','object-a','ingesting')").run();
+    assert.deepEqual(db.prepare("SELECT authority_kind,ingest_channel,state FROM asset_media_authorities WHERE asset_id='source-a'").get(), { authority_kind: "r2_native", ingest_channel: "cloudflare_direct", state: "ingesting" });
+    assert.throws(() => db.prepare("INSERT INTO asset_media_authorities (asset_id,creator_id,authority_kind,ingest_channel,canonical_storage_object_id,state) VALUES ('source-b','adelaide','r2_native','cloudflare_direct','object-a','ingesting')").run(), /asset_media_authority_creator_mismatch/);
+    db.prepare("INSERT INTO asset_ingest_sessions (id,creator_id,asset_id,storage_object_id,source_revision,expected_sha256,expected_bytes,expected_mime_type,status,expires_at,object_key,multipart_upload_id,chunk_bytes,actor_email,actor_role,ingest_kind,client_upload_id) VALUES ('native-session-a','adelaide','source-a','object-a','native:upload-a',?,10,'image/jpeg','created',datetime('now','+30 minutes'),'originals/v1/a','temporary-native-id',8388608,'admin@example.test','agency_admin','native_image','upload-a')").run(checksum);
+    assert.deepEqual(db.prepare("SELECT ingest_kind,client_upload_id FROM asset_ingest_sessions WHERE id='native-session-a'").get(), { ingest_kind: "native_image", client_upload_id: "upload-a" });
+    assert.throws(() => db.prepare("INSERT INTO asset_ingest_sessions (id,creator_id,asset_id,storage_object_id,source_revision,expected_sha256,expected_bytes,expected_mime_type,status,expires_at,object_key,multipart_upload_id,chunk_bytes,actor_email,actor_role,ingest_kind,client_upload_id) VALUES ('native-session-b','adelaide','source-a','object-a','native:upload-b',?,10,'image/jpeg','created',datetime('now','+30 minutes'),'originals/v1/a','temporary-native-id-2',8388608,'admin@example.test','agency_admin','native_image','upload-a')").run(checksum), /UNIQUE constraint failed/);
     db.prepare("UPDATE asset_ingest_sessions SET status='uploading' WHERE id='session-a'").run();
     const firstClaim = db.prepare("UPDATE asset_ingest_sessions SET finalization_state='completing' WHERE id='session-a' AND finalization_state='incomplete' AND status IN ('created','uploading')").run();
     const duplicateClaim = db.prepare("UPDATE asset_ingest_sessions SET finalization_state='completing' WHERE id='session-a' AND finalization_state='incomplete' AND status IN ('created','uploading')").run();

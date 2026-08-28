@@ -1,10 +1,11 @@
 import { humanAuditActor, identityAuditStatement, isSameOriginRequest } from "@/lib/audit-identity";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
+import { createNativeImagePreview } from "@/lib/native-media";
 import { expectedPartBytes, hashAndValidateR2Object, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
 type Context = Awaited<ReturnType<typeof requireCreatorContext>>;
-type Session = { id: string; asset_id: string; storage_object_id: string | null; object_key: string | null; multipart_upload_id: string | null; expected_sha256: string; expected_bytes: number; expected_mime_type: string; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string };
+type Session = { id: string; asset_id: string; storage_object_id: string | null; object_key: string | null; multipart_upload_id: string | null; expected_sha256: string; expected_bytes: number; expected_mime_type: string; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string; ingest_kind: "legacy_direct" | "native_image" };
 type Part = { part_number: number; etag: string | null; byte_count: number; status: string };
 
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
@@ -16,7 +17,38 @@ async function quarantine(DB: D1Database, session: Session, creatorId: string, f
   ]);
 }
 
-async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, images: ImagesBinding, session: Session, creatorId: string, context: Context) {
+type NativePreviewState = "ready" | "failed" | "not_requested";
+
+async function ensureNativePreview(DB: D1Database, libraryMedia: R2Bucket, previews: R2Bucket | undefined, images: ImagesBinding, session: Session, creatorId: string, context: Context): Promise<NativePreviewState> {
+  if (session.ingest_kind !== "native_image") return "not_requested";
+  if (!previews || !session.storage_object_id || !session.object_key) return "failed";
+  const record = await DB.prepare(`SELECT o.r2_etag,o.sha256,a.preview_r2_key,ma.state
+    FROM asset_storage_objects o
+    JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+    JOIN asset_media_authorities ma ON ma.asset_id=o.asset_id AND ma.creator_id=o.creator_id
+    WHERE o.id=? AND o.asset_id=? AND o.creator_id=? AND ma.authority_kind='r2_native'`).bind(session.storage_object_id, session.asset_id, creatorId)
+    .first<{ r2_etag: string | null; sha256: string; preview_r2_key: string | null; state: string }>();
+  if (!record || !record.r2_etag) return "failed";
+  if (record.preview_r2_key && record.state === "preview_ready") return "ready";
+  try {
+    const preview = await createNativeImagePreview({ libraryMedia, previews, images, creatorId, assetId: session.asset_id, objectKey: session.object_key, expectedEtag: record.r2_etag, sourceSha256: record.sha256 });
+    await DB.batch([
+      DB.prepare("UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=? AND preview_r2_key IS NULL").bind(preview.objectKey, session.asset_id, creatorId),
+      DB.prepare("UPDATE asset_media_authorities SET state='preview_ready',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native'").bind(session.asset_id, creatorId),
+      identityAuditStatement(DB, humanAuditActor(context), "native_media_preview_ready", session.asset_id, { width: preview.width, height: preview.height, privateDerivative: true }),
+    ]);
+    return "ready";
+  } catch (error) {
+    const failure = safeFailureCode(error, "native_preview_failed");
+    await DB.batch([
+      DB.prepare("UPDATE asset_media_authorities SET state='preview_failed',preview_failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native'").bind(failure, session.asset_id, creatorId),
+      identityAuditStatement(DB, humanAuditActor(context), "native_media_preview_failed", session.asset_id, { failure, privateDerivative: true }),
+    ]).catch(() => undefined);
+    return "failed";
+  }
+}
+
+async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, previews: R2Bucket | undefined, images: ImagesBinding, session: Session, creatorId: string, context: Context): Promise<NativePreviewState> {
   if (!session.object_key || !session.storage_object_id) throw new Error("session_storage_missing");
   if (session.expected_mime_type.startsWith("video/")) {
     await quarantine(DB, session, creatorId, "source_media_decoder_required");
@@ -28,13 +60,19 @@ async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, images: Images
     await quarantine(DB, session, creatorId, "source_media_verification_failed");
     throw new Error("source_media_verification_failed");
   }
-  await DB.batch([
+  const statements = [
     DB.prepare("UPDATE asset_ingest_sessions SET status='finalized',finalization_state='verified',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=COALESCE(completion_observed_at,CURRENT_TIMESTAMP),multipart_upload_id=NULL,uploaded_bytes=?,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(verified.r2Version, verified.r2Etag, verified.byteCount, session.id, creatorId),
     DB.prepare("UPDATE asset_storage_objects SET ingest_status='verified',verified_mime_type=?,r2_version=?,r2_etag=?,uploaded_at=COALESCE(uploaded_at,CURRENT_TIMESTAMP),verified_at=CURRENT_TIMESTAMP,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND ingest_status<>'verified'").bind(verified.detectedMime, verified.r2Version, verified.r2Etag, session.storage_object_id, creatorId),
-    DB.prepare("UPDATE creator_media_source_states SET migration_state='transferring',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND migration_state IN ('dropbox','planned','transferring')").bind(creatorId),
     DB.prepare("INSERT INTO creator_media_source_events (id,creator_id,asset_id,session_id,actor_email,actor_role,event_type,detail) VALUES (?,?,?,?,?,?, 'ingest_verified',?)").bind(crypto.randomUUID(), creatorId, session.asset_id, session.id, context.email, context.creator.role, JSON.stringify({ byteCount: verified.byteCount, mimeType: verified.detectedMime })),
     identityAuditStatement(DB, humanAuditActor(context), "source_media_ingest_verified", session.asset_id, { byteCount: verified.byteCount, mimeType: verified.detectedMime }),
-  ]);
+  ];
+  if (session.ingest_kind === "native_image") {
+    statements.push(DB.prepare("UPDATE asset_media_authorities SET state='canonical_verified',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native' AND state='ingesting'").bind(session.asset_id, creatorId));
+  } else {
+    statements.push(DB.prepare("UPDATE creator_media_source_states SET migration_state='transferring',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND migration_state IN ('dropbox','planned','transferring')").bind(creatorId));
+  }
+  await DB.batch(statements);
+  return ensureNativePreview(DB, bucket, previews, images, session, creatorId, context);
 }
 
 async function abortExpired(DB: D1Database, bucket: R2Bucket, session: Session, creatorId: string) {
@@ -54,12 +92,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ ses
   const { sessionId } = await params;
   if (!validUuid(sessionId)) return noStoreJson({ ok: false, error: "invalid_session" }, 400);
   const context = await requireCreatorContext("mutate");
-  const { DB, LIBRARY_MEDIA, IMAGES } = cloudflareEnv() as CloudflareEnv & { LIBRARY_MEDIA?: R2Bucket; IMAGES?: ImagesBinding };
+  const { DB, LIBRARY_MEDIA, PREVIEWS, IMAGES } = cloudflareEnv() as CloudflareEnv & { LIBRARY_MEDIA?: R2Bucket; PREVIEWS?: R2Bucket; IMAGES?: ImagesBinding };
   if (!LIBRARY_MEDIA || !IMAGES) return noStoreJson({ ok: false, error: "source_media_unavailable" }, 503);
-  const session = await DB.prepare(`SELECT id,asset_id,storage_object_id,object_key,multipart_upload_id,expected_sha256,expected_bytes,expected_mime_type,chunk_bytes,status,finalization_state,expires_at
+  const session = await DB.prepare(`SELECT id,asset_id,storage_object_id,object_key,multipart_upload_id,expected_sha256,expected_bytes,expected_mime_type,chunk_bytes,status,finalization_state,expires_at,ingest_kind
     FROM asset_ingest_sessions WHERE id=? AND creator_id=?`).bind(sessionId, context.creator.creator_id).first<Session>();
   if (!session) return noStoreJson({ ok: false, error: "session_not_found" }, 404);
-  if (session.status === "finalized" && session.finalization_state === "verified") return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", replay: true });
+  if (session.status === "finalized" && session.finalization_state === "verified") {
+    const preview = await ensureNativePreview(DB, LIBRARY_MEDIA, PREVIEWS, IMAGES, session, context.creator.creator_id, context);
+    return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", replay: true, preview });
+  }
   if (["quarantined", "failed", "expired", "aborted"].includes(session.finalization_state)) return noStoreJson({ ok: false, error: `session_${session.finalization_state}` }, 409);
 
   if (["completing", "completed_unreconciled", "verifying"].includes(session.finalization_state)) {
@@ -67,8 +108,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ ses
       const head = session.object_key ? await LIBRARY_MEDIA.head(session.object_key) : null;
       if (!head) return noStoreJson({ ok: false, error: "finalization_in_progress" }, 409);
       await DB.prepare("UPDATE asset_ingest_sessions SET finalization_state='completed_unreconciled',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=COALESCE(completion_observed_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(head.version, head.etag, session.id, context.creator.creator_id).run();
-      await verifyAndPersist(DB, LIBRARY_MEDIA, IMAGES, session, context.creator.creator_id, context);
-      return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", reconciled: true });
+      const preview = await verifyAndPersist(DB, LIBRARY_MEDIA, PREVIEWS, IMAGES, session, context.creator.creator_id, context);
+      return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", reconciled: true, preview });
     } catch (error) {
       return noStoreJson({ ok: false, error: safeFailureCode(error, "reconciliation_required") }, 409);
     }
@@ -87,8 +128,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ ses
   try {
     const completed = await LIBRARY_MEDIA.resumeMultipartUpload(session.object_key, session.multipart_upload_id).complete(parts.map((part) => ({ partNumber: part.part_number, etag: part.etag! })));
     await DB.prepare("UPDATE asset_ingest_sessions SET finalization_state='completed_unreconciled',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='completing'").bind(completed.version, completed.etag, session.id, context.creator.creator_id).run();
-    await verifyAndPersist(DB, LIBRARY_MEDIA, IMAGES, session, context.creator.creator_id, context);
-    return noStoreJson({ ok: true, sessionId: session.id, status: "finalized" });
+    const preview = await verifyAndPersist(DB, LIBRARY_MEDIA, PREVIEWS, IMAGES, session, context.creator.creator_id, context);
+    return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", preview });
   } catch (error) {
     const state = await DB.prepare("SELECT finalization_state FROM asset_ingest_sessions WHERE id=? AND creator_id=?").bind(session.id, context.creator.creator_id).first<{ finalization_state: string }>().catch(() => null);
     if (state?.finalization_state === "quarantined") return noStoreJson({ ok: false, error: "source_media_verification_failed" }, 422);

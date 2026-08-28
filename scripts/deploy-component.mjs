@@ -60,7 +60,8 @@ function targetContext(options) {
   const lockfilePath = path.join(root, component.directory, "package-lock.json");
   verifyStagingArtifactManifest({ artifactDirectory: path.dirname(options.artifactManifest), lockfilePath, manifest: artifactManifest, expectedMetadata: preflight.results[0].metadata });
   const ledger = readJson(ledgerPath, "staging migration ledger");
-  if (ledger.environment !== "staging" || ledger.databaseId !== database.id || !ledger.migrations?.length || ledger.migrations.some((entry) => !Number.isInteger(entry.remoteId))) throw new Error("Staging migration ledger is not a fully applied authoritative ledger.");
+  const pendingMigrations = ledger.pendingMigrations ?? [];
+  if (ledger.environment !== "staging" || ledger.databaseId !== database.id || !ledger.migrations?.length || ledger.migrations.some((entry) => !Number.isInteger(entry.remoteId)) || !Array.isArray(pendingMigrations) || pendingMigrations.length) throw new Error("Staging migration ledger is not a fully applied authoritative ledger.");
   return {
     registry,
     artifactManifest,
