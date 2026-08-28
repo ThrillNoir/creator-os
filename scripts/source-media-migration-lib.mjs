@@ -4,6 +4,7 @@ import { open } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { createActivationD1ReadClient, mutationWranglerEnvironment } from "./service-auth-activate.mjs";
 import { readDeploymentRegistry, readJsoncFile } from "./deployment-preflight.mjs";
 
@@ -19,7 +20,7 @@ export const MAX_MEDIA_BYTES = 64 * 1024 ** 2;
 export const DEFAULT_CONCURRENCY = 2;
 export const MAX_CONCURRENCY = 4;
 export const STAGING_BUCKET = "thot-os-library-media-staging";
-export const APPROVED_SOURCE_ROOT = "/Users/BR/Library/CloudStorage/Dropbox/1 THRILL NOIR/# PHOTOS OPTIMISED";
+export const APPROVED_SOURCE_ROOT = path.join(homedir(), "Library/CloudStorage/Dropbox/1 THRILL NOIR/# PHOTOS OPTIMISED");
 export const canonicalConfigPath = path.join(projectRoot, "cloudflare/thot-os-next/wrangler.jsonc");
 export const registryPath = path.join(projectRoot, "config/deployments.json");
 export const stagingLedgerPath = path.join(projectRoot, "config/staging-d1-migration-ledger.json");
