@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest } from "../scripts/staging-web-deployment-lib.mjs";
 
@@ -15,6 +16,15 @@ const workerState = {
   // version may predate a separately staged secret version.
   latestSecretVersion: { versionId: "before", trafficPercentage: 100, secretNames: [] },
 };
+
+test("Vault deploy gives Wrangler a verified owner-only named snapshot", () => {
+  const deployer = readFileSync(new URL("../scripts/deploy-component.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(deployer, /\/dev\/fd\/3/);
+  assert.match(deployer, /mkdtempSync\(path\.join\(os\.tmpdir\(\), "creatoros-vault-deploy-"\)\)/);
+  assert.match(deployer, /constants\.O_CREAT \| constants\.O_EXCL/);
+  assert.match(deployer, /constants\.O_RDONLY \| \(constants\.O_NOFOLLOW \?\? 0\)/);
+  assert.match(deployer, /\["deploy", snapshotPath, "--no-bundle"/);
+});
 
 test("staging deployment plan binds source, artifact, ledger, secrets, and Worker state", () => {
   const plan = createDeploymentPlan({ metadata, artifactManifest, migrationNames, requiredSecretNames, workerState, createdAt: "2026-08-26T01:00:00.000Z" });

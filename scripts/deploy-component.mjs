@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,7 +88,7 @@ async function observeStaging(context) {
 }
 
 function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
-  let sourceDescriptor; let deployableArtifact; let temporaryDirectory;
+  let sourceDescriptor; let snapshotDescriptor; let snapshotPath; let temporaryDirectory;
   try {
     const directory = path.join(root, registry.environments.staging.components[metadata.component].directory);
     const executable = metadata.component === "web" ? path.join(directory, "node_modules/.bin/opennextjs-cloudflare") : path.join(directory, "node_modules/.bin/wrangler");
@@ -100,21 +100,29 @@ function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
       while (offset < bytes.length) { const count = readSync(sourceDescriptor, bytes, offset, bytes.length - offset, offset); if (!count) throw new Error("reviewed_artifact_replaced"); offset += count; }
       if (createHash("sha256").update(bytes).digest("hex") !== artifactEntrypoint.sha256) throw new Error("reviewed_artifact_replaced");
       closeSync(sourceDescriptor); sourceDescriptor = undefined;
-      // Deploy an anonymous owner-only snapshot made from the verified buffer.
-      // Wrangler never rereads the mutable artifact inode or pathname.
+      // Wrangler requires a named entrypoint. Isolate its immutable input from
+      // the worktree in a fresh owner-only directory, then verify that snapshot
+      // through O_NOFOLLOW immediately before handing the protected path over.
       temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "creatoros-vault-deploy-")); chmodSync(temporaryDirectory, 0o700);
-      const snapshotPath = path.join(temporaryDirectory, "worker.js"); deployableArtifact = openSync(snapshotPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR, 0o600);
-      offset = 0; while (offset < bytes.length) { const count = writeSync(deployableArtifact, bytes, offset, bytes.length - offset, offset); if (!count) throw new Error("reviewed_artifact_snapshot_failed"); offset += count; }
-      unlinkSync(snapshotPath); rmSync(temporaryDirectory, { recursive: false }); temporaryDirectory = undefined;
+      snapshotPath = path.join(temporaryDirectory, "worker.js"); snapshotDescriptor = openSync(snapshotPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR, 0o600);
+      offset = 0; while (offset < bytes.length) { const count = writeSync(snapshotDescriptor, bytes, offset, bytes.length - offset, offset); if (!count) throw new Error("reviewed_artifact_snapshot_failed"); offset += count; }
+      fsyncSync(snapshotDescriptor); closeSync(snapshotDescriptor); snapshotDescriptor = undefined; chmodSync(snapshotPath, 0o400);
+      const snapshotLexical = lstatSync(snapshotPath); if (!snapshotLexical.isFile() || snapshotLexical.isSymbolicLink()) throw new Error("reviewed_artifact_snapshot_failed");
+      snapshotDescriptor = openSync(snapshotPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const snapshot = fstatSync(snapshotDescriptor);
+      if (!snapshot.isFile() || snapshot.size !== bytes.length) throw new Error("reviewed_artifact_snapshot_failed");
+      const snapshotBytes = Buffer.alloc(snapshot.size); offset = 0;
+      while (offset < snapshotBytes.length) { const count = readSync(snapshotDescriptor, snapshotBytes, offset, snapshotBytes.length - offset, offset); if (!count) throw new Error("reviewed_artifact_snapshot_failed"); offset += count; }
+      if (createHash("sha256").update(snapshotBytes).digest("hex") !== artifactEntrypoint.sha256) throw new Error("reviewed_artifact_snapshot_failed");
+      closeSync(snapshotDescriptor); snapshotDescriptor = undefined;
     }
-    const args = metadata.component === "web" ? ["deploy", "--config", path.join(root, metadata.config)] : ["deploy", "/dev/fd/3", "--no-bundle", "--config", path.join(root, metadata.config), "--strict", "--tag", plan.artifact.versionTag, "--message", `Creator OS reviewed artifact ${plan.artifact.sha256}`];
-    execFileSync(executable, args, { cwd: directory, env: { ...mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }), CI: "1" }, stdio: metadata.component === "vault" ? ["ignore", "pipe", "pipe", deployableArtifact] : ["ignore", "pipe", "pipe"], encoding: "utf8" });
+    const args = metadata.component === "web" ? ["deploy", "--config", path.join(root, metadata.config)] : ["deploy", snapshotPath, "--no-bundle", "--config", path.join(root, metadata.config), "--strict", "--tag", plan.artifact.versionTag, "--message", `Creator OS reviewed artifact ${plan.artifact.sha256}`];
+    execFileSync(executable, args, { cwd: directory, env: { ...mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }), CI: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
     return { commandOutcome: "SUCCEEDED" };
   } catch {
     throw new Error("reviewed_deployment_command_failed");
   } finally {
     if (sourceDescriptor !== undefined) closeSync(sourceDescriptor);
-    if (deployableArtifact !== undefined) closeSync(deployableArtifact);
+    if (snapshotDescriptor !== undefined) closeSync(snapshotDescriptor);
     if (temporaryDirectory !== undefined) rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }
