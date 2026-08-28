@@ -31,17 +31,13 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger preserves historical duplicate prefixes and holds 0054 pending bounded approval", () => {
+test("reviewed staging ledger preserves historical duplicate prefixes and records applied 0054", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 55);
-  assert.deepEqual(ledger.pendingMigrations, [{
-    name: "0054_native_video_intake.sql",
-    sha256: "f2cde4f908b498e0c6ed6f0e34b0d4f70b3db8d5fe54b5608d86d930b176be27",
-    purpose: "Reviewed pending staging migration: creator-scoped native video intake, immutable R2 originals, and explicit playback readiness.",
-  }]);
+  assert.equal(ledger.migrations.length, 56);
+  assert.equal(ledger.pendingMigrations, undefined);
   assert.deepEqual(inventory.at(-1), {
     number: 54,
     name: "0054_native_video_intake.sql",

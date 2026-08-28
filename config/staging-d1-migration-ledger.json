@@ -311,13 +311,12 @@
       "name": "0053_native_asset_authority.sql",
       "sha256": "5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7",
       "purpose": "Applied bounded staging migration: per-asset Cloudflare-native authority and resumable native-image session identity."
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
+      "remoteId": 56,
       "name": "0054_native_video_intake.sql",
       "sha256": "f2cde4f908b498e0c6ed6f0e34b0d4f70b3db8d5fe54b5608d86d930b176be27",
-      "purpose": "Reviewed pending staging migration: creator-scoped native video intake, immutable R2 originals, and explicit playback readiness."
+      "purpose": "Applied bounded staging migration: creator-scoped native video intake, immutable R2 originals, and explicit playback readiness."
     }
   ]
 }
