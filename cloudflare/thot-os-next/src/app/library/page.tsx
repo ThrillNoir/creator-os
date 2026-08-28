@@ -3,10 +3,11 @@ import { saveAssetAttributesAction, syncDropboxCatalogueAction } from "@/app/act
 import { AppShell } from "@/components/app-shell";
 import { AssetCard } from "@/components/asset-card";
 import { AttributeFields } from "@/components/attribute-fields";
+import { LazyNativeVideoUploader } from "@/components/lazy-native-video-uploader";
 import { NativeMediaUploader } from "@/components/native-media-uploader";
-import { NativeVideoUploader } from "@/components/native-video-uploader";
 import { PreviewProgress } from "@/components/preview-progress";
-import { destinations, getAssetByObjectId, getLibraryAssets, getLibrarySummary, getPreviewProgress } from "@/lib/library";
+import { destinations, getAssetByObjectId, getLibraryPageData } from "@/lib/library";
+import { getDeploymentMetadata } from "@/lib/deployment-metadata";
 import { requireCreatorContext } from "@/lib/identity";
 import { roleCan } from "@/lib/authorization";
 
@@ -16,19 +17,38 @@ function filterHref(current: Record<string, string | undefined>, key: string, va
   return `/library${params.size ? `?${params}` : ""}`;
 }
 
+function logLibraryRender(phase: "start" | "data_loaded" | "failed", startedAt: number, source: string, fields: Record<string, number> = {}) {
+  // Keep request diagnostics useful for Error 1102 investigations without
+  // recording identities, file names, filters, object keys, or user input.
+  console.log(JSON.stringify({ event: "creatoros.library_render", route: "/library", phase, source, durationMs: Date.now() - startedAt, deployment: getDeploymentMetadata(), ...fields }));
+}
+
 export default async function LibraryPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
+  const startedAt = Date.now();
   const filters = await searchParams;
   const context = await requireCreatorContext();
   const creatorId = context.creator.creator_id;
   const canMutate = roleCan(context.creator.role, "mutate");
   const activeSource: "native" | "legacy" | "all" = filters.source === "legacy" || filters.source === "all" ? filters.source : "native";
-  const [summary, previewProgress, assets, template] = await Promise.all([getLibrarySummary(creatorId, activeSource), getPreviewProgress(creatorId, activeSource), getLibraryAssets(creatorId, { ...filters, source: activeSource }), /^[a-f0-9]{64}$/.test(filters.template ?? "") ? getAssetByObjectId(creatorId, filters.template!) : null]);
+  logLibraryRender("start", startedAt, activeSource);
+  let summary; let previewProgress; let assets; let template;
+  try {
+    const pageData = await getLibraryPageData(creatorId, { ...filters, source: activeSource });
+    summary = pageData.summary;
+    previewProgress = pageData.previewProgress;
+    assets = pageData.assets;
+    template = /^[a-f0-9]{64}$/.test(filters.template ?? "") ? await getAssetByObjectId(creatorId, filters.template!) : null;
+    logLibraryRender("data_loaded", startedAt, activeSource, { assets: assets.length, summaryAssets: summary?.assets ?? 0, previewTotal: previewProgress.total });
+  } catch (error) {
+    logLibraryRender("failed", startedAt, activeSource);
+    throw error;
+  }
   const currentUrl = filterHref({ ...filters, template: undefined }, "saved", "all");
   return <AppShell active="Content library"><header className="top library-page-header"><div><span className="eyebrow">CREATOR WORKSPACE</span><h1>Content Library</h1><p>Find, classify and prepare {context.creator.creator_name}&apos;s content.</p></div>{activeSource === "legacy" ? <div className="library-sync-action"><small>Refreshes this creator&apos;s read-only Dropbox catalogue.</small>{canMutate ? <form action={syncDropboxCatalogueAction}><button className="secondary-action" type="submit">Sync Dropbox</button></form> : <span className="secondary-action disabled-action">Sync requires editor access</span>}</div> : <div className="library-sync-action"><small>Cloudflare-native originals are private and creator scoped.</small><span className="secondary-action disabled-action">Native library</span></div>}</header>
     {filters.notice === "sync_complete" && <div className="success">Dropbox catalogue refreshed. {filters.count || summary?.assets || 0} assets are available. Preview generation is continuing automatically in the background.</div>}
     {filters.notice === "sync_failed" && <div className="connection-banner blocked"><div><strong>Dropbox catalogue refresh failed</strong><span>{filters.detail || "No catalogue changes were applied. Check the Dropbox connection and try again."}</span></div>{filters.detail === "Dropbox root is not configured for this creator." && <Link className="secondary-action" href="/accounts">Add Dropbox source</Link>}</div>}
     {filters.saved && <div className="success">Saved attributes for {filters.saved} asset{filters.saved === "1" ? "" : "s"}.</div>}
-    {activeSource === "native" && canMutate ? <><NativeMediaUploader /><NativeVideoUploader /></> : null}
+    {activeSource === "native" && canMutate ? <><NativeMediaUploader /><LazyNativeVideoUploader /></> : null}
     <PreviewProgress initial={previewProgress} source={activeSource} />
     <section className="panel library-panel"><div className="library-heading"><div><h2>{activeSource === "native" ? "Cloudflare-native assets" : activeSource === "legacy" ? "Legacy Dropbox assets" : `${context.creator.creator_name} assets`}</h2><p>{assets.length} shown · {summary?.assets ?? 0} total · {summary?.needs_review ?? 0} need review</p></div><nav className="view-links" aria-label="Library view"><Link className={activeSource === "native" ? "active" : ""} href={filterHref(filters,"source","native")}>Native</Link><Link className={activeSource === "all" ? "active" : ""} href={filterHref(filters,"source","all")}>All</Link><Link className={activeSource === "legacy" ? "active" : ""} href={filterHref(filters,"source","legacy")}>Legacy Dropbox</Link><Link className={!filters.view || filters.view === "thumbnails" ? "active" : ""} href={filterHref(filters,"view","thumbnails")}>Grid</Link><Link className={filters.view === "list" ? "active" : ""} href={filterHref(filters,"view","list")}>List</Link></nav></div>
       <form className="library-toolbar" method="get"><input type="hidden" name="view" value={filters.view ?? "thumbnails"} /><input type="hidden" name="source" value={activeSource} /><label className="search-field"><span className="sr-only">Search assets</span><input type="search" name="query" defaultValue={filters.query ?? ""} placeholder="Search files and folders…" /></label><label><span>Type</span><select name="type" defaultValue={filters.type ?? "all"}><option value="all">All content</option><option value="photos">Photos</option><option value="videos">Videos</option></select></label><label><span>Safety</span><select name="safety" defaultValue={filters.safety ?? "all"}><option value="all">All safety</option><option value="review">Needs review</option><option value="sfw">SFW</option><option value="nsfw">NSFW</option></select></label><label><span>Destination</span><select name="destination" defaultValue={filters.destination ?? "all"}><option value="all">All destinations</option>{destinations.map((value) => <option value={value} key={value}>{value}</option>)}</select></label><button type="submit">Apply</button><Link className="clear-filters" href={filterHref({ view: filters.view }, "source", activeSource)}>Reset</Link></form>

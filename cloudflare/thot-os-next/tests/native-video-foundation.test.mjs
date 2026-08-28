@@ -44,7 +44,7 @@ test("browser hashing is incremental and range parsing stays bounded", () => {
 });
 
 test("native video routes are creator-scoped, resumable, private, and do not provision playback", async () => {
-  const [migration, media, validator, intent, part, finalize, download, uploader, health] = await Promise.all([
+  const [migration, media, validator, intent, part, finalize, download, uploader, lazyUploader, libraryPage, library, health] = await Promise.all([
     source("../thot-os-app/migrations/0054_native_video_intake.sql"),
     source("src/lib/source-media.ts"),
     source("src/lib/iso-bmff-validator.ts"),
@@ -53,6 +53,9 @@ test("native video routes are creator-scoped, resumable, private, and do not pro
     source("src/app/api/source-media/videos/intents/[sessionId]/finalize/route.ts"),
     source("src/app/api/source-media/videos/[assetId]/download/route.ts"),
     source("src/components/native-video-uploader.tsx"),
+    source("src/components/lazy-native-video-uploader.tsx"),
+    source("src/app/library/page.tsx"),
+    source("src/lib/library.ts"),
     source("src/app/health/route.ts"),
   ]);
   for (const table of ["asset_video_ingest_sessions", "asset_video_ingest_parts", "asset_video_playback_states", "asset_video_ingest_events"]) assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
@@ -80,4 +83,10 @@ test("native video routes are creator-scoped, resumable, private, and do not pro
   assert.match(uploader, /\/api\/source-media\/videos\/intents/);
   assert.match(health, /playback_provider_not_configured/);
   assert.doesNotMatch(uploader, /dropbox/i);
+  assert.match(lazyUploader, /ssr:\s*false/);
+  assert.match(libraryPage, /LazyNativeVideoUploader/);
+  assert.match(libraryPage, /creatoros\.library_render/);
+  assert.match(libraryPage, /durationMs/);
+  assert.match(library, /DB\.batch/);
+  assert.match(library, /getLibraryPageData/);
 });
