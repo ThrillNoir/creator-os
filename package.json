@@ -23,6 +23,7 @@
     "source-media:cutover": "node scripts/source-media-cutover.mjs",
     "d1:migrations:plan": "node scripts/bounded-d1-migrations.mjs --plan",
     "d1:migrations:apply": "node scripts/bounded-d1-migrations.mjs --apply",
+    "d1:migrations:backup": "node scripts/bounded-d1-backup.mjs",
     "d1:production-baseline:build": "node scripts/build-d1-production-baseline.mjs",
     "d1:production-baseline:check": "node scripts/build-d1-production-baseline.mjs --check",
     "service-principals:plan": "node scripts/service-principal-plan.mjs",
