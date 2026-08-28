@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-08-26",
+  "observedAt": "2026-08-28",
   "purpose": "Reviewed ordered ledger for staging; filename prefixes are not authoritative ordering.",
   "migrations": [
     {
@@ -295,10 +295,10 @@
       "purpose": "Private R2 source-media multipart sessions and explicit creator cutover state; pending bounded staging review."
     },
     {
-      "remoteId": null,
+      "remoteId": 53,
       "name": "0051_r2_source_media_hardening.sql",
       "sha256": "52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1",
-      "purpose": "Pending bounded staging migration: immutable R2 identity, recoverable multipart finalization, and creator-scoped Vault capability."
+      "purpose": "Applied bounded staging migration: immutable R2 identity, recoverable multipart finalization, and creator-scoped Vault capability."
     }
   ]
 }
