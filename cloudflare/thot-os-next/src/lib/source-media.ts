@@ -1,7 +1,8 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { SOURCE_MEDIA_MAX_IMAGE_BYTES, SOURCE_MEDIA_MAX_IMAGE_DIMENSION, SOURCE_MEDIA_MAX_IMAGE_PIXELS, detectedMime, sourceMediaMimeByExtension } from "./source-media-algorithms";
+import { IsoBmffValidator } from "./iso-bmff-validator";
+import { SOURCE_MEDIA_MAX_IMAGE_BYTES, SOURCE_MEDIA_MAX_IMAGE_DIMENSION, SOURCE_MEDIA_MAX_IMAGE_PIXELS, SOURCE_MEDIA_MAX_VIDEO_BYTES, detectedMime, sourceMediaMimeByExtension } from "./source-media-algorithms";
 export * from "./source-media-algorithms";
 
 export type SourceMediaMime = keyof typeof sourceMediaMimeByExtension;
@@ -33,63 +34,6 @@ export function safeFailureCode(error: unknown, fallback = "source_media_failed"
   return (normalized || fallback).slice(0, 120);
 }
 
-class IsoBmffValidator {
-  constructor(private readonly mime: string) {}
-  private pending = new Uint8Array();
-  private payloadRemaining = 0;
-  private boxCount = 0;
-  private firstBox = true;
-  private sawFtyp = false;
-  private sawMoov = false;
-  private sawMeta = false;
-  private sawMdat = false;
-
-  push(input: Uint8Array) {
-    let offset = 0;
-    while (offset < input.length) {
-      if (this.payloadRemaining > 0) {
-        const skipped = Math.min(this.payloadRemaining, input.length - offset);
-        this.payloadRemaining -= skipped;
-        offset += skipped;
-        continue;
-      }
-      const needed = 16 - this.pending.length;
-      const take = Math.min(needed, input.length - offset);
-      const next = new Uint8Array(this.pending.length + take);
-      next.set(this.pending); next.set(input.subarray(offset, offset + take), this.pending.length);
-      this.pending = next; offset += take;
-      if (this.pending.length < 8) continue;
-      const view = new DataView(this.pending.buffer, this.pending.byteOffset, this.pending.byteLength);
-      const size32 = view.getUint32(0);
-      const headerBytes = size32 === 1 ? 16 : 8;
-      if (this.pending.length < headerBytes) continue;
-      const type = String.fromCharCode(...this.pending.subarray(4, 8));
-      if (!/^[\x20-\x7e]{4}$/.test(type)) throw new Error("source_media_container_invalid");
-      const size = size32 === 1 ? Number(view.getBigUint64(8)) : size32;
-      if (!Number.isSafeInteger(size) || size < headerBytes) throw new Error("source_media_container_invalid");
-      if (this.firstBox && type !== "ftyp") throw new Error("source_media_container_invalid");
-      this.firstBox = false;
-      this.boxCount += 1;
-      if (this.boxCount > 100_000) throw new Error("source_media_container_invalid");
-      if (type === "ftyp") this.sawFtyp = true;
-      if (type === "moov") {
-        if (size > 256 * 1024 * 1024) throw new Error("source_media_metadata_too_large");
-        this.sawMoov = true;
-      }
-      if (type === "meta") { if (size > 256 * 1024 * 1024) throw new Error("source_media_metadata_too_large"); this.sawMeta = true; }
-      if (type === "mdat") this.sawMdat = true;
-      this.payloadRemaining = size - headerBytes;
-      const remainder = this.pending.subarray(headerBytes);
-      this.pending = new Uint8Array();
-      if (remainder.length) this.push(remainder);
-    }
-  }
-
-  finish() {
-    if (this.pending.length || this.payloadRemaining || !this.sawFtyp || !this.sawMdat || (this.mime.startsWith("video/") ? !this.sawMoov : !this.sawMeta)) throw new Error("source_media_container_invalid");
-  }
-}
-
 function assertImageEnvelope(mime: string, first: Uint8Array, last: Uint8Array, total: number) {
   if (mime === "image/jpeg" && !(last.length >= 2 && last.at(-2) === 0xff && last.at(-1) === 0xd9)) throw new Error("source_media_image_invalid");
   if (mime === "image/png") {
@@ -103,7 +47,7 @@ function assertImageEnvelope(mime: string, first: Uint8Array, last: Uint8Array, 
   }
 }
 
-export async function hashAndValidateR2Object(bucket: R2Bucket, objectKey: string, images: ImagesBinding) {
+export async function hashAndValidateR2Object(bucket: R2Bucket, objectKey: string, images?: ImagesBinding, options: { allowVideo?: boolean } = {}) {
   const object = await bucket.get(objectKey);
   if (!object) throw new Error("source_object_missing");
   const hash = createHash("sha256");
@@ -140,20 +84,22 @@ export async function hashAndValidateR2Object(bucket: R2Bucket, objectKey: strin
   }
   const mime = detectedMime(Uint8Array.from(firstBytes));
   if (!mime) throw new Error("source_media_type_unsupported");
-  if (mime.startsWith("video/")) throw new Error("source_media_decoder_required");
-  if (containerValidator) containerValidator.finish();
+  const codec = containerValidator?.finish() ?? null;
+  if (mime.startsWith("video/") && !options.allowVideo) throw new Error("source_media_decoder_required");
   let width: number | null = null;
   let height: number | null = null;
   if (mime.startsWith("image/")) {
     if (byteCount > SOURCE_MEDIA_MAX_IMAGE_BYTES) throw new Error("source_media_image_too_large");
     if (mime !== "image/heic") assertImageEnvelope(mime, Uint8Array.from(firstBytes), lastBytes, byteCount);
+    if (!images) throw new Error("source_media_images_unavailable");
     const imageObject = await bucket.get(objectKey, { onlyIf: { etagMatches: object.etag } });
     if (!imageObject || !("body" in imageObject)) throw new Error("source_object_changed_during_verification");
     const info = await images.info(imageObject.body);
     if (!("width" in info) || !("height" in info) || info.format !== mime || !Number.isInteger(info.width) || !Number.isInteger(info.height) || info.width < 1 || info.height < 1 || info.width > SOURCE_MEDIA_MAX_IMAGE_DIMENSION || info.height > SOURCE_MEDIA_MAX_IMAGE_DIMENSION || info.width * info.height > SOURCE_MEDIA_MAX_IMAGE_PIXELS) throw new Error("source_media_image_invalid");
     width = info.width; height = info.height;
   }
-  return { byteCount, sha256: hash.digest("hex"), detectedMime: mime, width, height, r2Version: object.version, r2Etag: object.etag, object };
+  if (mime.startsWith("video/") && byteCount > SOURCE_MEDIA_MAX_VIDEO_BYTES) throw new Error("source_media_video_too_large");
+  return { byteCount, sha256: hash.digest("hex"), detectedMime: mime, codec, width, height, r2Version: object.version, r2Etag: object.etag, object };
 }
 
 export type CreatorMediaSourceState = {

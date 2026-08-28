@@ -19,6 +19,9 @@ export interface AssetRow {
   destinations: string;
   media_origin: "r2_native" | "dropbox_legacy";
   media_state: string;
+  video_state: string | null;
+  video_codec: "h264" | "h265" | null;
+  playback_provider: "none" | "stream" | null;
 }
 
 export interface LibraryFilters { safety?: string; destination?: string; type?: string; query?: string; source?: string }
@@ -55,7 +58,7 @@ export async function getPreviewProgress(creatorId: string, source?: string): Pr
     FROM assets a LEFT JOIN asset_preview_jobs j ON j.creator_id=a.creator_id AND j.asset_id=a.id
       LEFT JOIN asset_media_authorities ma ON ma.creator_id=a.creator_id AND ma.asset_id=a.id
     WHERE a.creator_id=? AND a.source_available=1
-      AND lower(a.extension) IN ('jpg','jpeg','png','webp','heic','mov','mp4')
+      AND lower(a.extension) IN ('jpg','jpeg','png','webp','heic')
       AND ${sourceCondition(source)}`).bind(creatorId)
     .first<{ total: number; ready: number | null; queued: number | null; processing: number | null; failed: number | null }>();
   return { total: result?.total ?? 0, ready: result?.ready ?? 0, queued: result?.queued ?? 0, processing: result?.processing ?? 0, failed: result?.failed ?? 0 };
@@ -80,9 +83,11 @@ export async function getLibraryAssets(creatorId: string, filters: LibraryFilter
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
       COALESCE(ma.authority_kind,'dropbox_legacy') AS media_origin,
-      COALESCE(ma.state,'legacy') AS media_state
+      COALESCE(vp.state,ma.state,'legacy') AS media_state,
+      vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
       LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
+      LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
     WHERE ${conditions.join(" AND ")}
     ORDER BY (a.preview_r2_key IS NULL) ASC,a.modified_at DESC LIMIT 120
   `).bind(...values).all<AssetRow>();
@@ -97,9 +102,11 @@ export async function getAssetByObjectId(creatorId: string, objectId: string) {
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
       COALESCE(ma.authority_kind,'dropbox_legacy') AS media_origin,
-      COALESCE(ma.state,'legacy') AS media_state
+      COALESCE(vp.state,ma.state,'legacy') AS media_state,
+      vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
       LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
+      LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
     WHERE a.creator_id=? AND (a.preview_r2_key=? OR (substr(a.preview_r2_key,1,?)=? AND substr(a.preview_r2_key,-4)='.jpg')) AND a.source_available=1
   `).bind(creatorId, legacyKey, revisionedPrefix.length, revisionedPrefix).first<AssetRow>();
 }

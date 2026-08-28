@@ -57,6 +57,7 @@
 -- 0050_r2_native_source_media.sql c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801
 -- 0051_r2_source_media_hardening.sql 52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1
 -- 0052_creator_scoped_r2_readiness.sql 18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939
+-- 0053_native_asset_authority.sql 5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7
 
 PRAGMA foreign_keys = ON;
 
@@ -115,6 +116,7 @@ INSERT INTO d1_migrations (id, name) VALUES (51, '0049_creator_onboarding_access
 INSERT INTO d1_migrations (id, name) VALUES (52, '0050_r2_native_source_media.sql');
 INSERT INTO d1_migrations (id, name) VALUES (53, '0051_r2_source_media_hardening.sql');
 INSERT INTO d1_migrations (id, name) VALUES (54, '0052_creator_scoped_r2_readiness.sql');
+INSERT INTO d1_migrations (id, name) VALUES (55, '0053_native_asset_authority.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -188,8 +190,23 @@ CREATE TABLE asset_ingest_sessions (
   failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, object_key TEXT, multipart_upload_id TEXT, chunk_bytes INTEGER, uploaded_bytes INTEGER NOT NULL DEFAULT 0, actor_email TEXT, actor_role TEXT CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')), finalization_state TEXT NOT NULL DEFAULT 'incomplete'
-  CHECK(finalization_state IN ('incomplete','completing','completed_unreconciled','verifying','verified','failed','quarantined','expired','aborted')), completed_r2_version TEXT, completed_r2_etag TEXT, completion_observed_at TEXT, reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts >= 0),
+  CHECK(finalization_state IN ('incomplete','completing','completed_unreconciled','verifying','verified','failed','quarantined','expired','aborted')), completed_r2_version TEXT, completed_r2_etag TEXT, completion_observed_at TEXT, reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts >= 0), ingest_kind TEXT NOT NULL DEFAULT 'legacy_direct'
+  CHECK(ingest_kind IN ('legacy_direct','native_image')), client_upload_id TEXT,
   UNIQUE(creator_id, asset_id, source_revision, expected_sha256)
+);
+
+CREATE TABLE asset_media_authorities (
+  asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  authority_kind TEXT NOT NULL CHECK(authority_kind IN ('r2_native','dropbox_legacy')),
+  ingest_channel TEXT NOT NULL CHECK(ingest_channel IN ('cloudflare_direct','dropbox_catalogue')),
+  canonical_storage_object_id TEXT REFERENCES asset_storage_objects(id) ON DELETE RESTRICT,
+  state TEXT NOT NULL DEFAULT 'ingesting' CHECK(state IN ('ingesting','canonical_verified','preview_ready','preview_failed','archived')),
+  preview_failure_code TEXT CHECK(preview_failure_code IS NULL OR length(preview_failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK((authority_kind='r2_native' AND ingest_channel='cloudflare_direct' AND canonical_storage_object_id IS NOT NULL)
+    OR (authority_kind='dropbox_legacy' AND ingest_channel='dropbox_catalogue'))
 );
 
 CREATE TABLE asset_paid_consent_attestations (
@@ -1724,6 +1741,17 @@ CREATE INDEX asset_ingest_sessions_expiry
 CREATE INDEX asset_ingest_sessions_finalization
   ON asset_ingest_sessions(finalization_state,updated_at);
 
+CREATE UNIQUE INDEX asset_ingest_sessions_native_client_upload
+  ON asset_ingest_sessions(creator_id,client_upload_id)
+  WHERE client_upload_id IS NOT NULL;
+
+CREATE UNIQUE INDEX asset_media_authorities_canonical_object
+  ON asset_media_authorities(canonical_storage_object_id)
+  WHERE canonical_storage_object_id IS NOT NULL;
+
+CREATE INDEX asset_media_authorities_creator_state
+  ON asset_media_authorities(creator_id,authority_kind,state,updated_at DESC);
+
 CREATE INDEX asset_people_creator_asset
   ON asset_people(creator_id, asset_id);
 
@@ -2061,6 +2089,26 @@ BEFORE UPDATE OF creator_id,asset_id,storage_object_id ON asset_ingest_sessions
 WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
   OR (NEW.storage_object_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id))
 BEGIN SELECT RAISE(ABORT,'asset_ingest_session_creator_mismatch'); END;
+
+CREATE TRIGGER asset_media_authority_creator_scope_insert
+BEFORE INSERT ON asset_media_authorities
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.canonical_storage_object_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM asset_storage_objects o
+    WHERE o.id=NEW.canonical_storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id
+      AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
+  ))
+BEGIN SELECT RAISE(ABORT,'asset_media_authority_creator_mismatch'); END;
+
+CREATE TRIGGER asset_media_authority_creator_scope_update
+BEFORE UPDATE OF asset_id,creator_id,canonical_storage_object_id ON asset_media_authorities
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.canonical_storage_object_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM asset_storage_objects o
+    WHERE o.id=NEW.canonical_storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id
+      AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
+  ))
+BEGIN SELECT RAISE(ABORT,'asset_media_authority_creator_mismatch'); END;
 
 CREATE TRIGGER asset_paid_consent_creator_insert
 BEFORE INSERT ON asset_paid_consent_attestations

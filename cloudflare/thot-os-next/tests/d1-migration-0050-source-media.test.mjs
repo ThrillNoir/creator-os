@@ -19,7 +19,7 @@ async function findDatabase(directory) {
   return null;
 }
 
-test("0050 through 0053 keep source ingestion, native authority, and cutover readiness creator-scoped", async () => {
+test("0050 through 0054 keep source ingestion, native authority, video intake, and cutover readiness creator-scoped", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "thot-os-source-media-"));
   let db;
   try {
@@ -42,12 +42,20 @@ test("0050 through 0053 keep source ingestion, native authority, and cutover rea
     assert.deepEqual(db.prepare("SELECT active_backend,migration_state,dropbox_fallback_enabled FROM creator_media_source_states WHERE creator_id='second'").get(), { active_backend: "dropbox", migration_state: "dropbox", dropbox_fallback_enabled: 1 });
     db.prepare("INSERT INTO assets (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,indexed_at) VALUES ('source-a','adelaide','source-a.jpg','source-a.jpg','jpg',10,CURRENT_TIMESTAMP,'other',CURRENT_TIMESTAMP)").run();
     db.prepare("INSERT INTO assets (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,indexed_at) VALUES ('source-b','second','source-b.jpg','source-b.jpg','jpg',10,CURRENT_TIMESTAMP,'other',CURRENT_TIMESTAMP)").run();
+    db.prepare("INSERT INTO assets (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,indexed_at) VALUES ('source-video','adelaide','native/source-video','source-video.mov','mov',10,CURRENT_TIMESTAMP,'native_direct',CURRENT_TIMESTAMP)").run();
     const checksum = "a".repeat(64);
     db.prepare("INSERT INTO asset_storage_objects (id,creator_id,asset_id,provider,storage_role,bucket_role,object_key,original_filename,byte_count,verified_mime_type,sha256,source_provider,ingest_status) VALUES ('object-a','adelaide','source-a','r2','canonical_original','library_media','originals/v1/a','source-a.jpg',10,'image/jpeg',?,'m1_direct','pending')").run(checksum);
+    db.prepare("INSERT INTO asset_storage_objects (id,creator_id,asset_id,provider,storage_role,bucket_role,object_key,original_filename,byte_count,verified_mime_type,sha256,source_provider,ingest_status) VALUES ('object-video','adelaide','source-video','r2','canonical_original','library_media','originals/v1/video','source-video.mov',10,'application/octet-stream',?,'m1_direct','pending')").run(checksum);
     db.prepare("INSERT INTO asset_ingest_sessions (id,creator_id,asset_id,storage_object_id,expected_sha256,expected_bytes,expected_mime_type,status,expires_at,object_key,multipart_upload_id,chunk_bytes,actor_email,actor_role) VALUES ('session-a','adelaide','source-a','object-a',?,10,'image/jpeg','created',datetime('now','+30 minutes'),'originals/v1/a','temporary-id',8388608,'admin@example.test','agency_admin')").run(checksum);
     db.prepare("INSERT INTO asset_ingest_parts (session_id,creator_id,part_number,byte_count,status) VALUES ('session-a','adelaide',1,10,'uploaded')").run();
     assert.deepEqual(db.prepare("SELECT finalization_state,reconcile_attempts FROM asset_ingest_sessions WHERE id='session-a'").get(), { finalization_state: "incomplete", reconcile_attempts: 0 });
     assert.throws(() => db.prepare("INSERT INTO asset_ingest_parts (session_id,creator_id,part_number,byte_count,status) VALUES ('session-a','second',2,10,'uploaded')").run(), /asset_ingest_part_creator_mismatch/);
+    db.prepare("INSERT INTO asset_video_ingest_sessions (id,creator_id,asset_id,storage_object_id,source_revision,expected_sha256,expected_bytes,expected_mime_type,status,expires_at,object_key,multipart_upload_id,chunk_bytes,actor_email,actor_role,client_upload_id) VALUES ('video-session','adelaide','source-video','object-video','native_video:upload-a',?,10,'video/quicktime','created',datetime('now','+8 hours'),'originals/v1/video','temporary-video-id',8388608,'admin@example.test','agency_admin','00000000-0000-4000-8000-000000000001')").run(checksum);
+    db.prepare("INSERT INTO asset_video_ingest_parts (session_id,creator_id,part_number,byte_count,status) VALUES ('video-session','adelaide',1,10,'uploaded')").run();
+    db.prepare("INSERT INTO asset_video_playback_states (asset_id,creator_id,canonical_storage_object_id,state) VALUES ('source-video','adelaide','object-video','uploading')").run();
+    assert.deepEqual(db.prepare("SELECT status,finalization_state,playback_provider FROM asset_video_ingest_sessions s JOIN asset_video_playback_states p ON p.asset_id=s.asset_id WHERE s.id='video-session'").get(), { status: "created", finalization_state: "incomplete", playback_provider: "none" });
+    assert.throws(() => db.prepare("INSERT INTO asset_video_ingest_parts (session_id,creator_id,part_number,byte_count,status) VALUES ('video-session','second',2,10,'uploaded')").run(), /asset_video_ingest_part_creator_mismatch/);
+    assert.throws(() => db.prepare("INSERT INTO asset_video_playback_states (asset_id,creator_id,canonical_storage_object_id,state) VALUES ('source-b','adelaide','object-video','uploading')").run(), /asset_video_playback_creator_mismatch/);
     assert.throws(() => db.prepare("INSERT INTO creator_media_source_events (id,creator_id,asset_id,actor_email,actor_role,event_type) VALUES ('cross','second','source-a','admin@example.test','agency_admin','intent_created')").run(), /creator_media_source_event_creator_mismatch/);
     assert.throws(() => db.prepare("UPDATE asset_storage_objects SET ingest_status='verified' WHERE id='object-a'").run(), /verified_r2_identity_required/);
     db.prepare("UPDATE asset_storage_objects SET ingest_status='verified',r2_version='version-a',r2_etag='etag-a' WHERE id='object-a'").run();

@@ -4,16 +4,17 @@ import { objectIdFor, type AssetRow } from "@/lib/library";
 export function AssetCard({ asset, selectable = false, templateHref }: { asset: AssetRow; selectable?: boolean; templateHref?: string }) {
   const objectId = objectIdFor(asset);
   const native = asset.media_origin === "r2_native";
+  const video = asset.video_state !== null;
   const unavailablePreview = native
     ? asset.media_state === "preview_failed" ? "Private preview needs a retry" : asset.media_state === "ingesting" ? "Private original is uploading" : "Creating private preview"
     : "Waiting for Dropbox download";
-  const tags = [native ? "native" : "legacy", asset.safety ?? "needs review", asset.is_teaser ? "tease" : "", asset.is_multi ? "multi" : "", ...asset.destinations.split("|")].filter(Boolean);
+  const videoStatus = asset.video_state === "playback_ready" ? "Browser playback ready" : asset.video_state === "processing" || asset.video_state === "processing_queued" ? "Preparing browser playback" : asset.video_state === "processing_failed" ? "Playback preparation needs attention" : asset.video_state === "uploading" ? "Private video is uploading" : "Private original verified · playback provider pending";
+  const tags = [native ? "native" : "legacy", video ? "video" : "", asset.video_codec ?? "", asset.safety ?? "needs review", asset.is_teaser ? "tease" : "", asset.is_multi ? "multi" : "", ...asset.destinations.split("|")].filter(Boolean);
+  const card = <><div className="asset-preview">{video ? <span>{videoStatus}</span> : objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
+    <div className="asset-info"><strong title={asset.basename}>{asset.basename}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div></>;
   return <article className="asset-card">
     {selectable && <label className="asset-select"><input type="checkbox" name="assetId" value={asset.id} /><span>Select</span></label>}
-    <Link href={objectId ? `/library/${objectId}` : "/library"}>
-      <div className="asset-preview">{objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
-      <div className="asset-info"><strong title={asset.basename}>{asset.basename}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div>
-    </Link>
+    {video ? <>{card}{native && <a className="copy-attributes" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a>}</> : <Link href={objectId ? `/library/${objectId}` : "/library"}>{card}</Link>}
     {selectable && templateHref && objectId && <Link className="copy-attributes" href={`${templateHref}${templateHref.includes("?") ? "&" : "?"}template=${objectId}`}>Copy attributes for batch edit</Link>}
   </article>;
 }

@@ -4,9 +4,12 @@ export const R2_MAX_MULTIPART_PARTS = 10_000;
 export const SOURCE_MEDIA_DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024;
 export const SOURCE_MEDIA_MAX_BYTES = 10 * 1024 * 1024 * 1024;
 export const SOURCE_MEDIA_MAX_IMAGE_BYTES = 64 * 1024 * 1024;
+export const SOURCE_MEDIA_MAX_VIDEO_BYTES = 5 * 1024 * 1024 * 1024;
 export const SOURCE_MEDIA_MAX_IMAGE_PIXELS = 100_000_000;
 export const SOURCE_MEDIA_MAX_IMAGE_DIMENSION = 12_000;
 export const SOURCE_MEDIA_SESSION_MINUTES = 30;
+export const SOURCE_MEDIA_VIDEO_SESSION_MINUTES = 8 * 60;
+export const SOURCE_MEDIA_MAX_ACTIVE_VIDEO_UPLOADS = 2;
 
 export const sourceMediaMimeByExtension: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", mp4: "video/mp4", mov: "video/quicktime",
@@ -21,9 +24,9 @@ export function detectedMime(bytes: Uint8Array): string {
   if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(4, 8)) === "ftyp") {
     const brands = [];
     for (let index = 8; index + 4 <= Math.min(bytes.length, 96); index += 4) brands.push(String.fromCharCode(...bytes.slice(index, index + 4)).toLowerCase());
-    if (brands.some((brand) => ["heic", "heix", "hevc", "hevx", "mif1", "msf1"].includes(brand))) return "image/heic";
-    if (brands.some((brand) => ["isom", "iso2", "avc1", "mp41", "mp42", "mp4v"].includes(brand))) return "video/mp4";
+    if (brands.some((brand) => ["heic", "heix", "mif1", "msf1"].includes(brand))) return "image/heic";
     if (brands.includes("qt  ")) return "video/quicktime";
+    if (brands.some((brand) => ["isom", "iso2", "avc1", "hvc1", "hev1", "mp41", "mp42", "mp4v"].includes(brand))) return "video/mp4";
   }
   return "";
 }
@@ -40,6 +43,25 @@ export function multipartPartSize(expectedBytes: number) {
   const selected = Math.max(SOURCE_MEDIA_DEFAULT_CHUNK_BYTES, R2_MIN_MULTIPART_PART_BYTES, Math.ceil(required / mib) * mib);
   if (selected > R2_MAX_MULTIPART_PART_BYTES || Math.ceil(expectedBytes / selected) > R2_MAX_MULTIPART_PARTS) return 0;
   return selected;
+}
+
+/** Parse one bounded HTTP byte-range; multiple ranges are deliberately unsupported. */
+export function parseSingleRange(value: string | null, size: number) {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || !Number.isSafeInteger(size) || size < 1) return "invalid" as const;
+  const startText = match[1]; const endText = match[2];
+  if (!startText && !endText) return "invalid" as const;
+  if (!startText) {
+    const suffix = Number(endText);
+    if (!Number.isSafeInteger(suffix) || suffix < 1) return "invalid" as const;
+    const length = Math.min(suffix, size);
+    return { offset: size - length, length };
+  }
+  const start = Number(startText);
+  const end = endText ? Number(endText) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) return "invalid" as const;
+  return { offset: start, length: Math.min(end, size - 1) - start + 1 };
 }
 
 export function immutableR2IdentityMatches(record: { byte_count: number; r2_version: string | null; r2_etag: string | null }, object: { size: number; version: string; etag: string } | null | undefined) {
