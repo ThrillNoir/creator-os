@@ -125,9 +125,13 @@ test("Dropbox previews are queued, idempotent, private, and report live progress
   assert.match(bridge, /UPDATE assets SET source_available=0/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS asset_preview_jobs/);
   assert.match(migration, /UNIQUE\(creator_id, asset_id\)/);
-  assert.match(progress, /setInterval\(poll, 3000\)/);
+  assert.match(progress, /AbortController/);
+  assert.match(progress, /previewPollDelayMs/);
+  assert.doesNotMatch(progress, /setInterval/);
   assert.match(progress, /you can leave this page/);
   assert.match(statusRoute, /requireCreatorContext/);
+  assert.match(statusRoute, /cache-control.*private, no-store/);
+  assert.match(statusRoute, /retry-after/);
   assert.match(library, /a\.creator_id=\?/);
 });
 
