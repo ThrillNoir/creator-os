@@ -35,6 +35,7 @@ test("direct-to-R2 configuration remains narrow and lifecycle code never proxies
   assert.match(recovery, /await abortMultipart\(session\);[\s\S]*cleanupSql/);
   assert.match(recovery, /staging_r2_cleanup_credentials_unavailable_from_keychain/);
   assert.match(recovery, /response\.status !== 404/);
+  assert.doesNotMatch(recovery, /BEGIN IMMEDIATE|\\nCOMMIT;/);
   assert.match(lifecycle, /expiry_abort_uncertain/);
   assert.match(lifecycle, /asset_video_playback_states SET state='archived'/);
   assert.match(confirm, /creator_id=\?/);
