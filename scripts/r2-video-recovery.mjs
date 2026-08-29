@@ -65,7 +65,10 @@ async function abortMultipart(session) {
   const client = new AwsClient({ accessKeyId: readKeychain("access-key-id"), secretAccessKey: readKeychain("secret-access-key"), service: "s3", region: "auto" });
   const url = new URL(`https://${accountId}.r2.cloudflarestorage.com/${bucket}/${session.object_key.split("/").map(encodeURIComponent).join("/")}`); url.searchParams.set("uploadId", session.multipart_upload_id);
   const response = await client.fetch(url, { method: "DELETE" });
-  if (!response.ok) throw new Error("r2_multipart_abort_not_confirmed");
+  // A prior interrupted attempt can have completed R2's abort before its D1
+  // terminalization step. Treat R2's explicit absent response as confirmation,
+  // so a retry remains bounded and cannot strand the corresponding record.
+  if (!response.ok && response.status !== 404) throw new Error("r2_multipart_abort_not_confirmed");
 }
 async function apply(plan, current, options) {
   assertApprovedVideoCleanupPlan(plan, options.confirmation, current);
