@@ -8,7 +8,7 @@ const maxFiles = 4;
 const maxBytes = 5 * 1024 * 1024 * 1024;
 const mimeByExtension: Record<string, string> = { mp4: "video/mp4", mov: "video/quicktime" };
 type UploadItem = { id: string; file: File; status: "queued" | "hashing" | "uploading" | "finalizing" | "complete" | "failed"; detail: string; progress: number; sourceHash?: string };
-type IntentResponse = { ok?: boolean; error?: string; sessionId?: string; partBytes?: number; replay?: boolean; status?: string; playback?: string; sourceCodec?: string };
+type IntentResponse = { ok?: boolean; error?: string; sessionId?: string; partBytes?: number; replay?: boolean; status?: string; playback?: string; sourceCodec?: string; uploadUrl?: string; expiresAt?: string; partNumber?: number };
 
 function mimeFor(file: File) { const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase() : ""; return mimeByExtension[extension] ?? ""; }
 async function payload<T>(response: Response): Promise<T> { return response.json().catch(() => ({})) as Promise<T>; }
@@ -17,9 +17,11 @@ function messageFor(error: string) {
     invalid_intent: "Use an MP4 or MOV video within the private upload limit.",
     active_video_upload_limit: "Finish or let an existing video upload expire before starting another.",
     idempotency_conflict: "This saved upload ID belongs to a different file. Choose the file again.",
-    session_expired: "The upload session expired. Start this video again.",
+    session_expired: "Upload expired—try again.",
     session_aborted: "This upload was cancelled. Start this video again.",
     session_failed: "That upload could not be resumed. Start this video again.",
+    direct_video_upload_unavailable: "Direct private video uploads are not configured yet. Try again after staging setup is complete.",
+    direct_part_upload_failed: "That video part did not reach private storage. You can retry this file.",
     source_media_video_codec_unsupported: "This video container is valid, but its H.264 or H.265 codec could not be verified.",
     source_media_verification_failed: "The bytes received did not match the selected video.",
   } as Record<string, string>)[error] ?? "Video upload failed. You can retry this file without changing its source.";
@@ -30,6 +32,24 @@ export function NativeVideoUploader() {
   const running = useRef(false); const input = useRef<HTMLInputElement>(null); const router = useRouter();
   const update = (id: string, patch: Partial<UploadItem>) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
   const storageKey = (hash: string) => `creator-os:native-video:${hash}`;
+
+  const releasePart = async (sessionId: string, partNumber: number) => {
+    await fetch(`/api/source-media/videos/intents/${sessionId}/parts/${partNumber}/failure`, { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+  };
+
+  const uploadPartDirectly = async (sessionId: string, partNumber: number, part: Blob) => {
+    const authorization = await fetch(`/api/source-media/videos/intents/${sessionId}/parts/${partNumber}/authorize`, { method: "POST", credentials: "same-origin" });
+    const authorized = await payload<IntentResponse>(authorization);
+    if (!authorization.ok || !authorized.ok) throw new Error(authorized.error ?? "direct_part_upload_failed");
+    if (authorized.replay) return;
+    if (!authorized.uploadUrl) throw new Error("direct_part_upload_failed");
+    const put = await fetch(authorized.uploadUrl, { method: "PUT", credentials: "omit", headers: { "content-type": part.type }, body: part });
+    const etag = put.headers.get("etag");
+    if (!put.ok || !etag) { await releasePart(sessionId, partNumber); throw new Error("direct_part_upload_failed"); }
+    const confirmation = await fetch(`/api/source-media/videos/intents/${sessionId}/parts/${partNumber}/confirm`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ etag }) });
+    const confirmed = await payload<IntentResponse>(confirmation);
+    if (!confirmation.ok || !confirmed.ok) throw new Error(confirmed.error ?? "direct_part_upload_failed");
+  };
 
   const upload = async (item: UploadItem) => {
     const mimeType = mimeFor(item.file);
@@ -49,9 +69,7 @@ export function NativeVideoUploader() {
         for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
           const start = (partNumber - 1) * intent.partBytes;
           const part = item.file.slice(start, Math.min(start + intent.partBytes, item.file.size), mimeType);
-          const response = await fetch(`/api/source-media/videos/intents/${intent.sessionId}/parts/${partNumber}`, { method: "PUT", credentials: "same-origin", headers: { "content-type": mimeType }, body: part });
-          const result = await payload<IntentResponse>(response);
-          if (!response.ok || !result.ok) throw new Error(result.error ?? "part_upload_failed");
+          await uploadPartDirectly(intent.sessionId, partNumber, part);
           update(item.id, { progress: 18 + Math.round((partNumber / partCount) * 74), detail: `Uploading private canonical original · ${partNumber} of ${partCount}` });
         }
       }
@@ -78,6 +96,6 @@ export function NativeVideoUploader() {
     <input ref={input} className="sr-only" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" multiple onChange={(event) => { addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
     <button className="native-drop-zone" type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} disabled={running.current}><b>Drop up to {maxFiles} videos here</b><span>or choose MP4 or MOV files · 5 GB each</span></button>
     {items.length > 0 && <div className="native-upload-list">{items.map((item) => <article key={item.id} className={`native-upload-item ${item.status}`}><div><strong>{item.file.name}</strong><small>{Math.round(item.file.size / (1024 * 1024))} MB · {item.detail}</small></div><progress max="100" value={item.progress}>{item.progress}%</progress></article>)}</div>}
-    <div className="native-upload-actions"><small>Video checksums are calculated incrementally in this browser; original keys and multipart IDs never reach it.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected videos</button></div>
+    <div className="native-upload-actions"><small>Video checksums are calculated incrementally in this browser. Each part receives a short-lived private upload authorization; canonical keys and multipart identities are never displayed or logged.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected videos</button></div>
   </section>;
 }

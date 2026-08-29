@@ -43,13 +43,18 @@ test("browser hashing is incremental and range parsing stays bounded", () => {
   assert.equal(parseSingleRange("bytes=10-11", 10), "invalid");
 });
 
-test("native video routes are creator-scoped, resumable, private, and do not provision playback", async () => {
-  const [migration, media, validator, intent, part, finalize, download, uploader, lazyUploader, libraryPage, library, health] = await Promise.all([
+test("native video routes are creator-scoped, direct-to-R2, private, and do not provision playback", async () => {
+  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, lazyUploader, libraryPage, library, health] = await Promise.all([
     source("../thot-os-app/migrations/0054_native_video_intake.sql"),
     source("src/lib/source-media.ts"),
     source("src/lib/iso-bmff-validator.ts"),
     source("src/app/api/source-media/videos/intents/route.ts"),
     source("src/app/api/source-media/videos/intents/[sessionId]/parts/[partNumber]/route.ts"),
+    source("src/app/api/source-media/videos/intents/[sessionId]/parts/[partNumber]/authorize/route.ts"),
+    source("src/app/api/source-media/videos/intents/[sessionId]/parts/[partNumber]/confirm/route.ts"),
+    source("src/app/api/source-media/videos/intents/[sessionId]/parts/[partNumber]/failure/route.ts"),
+    source("src/lib/native-video-lifecycle.ts"),
+    source("src/lib/r2-direct-video-upload.ts"),
     source("src/app/api/source-media/videos/intents/[sessionId]/finalize/route.ts"),
     source("src/app/api/source-media/videos/[assetId]/download/route.ts"),
     source("src/components/native-video-uploader.tsx"),
@@ -65,9 +70,20 @@ test("native video routes are creator-scoped, resumable, private, and do not pro
   assert.match(intent, /SOURCE_MEDIA_MAX_ACTIVE_VIDEO_UPLOADS/);
   assert.match(intent, /expireAbandonedSessions/);
   assert.match(intent, /createMultipartUpload/);
-  assert.doesNotMatch(intent, /STREAM_API|presign|signedUrl|objectKey:\s*objectKey/i);
-  assert.match(part, /expectedPartBytes/);
-  assert.match(part, /part_replayed/);
+  assert.doesNotMatch(intent, /STREAM_API|objectKey:\s*objectKey/i);
+  assert.match(intent, /directVideoUploadsAvailable/);
+  assert.match(part, /status: 405/);
+  assert.doesNotMatch(part, /arrayBuffer|uploadPart/);
+  assert.match(authorize, /expectedPartBytes/);
+  assert.match(authorize, /presignVideoPartUpload/);
+  assert.match(authorize, /part_in_progress/);
+  assert.match(confirm, /validEtag/);
+  assert.match(failure, /direct_part_upload_failed/);
+  assert.match(signer, /AwsClient/);
+  assert.match(signer, /signQuery/);
+  assert.match(signer, /R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY/);
+  assert.match(lifecycle, /r2AbortBeforeD1|multipart identity/);
+  assert.match(lifecycle, /source_available=0/);
   assert.match(media, /IsoBmffValidator/);
   assert.match(validator, /source_media_video_codec_unsupported/);
   assert.match(validator, /hvc1.*hev1/);
@@ -81,6 +97,10 @@ test("native video routes are creator-scoped, resumable, private, and do not pro
   assert.match(uploader, /sha256File/);
   assert.match(uploader, /sessionStorage/);
   assert.match(uploader, /\/api\/source-media\/videos\/intents/);
+  assert.match(uploader, /credentials: "omit"/);
+  assert.match(uploader, /\/authorize/);
+  assert.match(uploader, /\/confirm/);
+  assert.doesNotMatch(uploader, /\/parts\/\$\{partNumber\}\`, \{ method: "PUT", credentials: "same-origin"/);
   assert.match(health, /playback_provider_not_configured/);
   assert.doesNotMatch(uploader, /dropbox/i);
   assert.match(lazyUploader, /ssr:\s*false/);

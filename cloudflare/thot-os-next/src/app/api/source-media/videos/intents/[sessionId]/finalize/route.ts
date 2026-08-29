@@ -1,6 +1,7 @@
 import { humanAuditActor, identityAuditStatement, isSameOriginRequest } from "@/lib/audit-identity";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
+import { archiveTerminalVideoIngest, expireVideoIngest, failVideoIngestAfterAbort } from "@/lib/native-video-lifecycle";
 import { expectedPartBytes, hashAndValidateR2Object, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
 type Context = Awaited<ReturnType<typeof requireCreatorContext>>;
@@ -8,19 +9,15 @@ type Session = { id: string; asset_id: string; storage_object_id: string; object
 type Part = { part_number: number; etag: string | null; byte_count: number; status: string };
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
-async function quarantine(DB: D1Database, session: Session, creatorId: string, failure: string) {
-  await DB.batch([
-    DB.prepare("UPDATE asset_video_ingest_sessions SET status='failed',finalization_state='quarantined',failure_code=?,multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(failure, session.id, creatorId),
-    DB.prepare("UPDATE asset_storage_objects SET ingest_status='failed',failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND ingest_status<>'verified'").bind(failure, session.storage_object_id, creatorId),
-    DB.prepare("UPDATE asset_video_playback_states SET state='processing_failed',failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND state<>'playback_ready'").bind(failure, session.asset_id, creatorId),
-  ]);
+async function quarantine(DB: D1Database, session: Session, creatorId: string, failure: string, context: Context) {
+  await archiveTerminalVideoIngest(DB, session, creatorId, "failed", failure, { audit: humanAuditActor(context), email: context.email, role: context.creator.role });
 }
 
 async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, session: Session, creatorId: string, context: Context) {
   await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='verifying',reconcile_attempts=reconcile_attempts+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(session.id, creatorId).run();
   const verified = await hashAndValidateR2Object(bucket, session.object_key, undefined, { allowVideo: true });
   if (!verified.codec || !["h264", "h265"].includes(verified.codec) || verified.byteCount !== session.expected_bytes || verified.sha256 !== session.expected_sha256 || verified.detectedMime !== session.expected_mime_type) {
-    await quarantine(DB, session, creatorId, "source_media_verification_failed");
+    await quarantine(DB, session, creatorId, "source_media_verification_failed", context);
     throw new Error("source_media_verification_failed");
   }
   await DB.batch([
@@ -32,18 +29,6 @@ async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, session: Sessi
     identityAuditStatement(DB, humanAuditActor(context), "native_video_ingest_verified", session.asset_id, { byteCount: verified.byteCount, mimeType: verified.detectedMime, codec: verified.codec, playback: "provider_not_configured" }),
   ]);
   return verified.codec;
-}
-
-async function expireSession(DB: D1Database, bucket: R2Bucket, session: Session, creatorId: string) {
-  if (!session.multipart_upload_id) return false;
-  try {
-    await bucket.resumeMultipartUpload(session.object_key, session.multipart_upload_id).abort();
-    await DB.prepare("UPDATE asset_video_ingest_sessions SET status='expired',finalization_state='expired',failure_code='session_expired',multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, creatorId).run();
-    return true;
-  } catch {
-    await DB.prepare("UPDATE asset_video_ingest_sessions SET failure_code='expiry_abort_uncertain',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, creatorId).run().catch(() => undefined);
-    return false;
-  }
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ sessionId: string }> }) {
@@ -63,15 +48,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ ses
   if (["completing", "completed_unreconciled", "verifying"].includes(session.finalization_state)) {
     try {
       const head = await LIBRARY_MEDIA.head(session.object_key);
-      if (!head) return noStoreJson({ ok: false, error: "finalization_in_progress" }, 409);
+      if (!head) {
+        const result = await failVideoIngestAfterAbort(DB, LIBRARY_MEDIA, session, context.creator.creator_id, "multipart_completion_failed", { audit: humanAuditActor(context), email: context.email, role: context.creator.role });
+        return noStoreJson({ ok: false, error: result.failed ? "session_failed" : "completion_abort_uncertain" }, result.failed ? 422 : 503);
+      }
       await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='completed_unreconciled',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=COALESCE(completion_observed_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(head.version, head.etag, session.id, context.creator.creator_id).run();
       const sourceCodec = await verifyAndPersist(DB, LIBRARY_MEDIA, session, context.creator.creator_id, context);
       return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", reconciled: true, playback: "provider_not_configured", sourceCodec });
     } catch (error) { return noStoreJson({ ok: false, error: safeFailureCode(error, "reconciliation_required") }, 409); }
   }
   if (!session.multipart_upload_id || Date.parse(session.expires_at) <= Date.now()) {
-    const aborted = await expireSession(DB, LIBRARY_MEDIA, session, context.creator.creator_id);
-    return noStoreJson({ ok: false, error: aborted ? "session_expired" : "expiry_abort_uncertain" }, aborted ? 410 : 503);
+    const result = await expireVideoIngest(DB, LIBRARY_MEDIA, session, context.creator.creator_id, { audit: humanAuditActor(context), email: context.email, role: context.creator.role });
+    return noStoreJson({ ok: false, error: result.expired ? "session_expired" : "expiry_abort_uncertain" }, result.expired ? 410 : 503);
   }
   const parts = (await DB.prepare("SELECT part_number,etag,byte_count,status FROM asset_video_ingest_parts WHERE session_id=? ORDER BY part_number").bind(session.id).all<Part>()).results;
   const partCount = Math.ceil(session.expected_bytes / session.chunk_bytes);

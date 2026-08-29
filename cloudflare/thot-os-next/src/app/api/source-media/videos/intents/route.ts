@@ -1,7 +1,9 @@
 import { humanAuditActor, identityAuditStatement, isSameOriginRequest, rejectClientActorRole } from "@/lib/audit-identity";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
+import { expireVideoIngest, type VideoIngestSession } from "@/lib/native-video-lifecycle";
 import { nativeVideoDetails, validClientUploadId, validNativeVideoBytes } from "@/lib/native-video";
+import { directVideoUploadsAvailable } from "@/lib/r2-direct-video-upload";
 import { SOURCE_MEDIA_MAX_ACTIVE_VIDEO_UPLOADS, SOURCE_MEDIA_VIDEO_SESSION_MINUTES, multipartPartSize, noStoreJson, privateOriginalKey } from "@/lib/source-media";
 
 type IntentInput = { filename?: unknown; bytes?: unknown; sha256?: unknown; mimeType?: unknown; clientUploadId?: unknown; actorRole?: unknown; actor_role?: unknown; effectiveRole?: unknown };
@@ -13,26 +15,18 @@ async function pendingHash(value: string) {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-type ExpiredSession = { id: string; object_key: string; multipart_upload_id: string | null };
-
 /**
  * R2 also expires incomplete multipart uploads under its bucket lifecycle,
  * but we clear abandoned sessions at the next creator mutation so D1 stops
  * advertising a resumable upload after its shorter application lifetime.
  */
-async function expireAbandonedSessions(DB: D1Database, bucket: R2Bucket, creatorId: string) {
-  const expired = (await DB.prepare(`SELECT id,object_key,multipart_upload_id
+async function expireAbandonedSessions(DB: D1Database, bucket: R2Bucket, creatorId: string, actor: ReturnType<typeof humanAuditActor>, email: string, role: string) {
+  const expired = (await DB.prepare(`SELECT id,asset_id,storage_object_id,object_key,multipart_upload_id,finalization_state
     FROM asset_video_ingest_sessions
     WHERE creator_id=? AND finalization_state='incomplete' AND expires_at<=CURRENT_TIMESTAMP
-    ORDER BY expires_at ASC LIMIT 10`).bind(creatorId).all<ExpiredSession>()).results;
+    ORDER BY expires_at ASC LIMIT 10`).bind(creatorId).all<VideoIngestSession>()).results;
   for (const session of expired) {
-    if (!session.multipart_upload_id) continue;
-    try {
-      await bucket.resumeMultipartUpload(session.object_key, session.multipart_upload_id).abort();
-      await DB.prepare("UPDATE asset_video_ingest_sessions SET status='expired',finalization_state='expired',failure_code='session_expired',multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, creatorId).run();
-    } catch {
-      await DB.prepare("UPDATE asset_video_ingest_sessions SET failure_code='expiry_abort_uncertain',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, creatorId).run().catch(() => undefined);
-    }
+    await expireVideoIngest(DB, bucket, session, creatorId, { audit: actor, email, role });
   }
 }
 
@@ -49,7 +43,8 @@ export async function POST(request: Request) {
   const context = await requireCreatorContext("mutate");
   const { DB, LIBRARY_MEDIA } = cloudflareEnv() as CloudflareEnv & { LIBRARY_MEDIA?: R2Bucket };
   if (!LIBRARY_MEDIA) return noStoreJson({ ok: false, error: "source_media_unavailable" }, 503);
-  await expireAbandonedSessions(DB, LIBRARY_MEDIA, context.creator.creator_id);
+  await expireAbandonedSessions(DB, LIBRARY_MEDIA, context.creator.creator_id, humanAuditActor(context), context.email, context.creator.role);
+  if (!directVideoUploadsAvailable(cloudflareEnv())) return noStoreJson({ ok: false, error: "direct_video_upload_unavailable" }, 503);
   const existing = await DB.prepare(`SELECT id,asset_id,status,expected_bytes,expected_mime_type,expected_sha256,chunk_bytes
     FROM asset_video_ingest_sessions WHERE creator_id=? AND client_upload_id=?`).bind(context.creator.creator_id, input.clientUploadId)
     .first<{ id: string; asset_id: string; status: string; expected_bytes: number; expected_mime_type: string; expected_sha256: string; chunk_bytes: number }>();
@@ -90,5 +85,5 @@ export async function POST(request: Request) {
     await multipart.abort().catch(() => undefined);
     return noStoreJson({ ok: false, error: "intent_persistence_failed" }, 503);
   }
-  return noStoreJson({ ok: true, sessionId, assetId, status: "created", partBytes: chunkBytes, expiresAt, uploadPath: `/api/source-media/videos/intents/${sessionId}/parts/{partNumber}`, finalizePath: `/api/source-media/videos/intents/${sessionId}/finalize` }, 201);
+  return noStoreJson({ ok: true, sessionId, assetId, status: "created", partBytes: chunkBytes, expiresAt, partAuthorizePath: `/api/source-media/videos/intents/${sessionId}/parts/{partNumber}/authorize`, partConfirmPath: `/api/source-media/videos/intents/${sessionId}/parts/{partNumber}/confirm`, finalizePath: `/api/source-media/videos/intents/${sessionId}/finalize` }, 201);
 }
