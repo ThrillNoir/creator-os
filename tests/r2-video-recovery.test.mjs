@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { assertApprovedVideoCleanupPlan, assertApprovedVideoR2ConfigurationPlan, createVideoCleanupPlan, createVideoR2ConfigurationPlan, parseR2CorsListOutput, stagingVideoUploadCorsRules } from "../scripts/r2-video-recovery-lib.mjs";
+import { assertApprovedVideoCleanupPlan, assertApprovedVideoCompletionFailureCleanupPlan, assertApprovedVideoR2ConfigurationPlan, createVideoCleanupPlan, createVideoCompletionFailureCleanupPlan, createVideoR2ConfigurationPlan, parseR2CorsListOutput, stagingVideoUploadCorsRules } from "../scripts/r2-video-recovery-lib.mjs";
 
 const authority = { accountId: "account", databaseId: "database", databaseName: "staging", bucket: "bucket", remoteMigrationSha256: "migration" };
 const git = { sha: "a".repeat(40), branch: "codex/r2-direct-video-upload", clean: true };
 const worker = { latestVersionId: "version", deployment: { versions: [{ versionId: "version", percentage: 100 }] }, secretNames: ["EXISTING"] };
 const session = (id, upload, actorEmail = "admin@example.test") => ({ id, creator_id: "creator", asset_id: `asset-${id}`, storage_object_id: `object-${id}`, object_key: `originals/v1/${id}`, multipart_upload_id: upload, expected_bytes: 8_388_608, uploaded_bytes: 0, expires_at: "2026-08-28T00:00:00.000Z", status: "uploading", finalization_state: "incomplete", actor_email: actorEmail, actor_role: "agency_admin" });
+const completionFailureSession = (id, upload) => ({ ...session(id, upload), status: "uploading", finalization_state: "completing", failure_code: "completemultipartupload_one_or_more_of_the_specified_parts_could_not_be_found_10025" });
 
 test("expired-video cleanup is exact, opaque, and rejects target or environment drift", () => {
   const current = { authority, git, worker, sessions: [session("one", "upload-one"), session("two", "upload-two")] };
@@ -22,6 +23,24 @@ test("expired-video cleanup is exact, opaque, and rejects target or environment 
   assert.throws(() => createVideoCleanupPlan({ ...current, sessions: [session("one", "upload-one")] }), /requested_count/);
   const three = createVideoCleanupPlan({ ...current, targetCount: 3, sessions: [...current.sessions, session("three", "upload-three")] });
   assert.equal(three.targetCount, 3);
+});
+
+test("multipart-completion cleanup is exact, opaque, and restricted to the observed R2 failure", async () => {
+  const failed = completionFailureSession("completion-one", "upload-completion-one");
+  const current = { authority, git, worker, sessions: [failed] };
+  const plan = createVideoCompletionFailureCleanupPlan(current);
+  assert.equal(plan.targetCount, 1);
+  assert.equal(plan.confirmation.startsWith("cleanup:"), true);
+  assert.equal(JSON.stringify(plan).includes("upload-completion-one"), false);
+  assert.equal(JSON.stringify(plan).includes("admin@example.test"), false);
+  assert.doesNotThrow(() => assertApprovedVideoCompletionFailureCleanupPlan(plan, plan.confirmation, current));
+  assert.throws(() => createVideoCompletionFailureCleanupPlan({ ...current, sessions: [{ ...failed, failure_code: "other_failure" }] }), /requested_count/);
+  assert.throws(() => assertApprovedVideoCompletionFailureCleanupPlan(plan, plan.confirmation, { ...current, sessions: [{ ...failed, finalization_state: "failed" }] }), /drift/);
+  const root = new URL("..", import.meta.url);
+  const recovery = await readFile(new URL("scripts/r2-video-recovery.mjs", root), "utf8");
+  assert.match(recovery, /completion-cleanup-plan/);
+  assert.match(recovery, /failure_code GLOB 'completemultipartupload_\*_10025'/);
+  assert.match(recovery, /await abortMultipart\(session\);[\s\S]*completionCleanupSql/);
 });
 
 test("direct-to-R2 configuration remains narrow, approval-bound, and lifecycle code never proxies video bytes", async () => {

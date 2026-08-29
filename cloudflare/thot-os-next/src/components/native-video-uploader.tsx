@@ -3,6 +3,7 @@
 import { useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { sha256File } from "@/lib/incremental-sha256";
+import { canonicalR2MultipartPartEtag } from "@/lib/r2-multipart-etag";
 
 const maxFiles = 4;
 const maxBytes = 5 * 1024 * 1024 * 1024;
@@ -22,6 +23,8 @@ function messageFor(error: string) {
     session_failed: "That upload could not be resumed. Start this video again.",
     direct_video_upload_unavailable: "Direct private video uploads are not configured yet. Try again after staging setup is complete.",
     direct_part_upload_failed: "That video part did not reach private storage. You can retry this file.",
+    completion_requires_reconciliation: "Video upload finalization failed. This upload needs cleanup before starting it again.",
+    session_finalizing: "Video upload finalization is still being checked. Refresh the Library before trying again.",
     source_media_video_codec_unsupported: "This video container is valid, but its H.264 or H.265 codec could not be verified.",
     source_media_verification_failed: "The bytes received did not match the selected video.",
   } as Record<string, string>)[error] ?? "Video upload failed. You can retry this file without changing its source.";
@@ -44,7 +47,7 @@ export function NativeVideoUploader() {
     if (authorized.replay) return;
     if (!authorized.uploadUrl) throw new Error("direct_part_upload_failed");
     const put = await fetch(authorized.uploadUrl, { method: "PUT", credentials: "omit", headers: { "content-type": part.type }, body: part });
-    const etag = put.headers.get("etag");
+    const etag = canonicalR2MultipartPartEtag(put.headers.get("etag"));
     if (!put.ok || !etag) { await releasePart(sessionId, partNumber); throw new Error("direct_part_upload_failed"); }
     const confirmation = await fetch(`/api/source-media/videos/intents/${sessionId}/parts/${partNumber}/confirm`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ etag }) });
     const confirmed = await payload<IntentResponse>(confirmation);
@@ -82,7 +85,7 @@ export function NativeVideoUploader() {
       router.refresh();
     } catch (error) {
       const code = error instanceof Error ? error.message : "upload_failed";
-      if (["session_expired", "session_aborted", "session_failed"].includes(code) && sourceHash) sessionStorage.removeItem(storageKey(sourceHash));
+      if (["session_expired", "session_aborted", "session_failed", "completion_requires_reconciliation"].includes(code) && sourceHash) sessionStorage.removeItem(storageKey(sourceHash));
       update(item.id, { status: "failed", detail: messageFor(code) });
     }
   };

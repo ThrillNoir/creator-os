@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { IncrementalSha256 } from "../src/lib/incremental-sha256.ts";
 import { IsoBmffValidator } from "../src/lib/iso-bmff-validator.ts";
+import { canonicalR2MultipartPartEtag } from "../src/lib/r2-multipart-etag.ts";
 import { detectedMime, parseSingleRange } from "../src/lib/source-media-algorithms.ts";
 
 const root = new URL("..", import.meta.url);
@@ -43,8 +44,16 @@ test("browser hashing is incremental and range parsing stays bounded", () => {
   assert.equal(parseSingleRange("bytes=10-11", 10), "invalid");
 });
 
+test("direct S3-style part ETags are normalized before Worker multipart completion", () => {
+  const raw = "c6d9d5e54ee4a7f9fd5fd8f7ba6db2f9";
+  assert.equal(canonicalR2MultipartPartEtag(`\"${raw}\"`), raw);
+  assert.equal(canonicalR2MultipartPartEtag(raw.toUpperCase()), raw);
+  assert.equal(canonicalR2MultipartPartEtag("not-an-etag"), null);
+  assert.equal(canonicalR2MultipartPartEtag(`\"${raw}`), null);
+});
+
 test("native video routes are creator-scoped, direct-to-R2, private, and do not provision playback", async () => {
-  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, lazyUploader, libraryPage, library, health] = await Promise.all([
+  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, assetCard, lazyUploader, libraryPage, library, health] = await Promise.all([
     source("../thot-os-app/migrations/0054_native_video_intake.sql"),
     source("src/lib/source-media.ts"),
     source("src/lib/iso-bmff-validator.ts"),
@@ -58,6 +67,7 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
     source("src/app/api/source-media/videos/intents/[sessionId]/finalize/route.ts"),
     source("src/app/api/source-media/videos/[assetId]/download/route.ts"),
     source("src/components/native-video-uploader.tsx"),
+    source("src/components/asset-card.tsx"),
     source("src/components/lazy-native-video-uploader.tsx"),
     source("src/app/library/page.tsx"),
     source("src/lib/library.ts"),
@@ -77,7 +87,7 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(authorize, /expectedPartBytes/);
   assert.match(authorize, /presignVideoPartUpload/);
   assert.match(authorize, /part_in_progress/);
-  assert.match(confirm, /validEtag/);
+  assert.match(confirm, /canonicalR2MultipartPartEtag/);
   assert.match(failure, /direct_part_upload_failed/);
   assert.match(signer, /AwsClient/);
   assert.match(signer, /signQuery/);
@@ -98,6 +108,9 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(uploader, /sessionStorage/);
   assert.match(uploader, /\/api\/source-media\/videos\/intents/);
   assert.match(uploader, /credentials: "omit"/);
+  assert.match(uploader, /completion_requires_reconciliation/);
+  assert.match(uploader, /canonicalR2MultipartPartEtag/);
+  assert.match(assetCard, /Video upload finalization failed/);
   assert.match(uploader, /\/authorize/);
   assert.match(uploader, /\/confirm/);
   assert.doesNotMatch(uploader, /\/parts\/\$\{partNumber\}\`, \{ method: "PUT", credentials: "same-origin"/);

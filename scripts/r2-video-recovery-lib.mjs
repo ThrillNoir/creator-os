@@ -134,6 +134,43 @@ export function assertApprovedVideoCleanupPlan(plan, confirmation, current) {
   return true;
 }
 
+function isCompletionFailureTarget(session) {
+  return Boolean(session?.id && session.creator_id && session.asset_id && session.storage_object_id && session.object_key && session.multipart_upload_id && session.actor_email
+    && ["agency_admin", "operator", "creator", "viewer", "service"].includes(session.actor_role)
+    && session.status === "uploading" && session.finalization_state === "completing"
+    && /^completemultipartupload_.*_10025$/.test(session.failure_code ?? ""));
+}
+
+export function createVideoCompletionFailureCleanupPlan({ authority, git, worker, sessions, targetCount = 1, createdAt = new Date().toISOString() }) {
+  if (!Number.isSafeInteger(targetCount) || targetCount < 1 || targetCount > 3 || !Array.isArray(sessions) || sessions.length !== targetCount || sessions.some((session) => !isCompletionFailureTarget(session))) throw new Error("completion_cleanup_targets_do_not_match_requested_count");
+  const targets = sessions.map(opaqueSession).sort((a, b) => a.sessionCorrelation.localeCompare(b.sessionCorrelation));
+  const plan = {
+    schemaVersion: 1,
+    kind: "staging-r2-video-multipart-completion-failure-cleanup-plan",
+    environment: "staging",
+    mode: "plan",
+    authority,
+    git,
+    worker,
+    targetCount,
+    targets,
+    targetDigest: digest(targets),
+    createdAt,
+    constraints: { productionTouched: false, r2AbortBeforeD1: true, ownerOnlyEvidence: true, allowlistOnly: true, completionFailure10025Only: true },
+  };
+  const planSha256 = digest(plan);
+  return { ...plan, planSha256, confirmation: cleanupConfirmation(planSha256) };
+}
+
+export function assertApprovedVideoCompletionFailureCleanupPlan(plan, confirmation, current) {
+  if (plan?.schemaVersion !== 1 || plan.kind !== "staging-r2-video-multipart-completion-failure-cleanup-plan" || plan.environment !== "staging" || plan.mode !== "plan" || !Number.isSafeInteger(plan.targetCount) || plan.targetCount < 1 || plan.targetCount > 3) throw new Error("completion_cleanup_plan_invalid");
+  const unsigned = { ...plan }; delete unsigned.planSha256; delete unsigned.confirmation;
+  if (plan.planSha256 !== digest(unsigned) || plan.confirmation !== cleanupConfirmation(plan.planSha256) || confirmation !== plan.confirmation) throw new Error("completion_cleanup_plan_integrity_invalid");
+  const targets = current.sessions.map(opaqueSession).sort((a, b) => a.sessionCorrelation.localeCompare(b.sessionCorrelation));
+  if (current.sessions.length !== plan.targetCount || current.sessions.some((session) => !isCompletionFailureTarget(session)) || stableJson(plan.authority) !== stableJson(current.authority) || stableJson(plan.git) !== stableJson(current.git) || stableJson(plan.worker) !== stableJson(current.worker) || plan.targetDigest !== digest(targets) || stableJson(plan.targets) !== stableJson(targets)) throw new Error("completion_cleanup_plan_drift");
+  return true;
+}
+
 export function createVideoR2ConfigurationPlan({ authority, git, worker, origin, currentCors, createdAt = new Date().toISOString() }) {
   const desiredCors = stagingVideoUploadCorsRules(origin);
   const normalizedCurrentCors = normalizeR2CorsRules(currentCors);
