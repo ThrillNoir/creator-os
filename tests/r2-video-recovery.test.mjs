@@ -6,7 +6,7 @@ import { assertApprovedVideoCleanupPlan, createVideoCleanupPlan, createVideoR2Co
 const authority = { accountId: "account", databaseId: "database", databaseName: "staging", bucket: "bucket", remoteMigrationSha256: "migration" };
 const git = { sha: "a".repeat(40), branch: "codex/r2-direct-video-upload", clean: true };
 const worker = { latestVersionId: "version", deployment: { versions: [{ versionId: "version", percentage: 100 }] }, secretNames: ["EXISTING"] };
-const session = (id, upload) => ({ id, creator_id: "creator", asset_id: `asset-${id}`, storage_object_id: `object-${id}`, object_key: `originals/v1/${id}`, multipart_upload_id: upload, expected_bytes: 8_388_608, uploaded_bytes: 0, expires_at: "2026-08-28T00:00:00.000Z", status: "uploading", finalization_state: "incomplete" });
+const session = (id, upload, actorEmail = "admin@example.test") => ({ id, creator_id: "creator", asset_id: `asset-${id}`, storage_object_id: `object-${id}`, object_key: `originals/v1/${id}`, multipart_upload_id: upload, expected_bytes: 8_388_608, uploaded_bytes: 0, expires_at: "2026-08-28T00:00:00.000Z", status: "uploading", finalization_state: "incomplete", actor_email: actorEmail, actor_role: "agency_admin" });
 
 test("expired-video cleanup is exact, opaque, and rejects target or environment drift", () => {
   const current = { authority, git, worker, sessions: [session("one", "upload-one"), session("two", "upload-two")] };
@@ -15,8 +15,10 @@ test("expired-video cleanup is exact, opaque, and rejects target or environment 
   assert.equal(plan.confirmation.startsWith("cleanup:"), true);
   assert.equal(JSON.stringify(plan).includes("upload-one"), false);
   assert.equal(JSON.stringify(plan).includes("originals/v1/one"), false);
+  assert.equal(JSON.stringify(plan).includes("admin@example.test"), false);
   assert.doesNotThrow(() => assertApprovedVideoCleanupPlan(plan, plan.confirmation, current));
   assert.throws(() => assertApprovedVideoCleanupPlan(plan, plan.confirmation, { ...current, sessions: [session("one", "upload-one"), session("two", "changed")] }), /drift/);
+  assert.throws(() => assertApprovedVideoCleanupPlan(plan, plan.confirmation, { ...current, sessions: [session("one", "upload-one"), session("two", "upload-two", "changed@example.test")] }), /drift/);
   assert.throws(() => createVideoCleanupPlan({ ...current, sessions: [session("one", "upload-one")] }), /requested_count/);
   const three = createVideoCleanupPlan({ ...current, targetCount: 3, sessions: [...current.sessions, session("three", "upload-three")] });
   assert.equal(three.targetCount, 3);
@@ -36,6 +38,7 @@ test("direct-to-R2 configuration remains narrow and lifecycle code never proxies
   assert.match(recovery, /staging_r2_cleanup_credentials_unavailable_from_keychain/);
   assert.match(recovery, /response\.status !== 404/);
   assert.doesNotMatch(recovery, /BEGIN IMMEDIATE|\\nCOMMIT;/);
+  assert.doesNotMatch(recovery, /service:r2-video-cleanup/);
   assert.match(lifecycle, /expiry_abort_uncertain/);
   assert.match(lifecycle, /asset_video_playback_states SET state='archived'/);
   assert.match(confirm, /creator_id=\?/);

@@ -11,6 +11,7 @@ export function opaqueSession(session) {
   return {
     sessionCorrelation: digest({ id: session.id, creatorId: session.creator_id }),
     multipartIdentityDigest: digest({ objectKey: session.object_key, multipartUploadId: session.multipart_upload_id }),
+    actorCorrelation: digest({ actorEmail: session.actor_email, actorRole: session.actor_role }),
     source: "r2_native_video",
     expiry: session.expires_at,
     expectedBytes: Number(session.expected_bytes),
@@ -19,7 +20,7 @@ export function opaqueSession(session) {
 }
 
 export function createVideoCleanupPlan({ authority, git, worker, sessions, targetCount = 2, createdAt = new Date().toISOString() }) {
-  if (!Number.isSafeInteger(targetCount) || targetCount < 1 || targetCount > 10 || !Array.isArray(sessions) || sessions.length !== targetCount || sessions.some((session) => !session.id || !session.creator_id || !session.object_key || !session.multipart_upload_id || session.finalization_state !== "incomplete" || session.status === "finalized")) throw new Error("cleanup_targets_do_not_match_requested_count");
+  if (!Number.isSafeInteger(targetCount) || targetCount < 1 || targetCount > 10 || !Array.isArray(sessions) || sessions.length !== targetCount || sessions.some((session) => !session.id || !session.creator_id || !session.object_key || !session.multipart_upload_id || !session.actor_email || !["agency_admin", "operator", "creator", "viewer", "service"].includes(session.actor_role) || session.finalization_state !== "incomplete" || session.status === "finalized")) throw new Error("cleanup_targets_do_not_match_requested_count");
   const targets = sessions.map(opaqueSession).sort((a, b) => a.sessionCorrelation.localeCompare(b.sessionCorrelation));
   const plan = {
     schemaVersion: 1,
