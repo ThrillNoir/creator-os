@@ -73,6 +73,7 @@
             "r2": ["MEDIA", "PREVIEWS", "LIBRARY_MEDIA"],
             "assets": ["ASSETS"],
             "images": ["IMAGES"],
+            "stream": ["STREAM"],
             "services": ["WORKER_SELF_REFERENCE", "REDDIT_SCHEDULER", "INSTAGRAM_SCHEDULER", "TELEGRAM_BRIDGE", "VAULT_BRIDGE", "PUBLIC_LINKS_CONTROL"]
           },
           "resources": {

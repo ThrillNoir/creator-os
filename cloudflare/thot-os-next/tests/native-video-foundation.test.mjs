@@ -5,6 +5,7 @@ import { IncrementalSha256 } from "../src/lib/incremental-sha256.ts";
 import { IsoBmffValidator } from "../src/lib/iso-bmff-validator.ts";
 import { canonicalR2MultipartPartEtag } from "../src/lib/r2-multipart-etag.ts";
 import { detectedMime, parseSingleRange } from "../src/lib/source-media-algorithms.ts";
+import { canStartVideoPlaybackPoll, hasPendingVideoPlayback, nextVideoPlaybackDelayIndex, videoPlaybackDelay } from "../src/lib/video-playback-polling.ts";
 
 const root = new URL("..", import.meta.url);
 const source = (path) => readFile(new URL(path, root), "utf8");
@@ -52,8 +53,19 @@ test("direct S3-style part ETags are normalized before Worker multipart completi
   assert.equal(canonicalR2MultipartPartEtag(`\"${raw}`), null);
 });
 
+test("video playback polling is single-flight eligible only for accepted processing work", () => {
+  const pending = { total: 2, ready: 0, queued: 1, processing: 1, failed: 0 };
+  assert.equal(hasPendingVideoPlayback(pending), true);
+  assert.equal(canStartVideoPlaybackPoll({ progress: pending, visible: true, online: true, inFlight: false }), true);
+  assert.equal(canStartVideoPlaybackPoll({ progress: pending, visible: false, online: true, inFlight: false }), false);
+  assert.equal(canStartVideoPlaybackPoll({ progress: { ...pending, processing: 0 }, visible: true, online: true, inFlight: false }), false);
+  assert.equal(videoPlaybackDelay(0), 5_000);
+  assert.equal(videoPlaybackDelay(3), 60_000);
+  assert.equal(nextVideoPlaybackDelayIndex(2, true), 0);
+});
+
 test("native video routes are creator-scoped, direct-to-R2, private, and do not provision playback", async () => {
-  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, assetCard, lazyUploader, libraryPage, library, health] = await Promise.all([
+  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, assetCard, playbackStart, playbackStatus, playbackToken, streamPlayback, lazyUploader, libraryPage, library, health] = await Promise.all([
     source("../thot-os-app/migrations/0054_native_video_intake.sql"),
     source("src/lib/source-media.ts"),
     source("src/lib/iso-bmff-validator.ts"),
@@ -68,6 +80,10 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
     source("src/app/api/source-media/videos/[assetId]/download/route.ts"),
     source("src/components/native-video-uploader.tsx"),
     source("src/components/asset-card.tsx"),
+    source("src/app/api/source-media/videos/[assetId]/playback/route.ts"),
+    source("src/app/api/library/video-playback-status/route.ts"),
+    source("src/app/api/source-media/videos/[assetId]/playback-token/route.ts"),
+    source("src/lib/stream-playback.ts"),
     source("src/components/lazy-native-video-uploader.tsx"),
     source("src/app/library/page.tsx"),
     source("src/lib/library.ts"),
@@ -111,6 +127,30 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(uploader, /completion_requires_reconciliation/);
   assert.match(uploader, /canonicalR2MultipartPartEtag/);
   assert.match(assetCard, /Video upload finalization failed/);
+  assert.match(assetCard, /browser playback can be prepared/);
+  assert.match(assetCard, /PrivateStreamPlayer/);
+  assert.match(playbackStart, /isSameOriginRequest/);
+  assert.match(playbackStart, /requireCreatorContext\("mutate"\)/);
+  assert.match(playbackStart, /STREAM!\.upload/);
+  assert.doesNotMatch(playbackStart, /LIBRARY_MEDIA\.get|arrayBuffer|\.body/);
+  assert.match(playbackStart, /stream_submission_uncertain/);
+  assert.match(playbackStart, /creator_id=\?/);
+  assert.match(playbackStart, /creatoros\.video_playback_submission/);
+  assert.match(playbackStatus, /MAX_PROVIDER_STATUS_READS = 4/);
+  assert.match(playbackStatus, /requireCreatorContext\("mutate"\)/);
+  assert.match(playbackStatus, /state='processing'/);
+  assert.match(playbackStatus, /creatoros\.video_playback_status/);
+  assert.match(playbackToken, /requireCreatorContext\("view"\)/);
+  assert.match(playbackToken, /generateToken/);
+  assert.match(playbackToken, /creator_id=\?/);
+  assert.match(playbackToken, /creatoros\.video_playback_token/);
+  assert.doesNotMatch(playbackToken, /INSERT\s+INTO/);
+  assert.doesNotMatch(playbackToken, /JSON\.stringify\(\{[^\n]*\b(token|iframeUrl)\s*:/);
+  assert.match(streamPlayback, /requireSignedURLs: true/);
+  assert.match(streamPlayback, /presignCanonicalVideoRead/);
+  assert.match(streamPlayback, /endsWith\("\.cloudflarestream\.com"\)/);
+  assert.match(streamPlayback, /stream_submission_uncertain/);
+  assert.doesNotMatch(streamPlayback, /console\.log/);
   assert.match(uploader, /\/authorize/);
   assert.match(uploader, /\/confirm/);
   assert.doesNotMatch(uploader, /\/parts\/\$\{partNumber\}\`, \{ method: "PUT", credentials: "same-origin"/);

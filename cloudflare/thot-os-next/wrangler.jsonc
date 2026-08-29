@@ -14,6 +14,9 @@
   "images": {
     "binding": "IMAGES"
   },
+  "stream": {
+    "binding": "STREAM"
+  },
   "services": [
     { "binding": "WORKER_SELF_REFERENCE", "service": "thot-os-staging" },
     { "binding": "REDDIT_SCHEDULER", "service": "thot-os-reddit-scheduler-staging" },
@@ -45,7 +48,8 @@
     "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
     "ADULT_PROFILE_PUBLISHING_ENABLED": "1",
     "STAGING_QA_ENABLED": "1",
-    "R2_VIDEO_DIRECT_UPLOADS_ENABLED": "1"
+    "R2_VIDEO_DIRECT_UPLOADS_ENABLED": "1",
+    "R2_STREAM_PLAYBACK_ENABLED": "1"
   },
   "observability": {
     "enabled": true,

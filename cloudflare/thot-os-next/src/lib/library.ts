@@ -22,6 +22,7 @@ export interface AssetRow {
   video_state: string | null;
   video_codec: "h264" | "h265" | null;
   playback_provider: "none" | "stream" | null;
+  playback_failure_code: string | null;
 }
 
 export interface LibraryFilters { safety?: string; destination?: string; type?: string; query?: string; source?: string }
@@ -29,8 +30,9 @@ export interface CreatorFriend { id: number; display_name: string; stage_name: s
 export interface AttachedFriend extends CreatorFriend { evidence_platform: string | null; confirmed_at: string | null }
 export interface AssetEvent { id: string; actor: string; event_type: string; snapshot: string; created_at: string }
 export interface PreviewProgress { total: number; ready: number; queued: number; processing: number; failed: number }
+export interface VideoPlaybackProgress { total: number; ready: number; queued: number; processing: number; failed: number }
 export interface LibrarySummary { assets: number; sfw: number; nsfw: number; needs_review: number; previews: number }
-export interface LibraryPageData { summary: LibrarySummary | null; previewProgress: PreviewProgress; assets: AssetRow[] }
+export interface LibraryPageData { summary: LibrarySummary | null; previewProgress: PreviewProgress; videoPlaybackProgress: VideoPlaybackProgress; assets: AssetRow[] }
 
 function sourceCondition(source: string | undefined) {
   if (source === "legacy") return "NOT EXISTS (SELECT 1 FROM asset_media_authorities native_authority WHERE native_authority.asset_id=a.id AND native_authority.creator_id=a.creator_id AND native_authority.authority_kind='r2_native')";
@@ -79,6 +81,27 @@ function toPreviewProgress(result: PreviewProgressRow | null | undefined): Previ
   return { total: result?.total ?? 0, ready: result?.ready ?? 0, queued: result?.queued ?? 0, processing: result?.processing ?? 0, failed: result?.failed ?? 0 };
 }
 
+type VideoPlaybackProgressRow = { total: number; ready: number | null; queued: number | null; processing: number | null; failed: number | null };
+
+function videoPlaybackProgressStatement(DB: D1Database, creatorId: string) {
+  return DB.prepare(`SELECT COUNT(*) AS total,
+      SUM(CASE WHEN state='playback_ready' THEN 1 ELSE 0 END) AS ready,
+      SUM(CASE WHEN state='processing_queued' THEN 1 ELSE 0 END) AS queued,
+      SUM(CASE WHEN state='processing' THEN 1 ELSE 0 END) AS processing,
+      SUM(CASE WHEN state='processing_failed' THEN 1 ELSE 0 END) AS failed
+    FROM asset_video_playback_states
+    WHERE creator_id=? AND state IN ('canonical_verified','processing_queued','processing','playback_ready','processing_failed')`).bind(creatorId);
+}
+
+function toVideoPlaybackProgress(result: VideoPlaybackProgressRow | null | undefined): VideoPlaybackProgress {
+  return { total: result?.total ?? 0, ready: result?.ready ?? 0, queued: result?.queued ?? 0, processing: result?.processing ?? 0, failed: result?.failed ?? 0 };
+}
+
+export async function getVideoPlaybackProgress(creatorId: string): Promise<VideoPlaybackProgress> {
+  const result = await videoPlaybackProgressStatement(cloudflareEnv().DB, creatorId).first<VideoPlaybackProgressRow>();
+  return toVideoPlaybackProgress(result);
+}
+
 export async function getLibraryAssets(creatorId: string, filters: LibraryFilters = {}) {
   const { DB } = cloudflareEnv();
   const result = await libraryAssetsStatement(DB, creatorId, filters).all<AssetRow>();
@@ -104,7 +127,7 @@ function libraryAssetsStatement(DB: D1Database, creatorId: string, filters: Libr
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
       COALESCE(ma.authority_kind,'dropbox_legacy') AS media_origin,
       COALESCE(vp.state,ma.state,'legacy') AS media_state,
-      vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider
+      vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider,vp.failure_code AS playback_failure_code
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
       LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
@@ -119,14 +142,16 @@ function libraryAssetsStatement(DB: D1Database, creatorId: string, filters: Libr
  */
 export async function getLibraryPageData(creatorId: string, filters: LibraryFilters = {}): Promise<LibraryPageData> {
   const { DB } = cloudflareEnv();
-  const [summaryResult, previewResult, assetsResult] = await DB.batch([
+  const [summaryResult, previewResult, videoPlaybackResult, assetsResult] = await DB.batch([
     librarySummaryStatement(DB, creatorId, filters.source),
     previewProgressStatement(DB, creatorId, filters.source),
+    videoPlaybackProgressStatement(DB, creatorId),
     libraryAssetsStatement(DB, creatorId, filters),
   ]);
   return {
     summary: (summaryResult.results[0] as LibrarySummary | undefined) ?? null,
     previewProgress: toPreviewProgress(previewResult.results[0] as PreviewProgressRow | undefined),
+    videoPlaybackProgress: toVideoPlaybackProgress(videoPlaybackResult.results[0] as VideoPlaybackProgressRow | undefined),
     assets: assetsResult.results as AssetRow[],
   };
 }
@@ -140,7 +165,7 @@ export async function getAssetByObjectId(creatorId: string, objectId: string) {
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
       COALESCE(ma.authority_kind,'dropbox_legacy') AS media_origin,
       COALESCE(vp.state,ma.state,'legacy') AS media_state,
-      vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider
+      vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider,vp.failure_code AS playback_failure_code
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
       LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
