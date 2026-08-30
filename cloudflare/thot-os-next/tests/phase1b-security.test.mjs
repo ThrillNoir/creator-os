@@ -100,7 +100,7 @@ test("receiving Workers use named D1-backed service credentials and device crede
     assert.match(worker, /requireInternalServiceForCreator/);
     assert.match(worker, new RegExp(service));
   }
-  assert.match(vault, /thot-os-web-vault-catalogue/);
+  assert.match(vault, /thot-os-web-vault/);
   assert.doesNotMatch(vault, /CATALOGUE_SYNC_TOKEN/);
   assert.match(vault, /x-thot-os-installation-id/);
   assert.match(vault, /installation_id=\? AND status<>'revoked'/);
@@ -116,6 +116,6 @@ test("key rotation, pairing CSRF and privileged audit execution fail closed", as
   assert.match(access, /JWKS_CACHE_TTL_MS/);
   assert.match(access, /accessKeys\(env\.ACCESS_JWKS_URL, true\)/);
   assert.match(pairingRoute, /origin !== requestUrl\.origin/);
-  assert.match(actions, /identityAuditStatement\(env\.DB,[\s\S]*"dropbox_catalogue_refreshed"[\s\S]*\)\.run\(\)/);
-  assert.match(actions, /identityAuditStatement\(DB,[\s\S]*"dropbox_catalogue_source_saved"[\s\S]*\)\.run\(\)/);
+  assert.doesNotMatch(actions, /dropbox/i);
+  assert.match(actions, /identityAuditStatement/);
 });

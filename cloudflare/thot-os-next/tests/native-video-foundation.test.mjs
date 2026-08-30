@@ -69,7 +69,7 @@ test("completed multipart video verification reads metadata instead of the media
   const verified = await validateR2VideoMetadata(bucket, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 });
   assert.equal(verified.codec, "h264");
   assert.ok(ranges.reduce((total, range) => total + range.length, 0) < bytes.length / 10);
-  await assert.rejects(() => validateR2VideoMetadata({ ...bucket, head: async () => ({ ...metadata, size: bytes.length - 1 }) }, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 }), /source_media_verification_failed/);
+  await assert.rejects(() => validateR2VideoMetadata({ ...bucket, head: async () => ({ ...metadata, size: bytes.length - 1 }) }, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 }), /source_media_byte_mismatch/);
 });
 
 test("browser hashing is incremental and range parsing stays bounded", () => {
@@ -154,7 +154,7 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(finalize, /validateR2VideoMetadata/);
   assert.match(finalize, /completedR2MultipartEtag/);
   assert.doesNotMatch(finalize, /hashAndValidateR2Object/);
-  assert.match(finalize, /source_media_verification_failed/);
+  assert.match(finalize, /source_media_byte_mismatch/);
   assert.doesNotMatch(finalize, /fansly|vault/i);
   assert.match(finalize, /playback_provider='none'/);
   assert.match(download, /requireCreatorContext\("view"\)/);

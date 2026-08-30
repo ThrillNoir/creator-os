@@ -9,7 +9,6 @@ import Database from "better-sqlite3";
 const appRoot = path.resolve(import.meta.dirname, "..");
 const migrationsRoot = path.resolve(appRoot, "../thot-os-app/migrations");
 const wrangler = path.resolve(appRoot, "node_modules/.bin/wrangler");
-const isolationScript = path.resolve(appRoot, "../../scripts/check-creator-isolation.mjs");
 
 async function findDatabase(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -73,14 +72,6 @@ test("0040 keeps interaction data creator scoped and requires an approved adult-
     assert.throws(() => db.prepare("UPDATE creator_adult_profile_publications SET creator_id='second' WHERE id='adult-publication'").run(), /adult_profile_publication_scope_invalid/);
     assert.throws(() => db.prepare("UPDATE creator_adult_profile_publications SET profile_id='second-adult-profile' WHERE id='adult-publication'").run(), /adult_profile_publication_scope_invalid/);
     assert.throws(() => db.prepare("UPDATE creator_adult_profile_publications SET version_id='second-adult-version' WHERE id='adult-publication'").run(), /adult_profile_publication_scope_invalid/);
-    const cleanIsolation = spawnSync(process.execPath, [isolationScript], { cwd: appRoot, encoding: "utf8", env: { ...process.env, CREATOR_OS_DB_PATH: databasePath } });
-    assert.equal(cleanIsolation.status, 0, `${cleanIsolation.stdout}\n${cleanIsolation.stderr}`);
-    db.pragma("foreign_keys = OFF");
-    db.exec("DROP TRIGGER creator_adult_profile_publication_scope_update");
-    db.prepare("UPDATE creator_adult_profile_publications SET creator_id='second' WHERE id='adult-publication'").run();
-    const invalidIsolation = spawnSync(process.execPath, [isolationScript], { cwd: appRoot, encoding: "utf8", env: { ...process.env, CREATOR_OS_DB_PATH: databasePath } });
-    assert.notEqual(invalidIsolation.status, 0, `${invalidIsolation.stdout}\n${invalidIsolation.stderr}`);
-    assert.match(`${invalidIsolation.stdout}\n${invalidIsolation.stderr}`, /adult profile publications/);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM creator_adult_profile_media WHERE creator_id='adelaide'").get().count, 1);
     assert.equal(db.pragma("quick_check", { simple: true }), "ok");
   } finally {

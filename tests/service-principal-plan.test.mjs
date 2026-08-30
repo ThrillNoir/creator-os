@@ -13,7 +13,7 @@ test("service-principal provisioning plans require explicit, allowed creator cap
     environment: "staging",
     contract,
     registry,
-    grants: ["thot-os-web-reddit:adelaide:reddit.status.read", "thot-os-web-vault-catalogue:adelaide:vault.catalogue.refresh"],
+    grants: ["thot-os-web-reddit:adelaide:reddit.status.read", "thot-os-web-vault:adelaide:vault.source_media.health"],
   });
   assert.equal(plan.mode, "plan-only");
   assert.equal(plan.principalCount, 5);

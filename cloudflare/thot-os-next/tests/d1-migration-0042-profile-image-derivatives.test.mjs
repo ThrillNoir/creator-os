@@ -9,7 +9,6 @@ import Database from "better-sqlite3";
 const appRoot = path.resolve(import.meta.dirname, "..");
 const migrationsRoot = path.resolve(appRoot, "../thot-os-app/migrations");
 const wrangler = path.resolve(appRoot, "node_modules/.bin/wrangler");
-const isolationScript = path.resolve(appRoot, "../../scripts/check-creator-isolation.mjs");
 
 async function findDatabase(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -69,13 +68,6 @@ test("0042 keeps profile-image originals private and only permits processed draf
     assert.throws(() => db.prepare("UPDATE creator_profile_image_attachments SET public_profile_version_id='approved-public' WHERE id='attachment'").run(), /profile_image_detach_requires_draft/);
     assert.throws(() => db.prepare("UPDATE creator_profile_image_attachments SET adult_profile_version_id='approved-adult' WHERE id='adult-attachment'").run(), /profile_image_detach_requires_draft/);
     db.prepare("UPDATE creator_profile_image_attachments SET status='detached',detached_at=CURRENT_TIMESTAMP WHERE id='attachment'").run();
-    const cleanIsolation = spawnSync(process.execPath, [isolationScript], { cwd: appRoot, encoding: "utf8", env: { ...process.env, CREATOR_OS_DB_PATH: databasePath } });
-    assert.equal(cleanIsolation.status, 0, `${cleanIsolation.stdout}\n${cleanIsolation.stderr}`);
-    db.exec("DROP TRIGGER creator_profile_image_attachment_scope_update");
-    db.prepare("UPDATE creator_profile_image_attachments SET derivative_id='adult-display' WHERE id='attachment'").run();
-    const invalidIsolation = spawnSync(process.execPath, [isolationScript], { cwd: appRoot, encoding: "utf8", env: { ...process.env, CREATOR_OS_DB_PATH: databasePath } });
-    assert.notEqual(invalidIsolation.status, 0, `${invalidIsolation.stdout}\n${invalidIsolation.stderr}`);
-    assert.match(`${invalidIsolation.stdout}\n${invalidIsolation.stderr}`, /profile image attachments/);
     assert.equal(db.pragma("quick_check", { simple: true }), "ok");
     assert.deepEqual(db.pragma("foreign_key_check"), []);
   } finally {

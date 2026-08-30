@@ -25,7 +25,7 @@ test("native image intake creates creator-scoped canonical R2 authority without 
   assert.match(finalize, /state='canonical_verified'/);
   assert.match(parts, /session\.ingest_kind === "native_image"/);
   assert.match(library, /asset_media_authorities/);
-  assert.match(library, /source === "native"/);
+  assert.match(library, /authority_kind='r2_native'/);
   assert.match(uploader, /\/api\/source-media\/native\/intents/);
   assert.match(uploader, /sessionStorage/);
   assert.doesNotMatch(uploader, /presign|signedUrl|objectKey/i);

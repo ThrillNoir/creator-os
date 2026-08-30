@@ -86,7 +86,8 @@ test("creator APIs return only the effective server-derived workspace", async ()
   ]);
   assert.match(libraryApi, /creatorId: context\.creator\.creator_id/);
   assert.match(libraryApi, /status: 404/);
-  assert.match(previewApi, /creator_id=\? AND \(preview_r2_key=\? OR \(substr\(preview_r2_key,1,\?\)=\? AND substr\(preview_r2_key,-4\)='\.jpg'\)\)/);
+  assert.match(previewApi, /ma\.authority_kind='r2_native'/);
+  assert.match(previewApi, /a\.creator_id=\?/);
   assert.match(health, /WHERE creator_id=\?/);
   assert.match(access, /cf-access-jwt-assertion/);
   assert.doesNotMatch(access, /cf-access-authenticated-user-email/);
