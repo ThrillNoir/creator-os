@@ -332,7 +332,7 @@ async function approvedInstagramMedia(env: Env, post: DuePost) {
   const source = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key AND o.byte_count=a.bytes AND a.source_available=1 AND ma.authority_kind='r2_native' AND ma.state IN ('canonical_verified','preview_ready') AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL ORDER BY o.verified_at DESC LIMIT 1`).bind(post.creator_id, post.asset_id).first<CanonicalR2Source>();
   if (!source || !immutableR2IdentityMatches(source, await env.LIBRARY_MEDIA.head(source.object_key))) throw new Error("r2_source_media_integrity_failed");
   const extension = post.extension.toLowerCase().replace(/^\./, "");
-  const formats: Record<string, [string, boolean]> = { jpg: ["image/jpeg", false], jpeg: ["image/jpeg", false], png: ["image/png", false], mp4: ["video/mp4", true], mov: ["video/quicktime", true] };
+  const formats: Record<string, [string, boolean]> = { jpg: ["image/jpeg", false], jpeg: ["image/jpeg", false], mp4: ["video/mp4", true], mov: ["video/quicktime", true] };
   const format = formats[extension];
   if (!format || source.verified_mime_type.toLowerCase() !== format[0]) throw new Error("instagram_media_format_not_supported");
   const url = new URL(`https://3e7cfa6efb7a97825f1dc24515410c63.r2.cloudflarestorage.com/${R2_BUCKET}/${r2ObjectPath(source.object_key)}`); url.searchParams.set("X-Amz-Expires", String(R2_PRESIGN_TTL_SECONDS));
@@ -366,7 +366,8 @@ async function currentInstagramAnalyticsConnection(env: Env, creatorId: string) 
 async function currentInstagramPublishConnection(env: Env, post: DuePost) {
   const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
     FROM operational_accounts oa JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram'
-    WHERE oa.creator_id=? AND oa.id=? AND oa.platform='instagram' AND oa.connection_status='connected'
+    WHERE oa.creator_id=? AND oa.id=? AND oa.id=(SELECT canonical.id FROM operational_accounts canonical WHERE canonical.creator_id=oa.creator_id AND canonical.platform='instagram' ORDER BY canonical.label LIMIT 1)
+      AND oa.platform='instagram' AND oa.connection_status='connected'
       AND oa.external_identity_confirmed_at IS NOT NULL AND pc.status='active' AND pc.identity_confirmed_at IS NOT NULL`)
     .bind(post.creator_id, post.account_id).first<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
   if (!connection || !connection.external_account_id) throw new Error("Instagram is not connected and verified for this post account.");
@@ -896,7 +897,7 @@ async function storedHumanActorRole(env: Env, creatorId: string, actor: string) 
 async function startConnection(request: Request, env: Env) {
   const input = await request.json<{ callbackUrl?: string; creatorId?: string }>();
   if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
-  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='instagram'").bind(input.creatorId).first();
+  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1").bind(input.creatorId).first();
   if (!account) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   const state = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const callback = new URL(input.callbackUrl);
@@ -916,6 +917,9 @@ async function completeConnection(request: Request, env: Env) {
   const attempt = await env.DB.prepare("SELECT id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='instagram' AND state_hash=? AND status='pending'")
     .bind(input.creatorId, await sha256(input.state)).first<{ id: string; connected_account_id: string; expires_at: string }>();
   if (!attempt || new Date(attempt.expires_at).getTime() < Date.now()) return Response.json({ ok: false, error: "invalid_or_expired_state" }, { status: 400 });
+  const canonical = await env.DB.prepare("SELECT id,handle FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1")
+    .bind(input.creatorId).first<{ id: string; handle: string }>();
+  if (!canonical) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   try {
     const account = await jsonRequest<{ status?: string }>(`${COMPOSIO_V3}/connected_accounts/${attempt.connected_account_id}`, env.COMPOSIO_API_KEY);
     if (account.status !== "ACTIVE") throw new Error(`Instagram authorization is ${account.status ?? "not active"}.`);
@@ -923,14 +927,13 @@ async function completeConnection(request: Request, env: Env) {
     const identity = await executeTool<{ id?: string; username?: string }>(env, "INSTAGRAM_GET_USER_INFO", attempt.connected_account_id, instagramUserId, {});
     if (!identity.id || !identity.username) throw new Error("Instagram identity could not be verified.");
     await ensureInstagramMessageSubscriptions(env, attempt.connected_account_id, identity.id);
-    const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1").bind(input.creatorId).first<{ handle: string }>();
-    if (expected?.handle && expected.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
-      throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${expected.handle}.`);
+    if (canonical.handle && canonical.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
+      throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${canonical.handle}.`);
     }
     await env.DB.batch([
       env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.connected_account_id, instagramUserId, identity.id, `@${identity.username.replace(/^@/, "")}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
+      env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, canonical.id, input.creatorId),
       env.DB.prepare("UPDATE messaging_connections SET handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
       env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,'service','instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, "service:thot-os-web-instagram", JSON.stringify({ username: identity.username })),
     ]);
@@ -939,7 +942,7 @@ async function completeConnection(request: Request, env: Env) {
     const message = error instanceof Error ? error.message : "Instagram connection failed.";
     await env.DB.batch([
       env.DB.prepare("UPDATE provider_connection_attempts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(message.slice(0, 2000), attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(message.slice(0, 500), input.creatorId),
+      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='instagram'").bind(message.slice(0, 500), canonical.id, input.creatorId),
     ]);
     return Response.json({ ok: false, error: message }, { status: 400 });
   }
