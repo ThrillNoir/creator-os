@@ -91,10 +91,10 @@
           "directory": "cloudflare/instagram-scheduler",
           "worker": "thot-os-instagram-scheduler-staging",
           "deployable": true,
-          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID"],
+          "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID", "R2_VIDEO_UPLOAD_ACCESS_KEY_ID", "R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY"],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": ["thot-os-previews-staging"],
+            "r2": ["thot-os-previews-staging", "thot-os-library-media-staging"],
             "queues": [],
             "services": {}
           }

@@ -17,8 +17,9 @@ export function PrivateStreamPlayer({ assetId }: { assetId: string }) {
     try {
       if (await token()) return;
       const response = await fetch(`/api/source-media/videos/${assetId}/playback`, { method: "POST", credentials: "same-origin" });
-      const body = await response.json().catch(() => ({})) as { ok?: boolean };
-      if (!response.ok || body.ok !== true) throw new Error("playback_start_failed");
+      const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      if (!response.ok && body.error !== "playback_already_submitted") throw new Error("playback_start_failed");
+      if (response.ok && body.ok !== true) throw new Error("playback_start_failed");
       for (let attempt = 0; attempt < 40; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 3_000));
         await fetch("/api/library/video-playback-status", { cache: "no-store", credentials: "same-origin" });
