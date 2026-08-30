@@ -80,27 +80,6 @@ body {
 .os-cloud-nav-arrow { width: 14px; height: 14px; opacity: .45; }
 .os-cloud-nav-item.active .os-cloud-nav-arrow { opacity: 1; }
 
-.os-cloud-migration {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  margin: 16px 18px 0;
-  border: 2px solid var(--foreground);
-  padding: 11px;
-  background: var(--accent);
-  color: var(--accent-foreground);
-  box-shadow: 4px 4px 0 var(--shadow-color);
-}
-.os-cloud-migration > svg { width: 18px; }
-.os-cloud-migration b,
-.os-cloud-migration small { display: block; }
-.os-cloud-migration b { font-size: 12px; }
-.os-cloud-migration small { margin-top: 2px; font-size: 9px; }
-.os-cloud-migration > strong { border: 1px solid currentColor; padding: 3px 5px; font-size: 9px; }
-.os-cloud-migration:hover,
-.os-cloud-migration.active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--shadow-color); }
-
 .os-cloud-divider { margin: 20px 18px 0; background: var(--foreground); }
 .os-cloud-context { display: grid; gap: 10px; padding: 12px 18px 18px; }
 .os-cloud-identity,
@@ -361,7 +340,6 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .os-cloud-nav-item,
-  .os-cloud-migration,
   .os-cloud-shell .primary,
   .os-cloud-shell .secondary-action { transition: none; }
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export function PrivateStreamPlayer({ assetId }: { assetId: string }) {
+export function PrivateStreamPlayer({ assetId, canPrepare = false }: { assetId: string; canPrepare?: boolean }) {
   const [iframeUrl, setIframeUrl] = useState<string | null>(null);
   const [state, setState] = useState<"idle" | "working" | "failed">("idle");
   const token = async () => {
@@ -16,6 +16,7 @@ export function PrivateStreamPlayer({ assetId }: { assetId: string }) {
     setState("working");
     try {
       if (await token()) return;
+      if (!canPrepare) throw new Error("playback_unavailable");
       const response = await fetch(`/api/source-media/videos/${assetId}/playback`, { method: "POST", credentials: "same-origin" });
       const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
       if (!response.ok && body.error !== "playback_already_submitted") throw new Error("playback_start_failed");

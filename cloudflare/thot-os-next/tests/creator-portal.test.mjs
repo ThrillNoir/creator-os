@@ -76,12 +76,14 @@ test("Accounts exposes creator-scoped Instagram OAuth state without treating con
 });
 
 test("creator APIs return only the effective server-derived workspace", async () => {
-  const [libraryApi, previewApi, health, access, qaPage] = await Promise.all([
+  const [libraryApi, previewApi, health, access, qaPage, instagramCallback, redditCallback] = await Promise.all([
     source("../src/app/api/library/route.ts"),
     source("../src/app/api/preview/[objectId]/route.ts"),
     source("../src/app/health/route.ts"),
     source("../src/lib/access.ts"),
     source("../src/app/staging-qa/page.tsx"),
+    source("../src/app/api/operations/instagram/callback/route.ts"),
+    source("../src/app/api/operations/reddit/callback/route.ts"),
   ]);
   assert.match(libraryApi, /creatorId: context\.creator\.creator_id/);
   assert.match(libraryApi, /status: 404/);
@@ -92,6 +94,9 @@ test("creator APIs return only the effective server-derived workspace", async ()
   assert.doesNotMatch(access, /cf-access-authenticated-user-email/);
   assert.match(qaPage, /STAGING_QA_ENABLED/);
   assert.match(qaPage, /STAGING QA/);
+  assert.match(instagramCallback, /requireCreatorContext\("mutate"\)/);
+  assert.match(redditCallback, /requireCreatorContext\("mutate"\)/);
+  assert.doesNotMatch(`${instagramCallback}\n${redditCallback}`, /manage_identity/);
 });
 
 test("the non-browser health checker requires Access authentication and never prints credentials", async () => {

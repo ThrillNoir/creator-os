@@ -165,8 +165,8 @@ async function VaultWorkspace({ creatorId, section, saved, canManageIdentity }: 
   const statusCopy: Record<string, string> = {
     approved: "Waiting for the signed Fansly browser",
     claimed: "Transfer is in progress",
-    staged: "Accepted by Fansly; confirm it is visible in the vault",
-    verified: "Confirmed in the native Fansly vault",
+    staged: "Paired browser reported that Fansly accepted the transfer",
+    verified: "Paired browser receipt reports a saved vault record",
     failed: "Needs review before retrying",
     cancelled: "Cancelled",
   };

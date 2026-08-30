@@ -174,8 +174,10 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(assetCard, /Video upload finalization failed/);
   assert.match(assetCard, /browser playback can be prepared/);
   assert.match(assetCard, /PrivateStreamPlayer/);
+  assert.match(assetCard, /canViewPlayback && asset\.video_state === "playback_ready"/);
   const player = await source("src/components/private-stream-player.tsx");
   assert.match(player, /body\.error !== "playback_already_submitted"/);
+  assert.match(player, /if \(!canPrepare\) throw new Error\("playback_unavailable"\)/);
   assert.match(playbackStart, /isSameOriginRequest/);
   assert.match(playbackStart, /requireCreatorContext\("mutate"\)/);
   assert.match(playbackStart, /STREAM!\.upload/);

@@ -164,18 +164,24 @@ async function mediaRedirect(request: Request, env: Env, identity: BridgeIdentit
 async function recordReceipt(request: Request, env: Env, identity: BridgeIdentity, jobId: string) {
   const input = await request.json<{ status?: string; error?: string; receipt?: unknown }>();
   const proof = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt) ? input.receipt as { savedVaultRecord?: unknown; externalMediaId?: unknown; nativeAttachment?: unknown } : null;
+  const externalMediaId = typeof proof?.externalMediaId === "string" ? proof.externalMediaId.trim() : null;
   const verified = input.status === "staged" && proof?.savedVaultRecord === true && proof.nativeAttachment === true
-    && typeof proof.externalMediaId === "string" && proof.externalMediaId.trim().length > 0 && proof.externalMediaId.length <= 200;
+    && externalMediaId !== null && externalMediaId.length > 0 && externalMediaId.length <= 200;
+  const job = await env.DB.prepare("SELECT asset_id FROM vault_upload_jobs WHERE id=? AND creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'")
+    .bind(jobId, identity.creator_id, identity.account_id).first<{ asset_id: string }>();
+  if (!job) return json(request, { ok: false, error: "Vault job is no longer claimable." }, 409);
+  if (externalMediaId && await env.DB.prepare("SELECT 1 FROM vault_upload_jobs WHERE platform='fansly' AND id<>? AND json_valid(receipt) AND json_extract(receipt,'$.externalMediaId')=? LIMIT 1")
+    .bind(jobId, externalMediaId).first()) return json(request, { ok: false, error: "Fansly receipt is already recorded for another vault job." }, 409);
   const status = verified ? "verified" : "failed";
   const receipt = JSON.stringify(input.receipt ?? {}).slice(0, 12000);
-  const error = verified ? null : String(input.status === "staged" ? "Fansly receipt did not prove a saved vault record." : input.error || "Fansly staging failed.").slice(0, 2000);
+  const error = verified ? null : String(input.status === "staged" ? "Paired browser receipt did not report a saved vault record." : input.error || "Fansly staging failed.").slice(0, 2000);
   const updated = await env.DB.prepare(`
     UPDATE vault_upload_jobs SET status=?,completed_at=CURRENT_TIMESTAMP,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP
-    WHERE id=? AND creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'
-  `).bind(status, error, receipt, jobId, identity.creator_id, identity.account_id).run();
+    WHERE id=? AND creator_id=? AND account_id=? AND asset_id=? AND platform='fansly' AND status='claimed'
+  `).bind(status, error, receipt, jobId, identity.creator_id, identity.account_id, job.asset_id).run();
   if (!updated.meta.changes) return json(request, { ok: false, error: "Vault job is no longer claimable." }, 409);
   await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:fansly-device','service',?,?)")
-    .bind(crypto.randomUUID(), jobId, identity.creator_id, verified ? "upload_verified" : "staging_failed", JSON.stringify({ error })).run();
+    .bind(crypto.randomUUID(), jobId, identity.creator_id, verified ? "upload_verified" : "staging_failed", JSON.stringify({ error, externalMediaId })).run();
   if (verified) await env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='fansly'").bind(identity.account_id, identity.creator_id).run();
   return json(request, { ok: true, status });
 }

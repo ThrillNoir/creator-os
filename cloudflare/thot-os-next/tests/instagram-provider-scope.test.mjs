@@ -12,6 +12,13 @@ test("Instagram delivery uses a creator-scoped, verified R2 object without retai
   assert.match(scheduler, /immutableR2IdentityMatches/);
   assert.match(scheduler, /INSTAGRAM_CREATE_MEDIA_CONTAINER/);
   assert.match(scheduler, /INSTAGRAM_CREATE_POST/);
+  assert.match(scheduler, /currentInstagramPublishConnection\(env, post\)/);
+  assert.match(scheduler, /WHERE oa\.creator_id=\? AND oa\.id=\? AND oa\.platform='instagram' AND oa\.connection_status='connected'/);
+  assert.match(scheduler, /verified_mime_type\.toLowerCase\(\) !== format\[0\]/);
+  assert.match(scheduler, /INSTAGRAM_GET_POST_STATUS[\s\S]*\{ creation_id: containerId \}/);
+  assert.match(scheduler, /attempt < 60/);
+  assert.match(scheduler, /publishStarted \|\| error instanceof OutcomeUncertainError/);
+  assert.doesNotMatch(scheduler, /ig_container_id/);
   assert.doesNotMatch(scheduler, /instagram_r2_provider_handoff_not_implemented/);
   assert.doesNotMatch(scheduler, /dropbox/i);
 });

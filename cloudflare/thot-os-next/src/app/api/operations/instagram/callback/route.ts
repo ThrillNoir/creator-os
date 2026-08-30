@@ -7,7 +7,7 @@ import { fetchInternalService } from "@/lib/internal-service";
 export async function GET(request: Request) {
   const destination = new URL("/operations?platform=instagram", request.url);
   try {
-    const context = await requireCreatorContext("manage_identity");
+    const context = await requireCreatorContext("mutate");
     const state = new URL(request.url).searchParams.get("state");
     if (!state) throw new Error("Instagram connection state is missing.");
     const env = cloudflareEnv();
