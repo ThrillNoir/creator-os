@@ -138,7 +138,7 @@ export function NativeMediaUploader() {
   };
 
   return <section className="native-media-uploader panel" aria-label="Upload private source images">
-    <div className="native-media-uploader-copy"><span className="eyebrow">CLOUDFLARE-NATIVE</span><h2>Upload source images</h2><p>New files go directly to private Cloudflare storage. Dropbox is not used for these uploads.</p></div>
+    <div className="native-media-uploader-copy"><span className="eyebrow">CLOUDFLARE-NATIVE</span><h2>Upload source images</h2><p>New files go directly to private creator-scoped R2 storage.</p></div>
     <input ref={input} className="sr-only" type="file" accept=".jpg,.jpeg,.png,.webp,.heic,image/jpeg,image/png,image/webp,image/heic" multiple onChange={(event) => { addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
     <button className="native-drop-zone" type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} disabled={running.current}>
       <b>Drop up to {maxFiles} images here</b><span>or choose JPEG, PNG, WebP, or HEIC files · 64 MB each</span>

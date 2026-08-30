@@ -12,7 +12,7 @@ export async function GET() {
   `).bind(context.creator.creator_id).first<{ assets: number; previews: number }>(), env.DB.prepare("SELECT name FROM d1_migrations ORDER BY name DESC LIMIT 1").first<{ name: string }>(), (async () => {
     if (!env.VAULT_BRIDGE) return { compatible: false };
     try {
-      const response = await fetchInternalService(env, "vault_catalogue", "vault.source_media.health", env.VAULT_BRIDGE, "https://vault-bridge/internal/source-media/health", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: context.creator.creator_id }) });
+      const response = await fetchInternalService(env, "vault", "vault.source_media.health", env.VAULT_BRIDGE, "https://vault-bridge/internal/source-media/health", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: context.creator.creator_id }) });
       const body = await response.json() as { ok?: boolean; sourceMediaCapability?: string; bindings?: { libraryMedia?: boolean }; reasonCode?: unknown };
       const compatible = response.ok && body.ok === true && body.sourceMediaCapability === "r2-source-v2" && body.bindings?.libraryMedia === true;
       return { compatible, reason: compatible ? "ready" : typeof body.reasonCode === "string" ? body.reasonCode : "vault_health_contract_failed" };

@@ -150,10 +150,6 @@ button, input, textarea, select { font: inherit; }
 .fansly-setup-form { grid-template-columns: repeat(2,minmax(0,1fr)); align-items: end; }
 .fansly-setup-form .section-divider { grid-column: 1 / -1; margin-top: 0; }
 .fansly-setup-form .primary { width: fit-content; min-height: 42px; margin: 0; }
-.dropbox-source-form { grid-template-columns: repeat(2,minmax(0,1fr)); align-items: end; }
-.dropbox-source-form label small { color: var(--muted); font-weight: 400; }
-.dropbox-source-form .section-divider { grid-column: 1 / -1; margin-top: 0; }
-.dropbox-source-form .primary { width: fit-content; min-height: 42px; margin: 0; }
 .fansly-workflow { margin-top: 20px; }
 .connection-details { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
 .connection-details > div { display: grid; gap: 4px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #15111c; }

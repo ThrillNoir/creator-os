@@ -8,7 +8,6 @@ type DuePost = {
   caption: string;
   extension: string;
   relative_path: string;
-  dropbox_root: string;
   provider_container_id: string | null;
   provider_container_type: string | null;
 };
@@ -228,10 +227,6 @@ function responseId(value: unknown, label: string) {
   return String(id);
 }
 
-function dropboxPath(root: string, relative: string) {
-  return `/${[root, relative].map((part) => part.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/")}`;
-}
-
 function mediaType(extension: string) {
   const normalized = extension.toLowerCase().replace(/^\./, "");
   if (["jpg", "jpeg", "png"].includes(normalized)) return "photo" as const;
@@ -350,17 +345,6 @@ function storedInstagramComposioUserId(connection: { composio_user_id: string })
   const userId = connection.composio_user_id?.trim();
   if (!userId) throw new Error("Instagram connection is missing its recorded provider scope. Reconnect before any provider operation.");
   return userId;
-}
-
-async function currentDropboxConnection(env: Env, creatorId: string) {
-  const connection = await env.DB.prepare(`SELECT connected_account_id,status
-    FROM provider_connections
-    WHERE creator_id=? AND service='dropbox'`).bind(creatorId)
-    .first<{ connected_account_id: string; status: string }>();
-  if (!connection || connection.status !== "active" || !connection.connected_account_id) {
-    throw new Error("This creator’s Dropbox source is not connected.");
-  }
-  return connection;
 }
 
 async function resolveInstagramRecipient(env: Env, creatorId: string, externalThreadId: string) {
@@ -793,97 +777,12 @@ async function beginInstagramPublish(env: Env, post: DuePost) {
   return operationId;
 }
 
-async function publishPost(env: Env, post: DuePost) {
-  const connection = await currentInstagramConnection(env, post.creator_id);
-  const sourceState = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(post.creator_id).first<{ active_backend: "dropbox" | "r2" }>();
-  // The Graph container workflow accepts a provider-fetched URL, not a
-  // bounded authenticated upload stream.  Do not turn a private R2 original
-  // into a public or presigned URL merely to satisfy that API: while an R2
-  // backend is active, publishing remains mechanically blocked until a
-  // provider-private handoff is separately implemented and reviewed.
-  if (sourceState?.active_backend === "r2") throw new Error("instagram_r2_provider_handoff_not_implemented");
-  const dropbox = await currentDropboxConnection(env, post.creator_id);
-  const operationId = await beginInstagramPublish(env, post);
-  const instagramUserId = storedInstagramComposioUserId(connection);
-  const kind = mediaType(post.extension);
-  let containerId = post.provider_container_id;
-  if (!containerId) {
-    const temporary = await executeTool<{ link?: string }>(env, "DROPBOX_GET_TEMPORARY_LINK", dropbox.connected_account_id, `creator-os:${post.creator_id}:service:dropbox`, {
-      path: dropboxPath(post.dropbox_root, post.relative_path),
-    });
-    if (!temporary.link) throw new Error("Dropbox did not return a temporary media link.");
-    let created: unknown;
-    try {
-      created = await executeTool<unknown>(env, "INSTAGRAM_CREATE_MEDIA_CONTAINER", connection.connected_account_id, instagramUserId, {
-        ig_user_id: connection.external_account_id,
-        caption: post.caption,
-        content_type: kind,
-        ...(kind === "reel"
-          ? { video_url: temporary.link, media_type: "REELS", share_to_feed: true }
-          : { image_url: temporary.link }),
-      });
-      containerId = responseId(created, "Instagram media container");
-    } catch (error) {
-      await markFailed(env, post, error instanceof Error ? error.message : "Instagram container creation failed.", true);
-      return { published: false, failed: true };
-    }
-    await env.DB.batch([
-      env.DB.prepare("UPDATE social_posts SET provider_container_id=?,provider_container_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(containerId, kind, post.id, post.creator_id),
-      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','container_created',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ containerId, kind })),
-    ]);
-  }
-
-  let published: unknown;
-  try {
-    published = await executeTool<unknown>(env, "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", connection.connected_account_id, instagramUserId, {
-      ig_user_id: connection.external_account_id,
-      creation_id: containerId,
-      max_wait_seconds: kind === "reel" ? 180 : 60,
-    });
-  } catch (error) {
-    await markFailed(env, post, error instanceof Error ? error.message : "Instagram publishing failed.", true);
-    return { published: false, failed: true };
-  }
-  const externalPostId = responseId(published, "Instagram publish");
-  let permalink: string | null = null;
-  let receiptWarning: string | null = null;
-  try {
-    const details = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA", connection.connected_account_id, instagramUserId, {
-      ig_media_id: externalPostId,
-      fields: "id,permalink,media_type,media_product_type,timestamp",
-    });
-    const detailsRecord = record(details) ?? {};
-    permalink = typeof detailsRecord.permalink === "string" ? detailsRecord.permalink : null;
-  } catch (error) {
-    receiptWarning = error instanceof Error ? error.message.slice(0, 1000) : "Instagram permalink lookup failed.";
-  }
-  const statements = [
-    env.DB.prepare("UPDATE social_posts SET status='published',published_at=CURRENT_TIMESTAMP,external_post_id=?,external_url=?,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(externalPostId, permalink, post.id, post.creator_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, containerId, kind, permalink })),
-    env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(post.creator_id),
-  ];
-  if (receiptWarning) statements.push(env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','receipt_enrichment_failed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ error: receiptWarning })));
-  statements.push(
-    env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='instagram'")
-      .bind(externalPostId, JSON.stringify({ externalPostId, permalink, containerId, kind }), operationId, post.creator_id),
-    env.DB.prepare("UPDATE operation_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
-      .bind(operationId, post.creator_id),
-  );
-  try {
-    await env.DB.batch(statements);
-  } catch (error) {
-    throw new OutcomeUncertainError(`Instagram returned ${externalPostId}, but THOT OS could not durably record the receipt: ${error instanceof Error ? error.message : "database failure"}.`);
-  }
-  return { published: true, failed: false };
-}
-
 async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
     SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.caption,p.provider_container_id,p.provider_container_type,
-      a.extension,a.relative_path,c.dropbox_root
+      a.extension,a.relative_path
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    JOIN creators c ON c.id=p.creator_id
     WHERE p.id=? AND p.creator_id=? AND p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL
   `).bind(postId, creatorId).first<DuePost>();
 }
@@ -891,13 +790,10 @@ async function loadPost(env: Env, creatorId: string, postId: string) {
 async function claimAndPublish(env: Env, post: DuePost) {
   const claim = await env.DB.prepare("UPDATE social_posts SET status='publishing',claimed_at=CURRENT_TIMESTAMP,last_attempt_at=CURRENT_TIMESTAMP,attempt_count=attempt_count+1,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='scheduled'").bind(post.id, post.creator_id).run();
   if (!claim.meta.changes) return { claimed: false, published: false, failed: false };
-  try {
-    const result = await publishPost(env, post);
-    return { claimed: true, ...result };
-  } catch (error) {
-    await markFailed(env, post, error instanceof Error ? error.message : "Instagram publishing failed.", error instanceof OutcomeUncertainError);
-    return { claimed: true, published: false, failed: true };
-  }
+  // Instagram Graph requires a provider-fetchable URL. Private R2 media stays
+  // private until a reviewed provider-private handoff exists.
+  await markFailed(env, post, "instagram_r2_provider_handoff_not_implemented");
+  return { claimed: true, published: false, failed: true };
 }
 
 async function publishOne(request: Request, env: Env) {
@@ -917,10 +813,9 @@ async function processDue(env: Env, triggerType: string) {
   try {
     const due = await env.DB.prepare(`
       SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.caption,p.provider_container_id,p.provider_container_type,
-        a.extension,a.relative_path,c.dropbox_root
+        a.extension,a.relative_path
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-      JOIN creators c ON c.id=p.creator_id
       WHERE p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL
         AND p.scheduled_at IS NOT NULL AND unixepoch(p.scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)
       ORDER BY p.scheduled_at LIMIT 3

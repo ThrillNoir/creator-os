@@ -51,9 +51,8 @@ export async function validateR2VideoMetadata(bucket: R2Bucket, key: string, exp
 }) {
   const object = await bucket.head(key);
   if (!object) throw new Error("source_object_missing");
-  if (object.size !== expected.bytes
-    || object.etag !== expected.multipartEtag
-    || object.customMetadata?.expected_sha256 !== expected.sha256) throw new Error("source_media_verification_failed");
+  if (object.size !== expected.bytes || object.etag !== expected.multipartEtag) throw new Error("source_media_byte_mismatch");
+  if (object.customMetadata?.expected_sha256 !== expected.sha256) throw new Error("source_media_metadata_mismatch");
   if (object.httpMetadata?.contentType !== expected.mimeType
     || object.customMetadata?.creator_id !== expected.creatorId
     || object.customMetadata?.asset_id !== expected.assetId

@@ -3,7 +3,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { expectedPartBytes, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
-type Session = { id: string; asset_id: string; object_key: string | null; multipart_upload_id: string | null; expected_bytes: number; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string; ingest_kind: "legacy_direct" | "native_image" };
+type Session = { id: string; asset_id: string; object_key: string | null; multipart_upload_id: string | null; expected_bytes: number; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string; ingest_kind: "native_image" };
 
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 

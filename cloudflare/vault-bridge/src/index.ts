@@ -1,44 +1,20 @@
-import { verifyRedditPostMetadata, type RedditPublicPost } from "./reddit-verification";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 
 type BridgeIdentity = { creator_id: string; account_id: string; profile_id: string; platform: "fansly" };
-type RedditBridgeIdentity = { creator_id: string; account_id: string; profile_id: string };
 type VaultJob = { id: string; basename: string; bytes: number; asset_id: string };
 type BrowserMessage = { externalMessageId?: string; direction?: string; senderType?: string; body?: string; sentAt?: string };
 type BrowserThread = { externalThreadId?: string; participantName?: string; participantHandle?: string; unreadCount?: number; observedOpen?: boolean; messages?: BrowserMessage[] };
-type RedditNativeJob = {
-  id: string; basename: string; bytes: number; extension: string; asset_id: string;
-  title: string; caption: string; content_rating: "sfw" | "nsfw"; community_name: string;
-  expected_handle: string;
-};
-type DropboxListEntry = { ".tag"?: string; name?: string; path_display?: string; path_lower?: string; id?: string; size?: number; server_modified?: string; rev?: string };
-type DropboxListResult = { entries?: DropboxListEntry[]; has_more?: boolean; cursor?: string };
-type DropboxConnection = { id: string; userId: string };
-type DropboxAuthConfig = { id: string };
-type DropboxThumbnail = { thumbnail?: { s3url?: string; name?: string }; content_type?: string };
-type PreviewAsset = { id: string; relative_path: string; extension: string; dropbox_revision: string | null };
-type PreviewQueueMessage = { creatorId: string; assetId: string; sourceRevision: string | null };
-type PreviewJobAsset = PreviewAsset & { dropbox_root: string; preview_r2_key: string | null; job_revision: string | null; job_status: string };
+type PreviewQueueMessage = { creatorId: string; assetId: string; sourceRevision: string };
 
-const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
-const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
-const READ_ONLY_DROPBOX_AUTH_CONFIG_NAME = "THOT OS Dropbox catalogue (read-only)";
-const READ_ONLY_DROPBOX_SCOPES = "files.metadata.read,files.content.read";
-const READ_ONLY_DROPBOX_TOOLS = [
-  "DROPBOX_LIST_FILES_IN_FOLDER",
-  "DROPBOX_LIST_FOLDER_CONTINUE",
-  "DROPBOX_GET_THUMBNAIL",
-  "DROPBOX_GET_TEMPORARY_LINK",
-];
-const allowedOrigins = new Set(["https://fansly.com", "https://www.reddit.com", "https://reddit.com", "https://thot-os-staging.thot-os.workers.dev"]);
+const allowedOrigins = new Set(["https://fansly.com", "https://thot-os-staging.thot-os.workers.dev"]);
 
 function cors(request: Request) {
   const origin = request.headers.get("origin") ?? "";
   return {
     "access-control-allow-origin": allowedOrigins.has(origin) ? origin : "https://fansly.com",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "authorization,content-type,x-thot-os-vault-client,x-thot-os-reddit-client,x-thot-os-installation-id",
+    "access-control-allow-headers": "authorization,content-type,x-thot-os-vault-client,x-thot-os-installation-id",
     "access-control-max-age": "86400",
     vary: "Origin",
   };
@@ -54,52 +30,29 @@ async function sha256(value: string) {
 }
 
 type LibraryObject = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string | null; r2_etag: string | null };
-type ResolvedCreatorMedia = { kind: "r2"; object: R2ObjectBody; record: LibraryObject } | { kind: "dropbox"; response: Response; contentType: string; length: string | null };
+type ResolvedCreatorMedia = { object: R2ObjectBody; record: LibraryObject };
 
-/**
- * The per-creator cutover record is authoritative. When R2 is active, a
- * missing or invalid object is a hard error: silently falling back to Dropbox
- * could conceal a partial migration or serve the wrong source revision.
- */
 async function resolveCreatorMedia(env: Env, creatorId: string, assetId: string): Promise<ResolvedCreatorMedia> {
-  const state = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(creatorId).first<{ active_backend: "dropbox" | "r2" }>();
-  if (state?.active_backend === "r2") {
-    const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
-      FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
-      WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
-        AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.source_provider='dropbox'
-        AND o.source_revision IS a.dropbox_revision AND o.byte_count=a.bytes AND a.source_available=1
-      ORDER BY o.verified_at DESC LIMIT 1`).bind(creatorId, assetId).first<LibraryObject>();
-    if (!record || !record.r2_version || !record.r2_etag || !env.LIBRARY_MEDIA) throw new Error("r2_source_media_not_available");
-    const object = await env.LIBRARY_MEDIA.get(record.object_key, { onlyIf: { etagMatches: record.r2_etag } });
-    if (!object || !("body" in object) || !immutableR2IdentityMatches(record, object)) throw new Error("r2_source_media_integrity_failed");
-    return { kind: "r2", object, record };
-  }
-  const source = await env.DB.prepare(`SELECT a.relative_path,c.dropbox_root
-    FROM assets a JOIN creators c ON c.id=a.creator_id
-    WHERE a.id=? AND a.creator_id=? AND a.source_available=1`).bind(assetId, creatorId).first<{ relative_path: string; dropbox_root: string }>();
-  if (!source) throw new Error("creator_media_not_available");
-  const temporary = await executeDropbox<{ link?: string }>(env, creatorId, "DROPBOX_GET_TEMPORARY_LINK", { path: dropboxPath(source.dropbox_root, source.relative_path) });
-  if (!temporary.link) throw new Error("dropbox_media_unavailable");
-  const response = await fetch(temporary.link);
-  if (!response.ok || !response.body) throw new Error("dropbox_media_download_failed");
-  return { kind: "dropbox", response, contentType: response.headers.get("content-type") ?? "application/octet-stream", length: response.headers.get("content-length") };
+  const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
+    FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
+      AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
+      AND o.byte_count=a.bytes AND a.source_available=1 ORDER BY o.verified_at DESC LIMIT 1`)
+    .bind(creatorId, assetId).first<LibraryObject>();
+  if (!record || !record.r2_version || !record.r2_etag) throw new Error("r2_source_media_not_available");
+  const object = await env.LIBRARY_MEDIA.get(record.object_key, { onlyIf: { etagMatches: record.r2_etag } });
+  if (!object || !("body" in object) || !immutableR2IdentityMatches(record, object)) throw new Error("r2_source_media_integrity_failed");
+  return { object, record };
 }
 
 function resolvedMediaResponse(request: Request, media: ResolvedCreatorMedia) {
-  if (media.kind === "r2") {
-    const headers = new Headers({ "cache-control": "private, no-store", "x-content-type-options": "nosniff", ...cors(request) });
-    media.object.writeHttpMetadata(headers);
-    headers.set("content-type", media.record.verified_mime_type);
-    headers.set("content-length", String(media.record.byte_count));
-    headers.set("content-disposition", "attachment");
-    return new Response(media.object.body, { status: 200, headers });
-  }
-  return new Response(media.response.body, { status: 200, headers: {
-    "content-type": media.contentType,
-    ...(media.length ? { "content-length": media.length } : {}),
-    "cache-control": "private, no-store", "x-content-type-options": "nosniff", "content-disposition": "attachment", ...cors(request),
-  } });
+  const headers = new Headers({ "cache-control": "private, no-store", "x-content-type-options": "nosniff", ...cors(request) });
+  media.object.writeHttpMetadata(headers);
+  headers.set("content-type", media.record.verified_mime_type);
+  headers.set("content-length", String(media.record.byte_count));
+  headers.set("content-disposition", "attachment");
+  return new Response(media.object.body, { status: 200, headers });
 }
 
 async function authenticate(request: Request, env: Env) {
@@ -116,20 +69,6 @@ async function authenticate(request: Request, env: Env) {
   return identity;
 }
 
-async function authenticateReddit(request: Request, env: Env) {
-  const authorization = request.headers.get("authorization") ?? "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
-  if (token.length < 40) return null;
-  const tokenHash = await sha256(token);
-  const identity = await env.DB.prepare(`SELECT bc.creator_id,bc.account_id,bc.profile_id FROM bridge_credentials bc
-    JOIN browser_profiles bp ON bp.id=bc.profile_id AND bp.creator_id=bc.creator_id
-    JOIN account_browser_profiles abp ON abp.creator_id=bc.creator_id AND abp.account_id=bc.account_id AND abp.profile_id=bc.profile_id
-    WHERE bc.token_hash=? AND bc.platform='reddit' AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP AND bp.status<>'revoked'`).bind(tokenHash).first<RedditBridgeIdentity>();
-  if (identity && !await bindInstallation(request, env, identity.creator_id, identity.profile_id, tokenHash)) return null;
-  if (identity) await env.DB.prepare("UPDATE bridge_credentials SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=?").bind(tokenHash).run();
-  return identity;
-}
-
 async function bindInstallation(request: Request, env: Env, creatorId: string, profileId: string, tokenHash: string) {
   const installationId = request.headers.get("x-thot-os-installation-id")?.trim() ?? "";
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installationId)) return false;
@@ -143,428 +82,73 @@ async function bindInstallation(request: Request, env: Env, creatorId: string, p
 }
 
 function pairingPage() {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>THOT OS device pairing</title></head><body><main><h1>Pairing this Chrome profile…</h1><p>Keep the THOT OS extension enabled. This page contains no third-party scripts and will continue to the selected platform after verification.</p></main></body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>THOT OS device pairing</title></head><body><main><h1>Pairing this Chrome profile…</h1><p>Keep the THOT OS extension enabled. This page contains no third-party scripts and will continue to Fansly after verification.</p></main></body></html>`;
   return new Response(html, { headers: {
-    "content-type": "text/html; charset=utf-8",
-    "cache-control": "no-store",
+    "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
     "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-    "referrer-policy": "no-referrer",
-    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer", "x-content-type-options": "nosniff",
   } });
 }
 
-async function getDropboxConnection(env: Env, creatorId: string): Promise<DropboxConnection> {
-  const userId = `creator-os:${creatorId}:service:dropbox`;
-  const query = new URLSearchParams({ toolkit_slugs: "dropbox", user_ids: userId, statuses: "ACTIVE", limit: "10" });
-  const connectionResponse = await fetch(`${COMPOSIO_V31}/connected_accounts?${query}`, {
-    headers: { "x-api-key": env.COMPOSIO_API_KEY },
-  });
-  const connectionPayload = await connectionResponse.json().catch(() => ({})) as {
-    items?: Array<{ id?: string; user_id?: string; status?: string; toolkit?: { slug?: string } }>;
-    error?: string | { message?: string };
-  };
-  const connection = connectionPayload.items?.find((item) => item.toolkit?.slug === "dropbox" && item.status === "ACTIVE" && item.user_id === userId && item.id);
-  if (!connection) {
-    const message = typeof connectionPayload.error === "string" ? connectionPayload.error : connectionPayload.error?.message;
-    throw new Error(message || "No active creator-scoped Dropbox connection is available. Reconnect Dropbox before refreshing the catalogue.");
-  }
-  return { id: connection.id!, userId };
-}
-
-async function getDropboxAuthConfig(env: Env): Promise<DropboxAuthConfig> {
-  const response = await fetch(`${COMPOSIO_V31}/auth_configs?toolkit_slug=dropbox&limit=10`, {
-    headers: { "x-api-key": env.COMPOSIO_API_KEY },
-  });
-  const payload = await response.json().catch(() => ({})) as {
-    items?: Array<{ id?: string; name?: string; status?: string; toolkit?: { slug?: string } }>;
-    error?: string | { message?: string };
-  };
-  // Never fall back to the project default. Its scopes may be broader than this
-  // read-only catalogue integration needs. A deliberately named configuration is
-  // created with only Dropbox metadata/content read scopes before connection.
-  const config = payload.items?.find((item) => item.id
-    && item.name === READ_ONLY_DROPBOX_AUTH_CONFIG_NAME
-    && item.status === "ENABLED"
-    && item.toolkit?.slug === "dropbox");
-  if (config?.id) return { id: config.id };
-
-  // This project may also have general-purpose Dropbox configurations. Create a
-  // separate, deliberately narrow managed configuration for THOT OS rather than
-  // ever reusing one whose permissions are unknown.
-  const createResponse = await fetch(`${COMPOSIO_V3}/auth_configs`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({
-      toolkit: { slug: "dropbox" },
-      auth_config: {
-        type: "use_composio_managed_auth",
-        name: READ_ONLY_DROPBOX_AUTH_CONFIG_NAME,
-        credentials: { scopes: READ_ONLY_DROPBOX_SCOPES },
-        restrict_to_following_tools: READ_ONLY_DROPBOX_TOOLS,
-      },
-    }),
-  });
-  const created = await createResponse.json().catch(() => ({})) as {
-    auth_config?: { id?: string };
-    id?: string;
-    error?: string | { message?: string };
-  };
-  const id = created.auth_config?.id ?? created.id;
-  if (!createResponse.ok || !id) {
-    const message = typeof created.error === "string" ? created.error : created.error?.message;
-    throw new Error(message || "The read-only Dropbox authorization could not be prepared. No Dropbox permissions were requested.");
-  }
-  return { id };
-}
-
-async function executeDropboxForConnection<T>(env: Env, connection: DropboxConnection, slug: string, args: Record<string, unknown>) {
-  const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ connected_account_id: connection.id, user_id: connection.userId, version: "latest", arguments: args }),
-  });
-  const payload = await response.json().catch(() => ({})) as { successful?: boolean; data?: T; error?: string | { message?: string } };
-  if (!response.ok || payload.successful === false || payload.data === undefined) {
-    const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
-    if (message?.includes("path/not_found")) {
-      throw new Error("Dropbox could not find this creator’s configured folder. Update the Dropbox folder path in Accounts & connections, then try again.");
-    }
-    throw new Error(message || `Dropbox request failed (${response.status}).`);
-  }
-  return payload.data;
-}
-
-async function executeDropbox<T>(env: Env, creatorId: string, slug: string, args: Record<string, unknown>) {
-  return executeDropboxForConnection<T>(env, await getDropboxConnection(env, creatorId), slug, args);
-}
-
-async function startDropboxReconnect(request: Request, env: Env) {
-  const input = await request.json().catch(() => null) as { creatorId?: unknown; callbackUrl?: unknown } | null;
-  const creatorId = typeof input?.creatorId === "string" ? input.creatorId.trim() : "";
-  const callbackUrl = typeof input?.callbackUrl === "string" ? input.callbackUrl.trim() : "";
-  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
-  let callback: URL;
-  try { callback = new URL(callbackUrl); } catch { return json(request, { ok: false, error: "invalid_callback" }, 400); }
-  if (callback.protocol !== "https:" || callback.username || callback.password) return json(request, { ok: false, error: "invalid_callback" }, 400);
-  let service;
-  try {
-    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue", "vault.catalogue.connection.manage");
-  } catch {
-    return json(request, { ok: false, error: "unauthorized" }, 401);
-  }
-  await internalServiceAuditStatement(env.DB, service, "/catalogue/dropbox/reconnect").run();
-  // A failed or abandoned authorization has no ACTIVE account to refresh. Start a
-  // new link session from the project Dropbox auth config so this can recover
-  // without relying on any previous provider state.
-  const authConfig = await getDropboxAuthConfig(env);
-  const response = await fetch(`${COMPOSIO_V3}/connected_accounts/link`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ auth_config_id: authConfig.id, user_id: `creator-os:${creatorId}:service:dropbox`, callback_url: callback.toString() }),
-  });
-  const payload = await response.json().catch(() => ({})) as { redirect_url?: unknown; error?: string | { message?: string } };
-  const redirectUrl = typeof payload.redirect_url === "string" ? payload.redirect_url : "";
-  let redirect: URL | null = null;
-  try { redirect = new URL(redirectUrl); } catch { /* validated below */ }
-  if (!response.ok || !redirect || redirect.protocol !== "https:" || redirect.username || redirect.password) {
-    const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
-    return json(request, { ok: false, error: message || "Dropbox reconnection could not be started." }, 502);
-  }
-  return json(request, { ok: true, redirectUrl: redirect.toString() });
-}
-
-async function executeReddit<T>(env: Env, creatorId: string, connectedAccountId: string, slug: string, args: Record<string, unknown>) {
-  const response = await fetch(`${COMPOSIO_V31}/tools/execute/${slug}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": env.COMPOSIO_API_KEY },
-    body: JSON.stringify({ connected_account_id: connectedAccountId, user_id: `creator-os:${creatorId}:service:reddit`, version: "latest", arguments: args }),
-  });
-  const payload = await response.json().catch(() => ({})) as { successful?: boolean; data?: T; error?: string | { message?: string } };
-  if (!response.ok || payload.successful === false || payload.data === undefined) {
-    const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
-    throw new Error(message || `${slug} failed (${response.status}).`);
-  }
-  return payload.data;
-}
-
-async function listDropboxFiles(env: Env, creatorId: string, path: string) {
-  let page = await executeDropbox<DropboxListResult>(env, creatorId, "DROPBOX_LIST_FILES_IN_FOLDER", {
-    path,
-    recursive: true,
-    include_deleted: false,
-    limit: 2000,
-  });
-  const entries = [...(page.entries ?? [])];
-  // Dropbox listings are cursor-paginated. Do not index a partial catalogue: either
-  // collect every page or leave the existing catalogue unchanged.
-  for (let pageNumber = 1; page.has_more; pageNumber += 1) {
-    if (!page.cursor || pageNumber >= 50) throw new Error("Dropbox returned an incomplete catalogue; no changes were applied.");
-    page = await executeDropbox<DropboxListResult>(env, creatorId, "DROPBOX_LIST_FOLDER_CONTINUE", { cursor: page.cursor });
-    entries.push(...(page.entries ?? []));
-  }
-  return entries;
-}
-
-function dropboxPath(root: string, relative: string) {
-  return `/${[root, relative].map((part) => part.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/")}`;
-}
-
-function filenameClass(filename: string) {
-  const stem = filename.replace(/\.[^.]+$/, "");
-  if (/^_?(DSC|DIK|MG|ABC)[_-]?\d/i.test(stem)) return "camera";
-  if (stem.length >= 75 && /[_-]/.test(stem)) return "descriptive";
-  return "other";
-}
-
-function relativeDropboxPath(root: string, entry: DropboxListEntry) {
-  const path = entry.path_display || entry.path_lower || "";
-  const normalizedRoot = `/${root.replace(/^\/+|\/+$/g, "")}`.replace(/\/$/, "");
-  if (!path || !path.toLowerCase().startsWith(`${normalizedRoot.toLowerCase()}/`)) return null;
-  return path.slice(normalizedRoot.length + 1);
-}
-
-async function refreshDropboxCatalogue(request: Request, env: Env) {
-  const input = await request.json().catch(() => null) as { creatorId?: unknown } | null;
-  const creatorId = typeof input?.creatorId === "string" ? input.creatorId.trim() : "";
-  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
-  let service;
-  try {
-    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue", "vault.catalogue.refresh");
-  } catch {
-    return json(request, { ok: false, error: "unauthorized" }, 401);
-  }
-  const creator = await env.DB.prepare("SELECT dropbox_root FROM creators WHERE id=? AND status='active'").bind(creatorId).first<{ dropbox_root: string | null }>();
-  if (!creator?.dropbox_root) return json(request, { ok: false, error: "Dropbox root is not configured for this creator." }, 409);
-  await internalServiceAuditStatement(env.DB, service, "/catalogue/refresh").run();
-  const entries = await listDropboxFiles(env, creatorId, creator.dropbox_root);
-  const supported = new Set(["jpg", "jpeg", "png", "webp", "heic", "mov", "mp4"]);
-  const files = entries.flatMap((entry) => {
-    if (entry[".tag"] !== "file") return [];
-    const relativePath = relativeDropboxPath(creator.dropbox_root!, entry);
-    const basename = entry.name?.trim() || "";
-    const extension = basename.includes(".") ? basename.slice(basename.lastIndexOf(".") + 1).toLowerCase() : "";
-    if (!relativePath || !basename || !supported.has(extension) || !entry.server_modified) return [];
-    return [{ entry, relativePath, basename, extension }];
-  });
-  const now = new Date().toISOString();
-  const updates = files.map(({ entry, relativePath, basename, extension }) => env.DB.prepare(`INSERT INTO assets
-    (id,creator_id,relative_path,basename,extension,bytes,modified_at,filename_class,repeated_basename,source_available,indexed_at,dropbox_revision)
-    VALUES (?,?,?,?,?,?,?,?,0,1,?,?)
-    -- The tenant-integrity layer also enforces (id,creator_id). Reconcile that
-    -- stable Dropbox identity before the creator/path key so a move updates its row.
-    ON CONFLICT(id,creator_id) DO UPDATE SET relative_path=excluded.relative_path,basename=excluded.basename,extension=excluded.extension,bytes=excluded.bytes,
-      modified_at=excluded.modified_at,filename_class=excluded.filename_class,source_available=1,indexed_at=excluded.indexed_at,
-      preview_r2_key=CASE WHEN assets.dropbox_revision IS excluded.dropbox_revision THEN assets.preview_r2_key ELSE NULL END,
-      dropbox_revision=excluded.dropbox_revision
-    ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,basename=excluded.basename,extension=excluded.extension,bytes=excluded.bytes,
-      modified_at=excluded.modified_at,filename_class=excluded.filename_class,source_available=1,indexed_at=excluded.indexed_at,
-      preview_r2_key=CASE WHEN assets.dropbox_revision IS excluded.dropbox_revision THEN assets.preview_r2_key ELSE NULL END,
-      dropbox_revision=excluded.dropbox_revision
-      WHERE assets.creator_id=excluded.creator_id
-    ON CONFLICT(creator_id,relative_path) DO UPDATE SET basename=excluded.basename,extension=excluded.extension,bytes=excluded.bytes,
-      modified_at=excluded.modified_at,filename_class=excluded.filename_class,source_available=1,indexed_at=excluded.indexed_at,
-      preview_r2_key=CASE WHEN assets.dropbox_revision IS excluded.dropbox_revision THEN assets.preview_r2_key ELSE NULL END,
-      dropbox_revision=excluded.dropbox_revision`)
-    .bind(`dropbox:${creatorId}:${entry.id || relativePath}`, creatorId, relativePath, basename, extension, Math.max(0, Math.floor(entry.size || 0)), entry.server_modified, filenameClass(basename), now, entry.rev || null));
-  for (let index = 0; index < updates.length; index += 80) await env.DB.batch(updates.slice(index, index + 80));
-  // Listing completed before any write, so it is safe to hide source files that
-  // were not observed in this catalogue generation. Keep their metadata and
-  // private preview objects for audit/recovery, but never offer them for use.
-  await env.DB.prepare(`UPDATE assets SET source_available=0
-    WHERE creator_id=? AND source_available=1 AND indexed_at<>?`).bind(creatorId, now).run();
-  const previews = await enqueueDropboxPreviews(env, creatorId);
-  return json(request, { ok: true, assets: files.length, previews });
-}
-
 async function sourceMediaHealth(request: Request, env: Env) {
-  const input = await request.json().catch(() => null) as { creatorId?: unknown } | null;
-  const creatorId = typeof input?.creatorId === "string" ? input.creatorId.trim() : "";
-  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(creatorId)) return json(request, { ok: false, error: "invalid_creator" }, 400);
-  let service;
-  try {
-    service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault-catalogue", "vault.source_media.health");
-  } catch {
-    return json(request, { ok: false, error: "unauthorized" }, 401);
-  }
-  const migration = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>();
-  const hardening = await env.DB.prepare("SELECT COUNT(*) AS applied FROM d1_migrations WHERE name='0051_r2_source_media_hardening.sql'").first<{ applied: number }>();
-  const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.r2_version,o.r2_etag
-    FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
-    WHERE o.creator_id=? AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
-      AND o.ingest_status='verified' AND o.source_provider='dropbox' AND o.source_revision IS a.dropbox_revision
-      AND o.byte_count=a.bytes AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL AND a.source_available=1
-    ORDER BY o.verified_at DESC LIMIT 1`).bind(creatorId).first<{ object_key: string; byte_count: number; r2_version: string; r2_etag: string }>();
-  let probe = { ok: false, assetBound: false };
-  if (record && env.LIBRARY_MEDIA) {
-    const object = await env.LIBRARY_MEDIA.head(record.object_key).catch(() => null);
-    probe = { ok: immutableR2IdentityMatches(record, object), assetBound: true };
-  }
-  const workerVersion = (env as Env & { WORKER_VERSION?: { id?: string } }).WORKER_VERSION?.id ?? "";
+  const input: { creatorId?: string } = await request.json<{ creatorId?: string }>().catch(() => ({}));
+  const creatorId = String(input.creatorId ?? "");
+  if (!creatorId) return json(request, { ok: false, error: "creator_scope_required" }, 400);
+  const service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault", "vault.source_media.health");
   await internalServiceAuditStatement(env.DB, service, "/internal/source-media/health").run();
-  const ok = hardening?.applied === 1 && probe.ok && Boolean(workerVersion) && Boolean(env.LIBRARY_MEDIA);
-  const reasonCode = hardening?.applied !== 1 ? "hardening_migration_missing"
-    : !env.LIBRARY_MEDIA ? "library_media_binding_missing"
-      : !workerVersion ? "worker_version_missing"
-        : !probe.assetBound ? "no_eligible_canonical_object"
-          : !probe.ok ? "canonical_object_integrity_failed"
-            : "ready";
-  return json(request, {
-    ok,
-    service: "vault",
-    sourceMediaCapability: "r2-source-v2",
-    workerVersion,
-    probe,
-    migration: migration?.name ?? "none",
-    bindings: { libraryMedia: Boolean(env.LIBRARY_MEDIA) },
-    reasonCode,
-  });
-}
-
-function isJpeg(bytes: ArrayBuffer) {
-  const view = new Uint8Array(bytes);
-  return view.length >= 3 && view[0] === 0xff && view[1] === 0xd8 && view[2] === 0xff;
-}
-
-async function enqueueDropboxPreviews(env: Env, creatorId: string) {
-  const candidates = await env.DB.prepare(`SELECT a.id,a.relative_path,a.extension,a.dropbox_revision FROM assets a
-    LEFT JOIN asset_preview_jobs j ON j.creator_id=a.creator_id AND j.asset_id=a.id
-    WHERE a.creator_id=? AND a.source_available=1 AND a.preview_r2_key IS NULL
-      AND lower(a.extension) IN ('jpg','jpeg','png','webp','heic','mov','mp4')
-      AND (j.asset_id IS NULL OR j.status='failed'
-        OR (j.status='processing' AND j.updated_at<datetime('now','-15 minutes'))
-        OR NOT (j.source_revision IS a.dropbox_revision))
-    ORDER BY a.modified_at DESC`).bind(creatorId).all<PreviewAsset>();
-  const queued = candidates.results;
-  for (let offset = 0; offset < queued.length; offset += 80) {
-    const statements = queued.slice(offset, offset + 80).flatMap((asset) => {
-      const message = { creatorId, assetId: asset.id, sourceRevision: asset.dropbox_revision } satisfies PreviewQueueMessage;
-      const idempotencyKey = `preview-dispatch:${creatorId}:${asset.id}:${asset.dropbox_revision ?? "unversioned"}`;
-      return [
-        env.DB.prepare(`INSERT INTO asset_preview_jobs
-          (id,creator_id,asset_id,source_revision,status,attempts,last_error,queued_at,started_at,completed_at,updated_at)
-          VALUES (?,?,?,?,'queued',0,NULL,CURRENT_TIMESTAMP,NULL,NULL,CURRENT_TIMESTAMP)
-          ON CONFLICT(creator_id,asset_id) DO UPDATE SET source_revision=excluded.source_revision,status='queued',attempts=0,
-            last_error=NULL,queued_at=CURRENT_TIMESTAMP,started_at=NULL,completed_at=NULL,updated_at=CURRENT_TIMESTAMP`)
-          .bind(`preview:${creatorId}:${asset.id}`, creatorId, asset.id, asset.dropbox_revision),
-        env.DB.prepare(`INSERT INTO operation_outbox
-          (id,creator_id,operation_type,idempotency_key,payload,status,attempts,next_attempt_at,last_error,created_at,updated_at)
-          VALUES (?,?,?,?,?,'pending',0,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-          ON CONFLICT(idempotency_key) DO UPDATE SET payload=excluded.payload,status='pending',next_attempt_at=CURRENT_TIMESTAMP,
-            last_error=NULL,updated_at=CURRENT_TIMESTAMP`)
-          .bind(crypto.randomUUID(), creatorId, "preview_dispatch", idempotencyKey, JSON.stringify(message)),
-      ];
-    });
-    await env.DB.batch(statements);
+  const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
+    FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    WHERE o.creator_id=? AND o.ingest_status='verified' AND o.object_key=a.media_r2_key AND a.source_available=1
+    ORDER BY o.verified_at DESC LIMIT 1`).bind(creatorId).first<LibraryObject>();
+  let probe = true;
+  if (record?.r2_etag) {
+    const object = await env.LIBRARY_MEDIA.head(record.object_key);
+    probe = Boolean(object && immutableR2IdentityMatches(record, object));
   }
-  // Queue delivery is at-least-once.  The durable outbox is committed before a
-  // send attempt and is marked delivered only afterwards; replaying a message
-  // is safe because the preview consumer claims by creator, asset and revision.
-  const pending = await env.DB.prepare(`SELECT id,payload FROM operation_outbox
-    WHERE creator_id=? AND operation_type='preview_dispatch' AND status='pending'
-      AND unixepoch(next_attempt_at)<=unixepoch(CURRENT_TIMESTAMP)
-    ORDER BY created_at LIMIT 500`).bind(creatorId).all<{ id: string; payload: string }>();
-  for (let offset = 0; offset < pending.results.length; offset += 100) {
-    const batch = pending.results.slice(offset, offset + 100);
-    const valid = batch.flatMap((outbox) => {
-      try {
-        const message = JSON.parse(outbox.payload) as unknown;
-        return validPreviewMessage(message) ? [{ outboxId: outbox.id, message }] : [];
-      } catch {
-        return [];
-      }
-    });
-    const invalid = batch.filter((outbox) => !valid.some((item) => item.outboxId === outbox.id));
-    if (invalid.length) await env.DB.batch(invalid.map((outbox) => env.DB.prepare(`UPDATE operation_outbox
-      SET status='failed',last_error='Invalid preview outbox payload.',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='pending'`)
-      .bind(outbox.id, creatorId)));
-    if (!valid.length) continue;
-    await env.PREVIEW_QUEUE.sendBatch(valid.map(({ message }) => ({
-      body: message,
-      contentType: "json" as const,
-    })));
-    await env.DB.batch(valid.map(({ outboxId }) => env.DB.prepare(`UPDATE operation_outbox
-      SET status='delivered',attempts=attempts+1,delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
-      WHERE id=? AND creator_id=? AND status='pending'`).bind(outboxId, creatorId)));
-  }
-  const counts = await env.DB.prepare(`SELECT
-      SUM(CASE WHEN a.preview_r2_key IS NOT NULL THEN 1 ELSE 0 END) AS ready,
-      SUM(CASE WHEN j.status='queued' THEN 1 ELSE 0 END) AS queued,
-      SUM(CASE WHEN j.status='processing' THEN 1 ELSE 0 END) AS processing,
-      SUM(CASE WHEN j.status='failed' THEN 1 ELSE 0 END) AS failed
-    FROM assets a LEFT JOIN asset_preview_jobs j ON j.creator_id=a.creator_id AND j.asset_id=a.id
-    WHERE a.creator_id=? AND a.source_available=1
-      AND lower(a.extension) IN ('jpg','jpeg','png','webp','heic','mov','mp4')`).bind(creatorId)
-    .first<{ ready: number | null; queued: number | null; processing: number | null; failed: number | null }>();
-  return { ready: counts?.ready ?? 0, queued: counts?.queued ?? 0, processing: counts?.processing ?? 0, failed: counts?.failed ?? 0 };
-}
-
-async function generateDropboxPreview(env: Env, connection: DropboxConnection, creatorId: string, root: string, asset: PreviewAsset) {
-  const thumbnail = await executeDropboxForConnection<DropboxThumbnail>(env, connection, "DROPBOX_GET_THUMBNAIL", {
-    path: dropboxPath(root, asset.relative_path), size: "w480h320", format: "jpeg", mode: "bestfit",
-  });
-  const sourceUrl = thumbnail.thumbnail?.s3url;
-  if (!sourceUrl) throw new Error("Dropbox did not return a preview URL.");
-  const url = new URL(sourceUrl);
-  if (url.protocol !== "https:") throw new Error("Dropbox returned an unsafe preview URL.");
-  const response = await fetch(url, { headers: { accept: "image/jpeg" } });
-  const length = Number(response.headers.get("content-length") || "0");
-  if (!response.ok || (Number.isFinite(length) && length > 5_000_000)) throw new Error("Dropbox preview download was unavailable.");
-  const bytes = await response.arrayBuffer();
-  if (!bytes.byteLength || bytes.byteLength > 5_000_000 || !isJpeg(bytes)) throw new Error("Dropbox returned an invalid preview image.");
-  const objectId = await sha256(`${creatorId}:${asset.id}`);
-  const revisionId = await sha256(asset.dropbox_revision ?? "unversioned");
-  const key = `creators/${creatorId}/assets/${objectId}/previews/${revisionId}.jpg`;
-  await env.PREVIEWS.put(key, bytes, {
-    httpMetadata: { contentType: "image/jpeg", cacheControl: "private, max-age=86400" },
-    customMetadata: { creatorId, assetId: asset.id, revision: asset.dropbox_revision || "" },
-  });
-  const updated = await env.DB.prepare(`UPDATE assets SET preview_r2_key=?
-    WHERE id=? AND creator_id=? AND preview_r2_key IS NULL AND dropbox_revision IS ?`)
-    .bind(key, asset.id, creatorId, asset.dropbox_revision).run();
-  return Boolean(updated.meta.changes);
+  return json(request, { ok: probe, sourceMediaCapability: "r2-source-v2", reasonCode: probe ? "ready" : "r2_source_media_integrity_failed", bindings: { libraryMedia: true } }, probe ? 200 : 503);
 }
 
 function validPreviewMessage(value: unknown): value is PreviewQueueMessage {
-  if (!value || typeof value !== "object") return false;
-  const input = value as Partial<PreviewQueueMessage>;
-  return typeof input.creatorId === "string" && /^[a-z0-9][a-z0-9_-]{0,79}$/i.test(input.creatorId)
-    && typeof input.assetId === "string" && input.assetId.length > 0 && input.assetId.length <= 500
-    && (input.sourceRevision === null || typeof input.sourceRevision === "string");
-}
-
-function permanentPreviewFailure(message: string) {
-  return /path\/not_found|could not find|unsafe preview URL|invalid preview image|No active creator-scoped Dropbox connection/i.test(message);
-}
-
-async function processPreviewMessage(env: Env, input: PreviewQueueMessage) {
-  const asset = await env.DB.prepare(`SELECT a.id,a.relative_path,a.extension,a.dropbox_revision,a.preview_r2_key,
-      c.dropbox_root,j.source_revision AS job_revision,j.status AS job_status
-    FROM assets a JOIN creators c ON c.id=a.creator_id
-    JOIN asset_preview_jobs j ON j.creator_id=a.creator_id AND j.asset_id=a.id
-    WHERE a.id=? AND a.creator_id=? AND a.source_available=1 AND c.status='active'`)
-    .bind(input.assetId, input.creatorId).first<PreviewJobAsset>();
-  if (!asset || !(asset.job_revision === input.sourceRevision) || !(asset.dropbox_revision === input.sourceRevision)) return;
-  if (asset.preview_r2_key) {
-    await env.DB.prepare("UPDATE asset_preview_jobs SET status='ready',last_error=NULL,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision IS ?")
-      .bind(input.creatorId, input.assetId, input.sourceRevision).run();
-    return;
-  }
-  const claimed = await env.DB.prepare(`UPDATE asset_preview_jobs SET status='processing',attempts=attempts+1,
-      started_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
-    WHERE creator_id=? AND asset_id=? AND source_revision IS ? AND status='queued'`)
-    .bind(input.creatorId, input.assetId, input.sourceRevision).run();
-  if (!claimed.meta.changes) return;
-  const connection = await getDropboxConnection(env, input.creatorId);
-  await generateDropboxPreview(env, connection, input.creatorId, asset.dropbox_root, asset);
-  await env.DB.prepare(`UPDATE asset_preview_jobs SET status='ready',last_error=NULL,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-    WHERE creator_id=? AND asset_id=? AND source_revision IS ?`)
-    .bind(input.creatorId, input.assetId, input.sourceRevision).run();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  return typeof input.creatorId === "string" && input.creatorId.length > 0 && typeof input.assetId === "string" && input.assetId.length > 0
+    && typeof input.sourceRevision === "string" && input.sourceRevision.length > 0;
 }
 
 async function recordPreviewFailure(env: Env, input: PreviewQueueMessage, message: string, status: "queued" | "failed") {
-  await env.DB.prepare(`UPDATE asset_preview_jobs SET status=?,last_error=?,completed_at=CASE WHEN ?='failed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
-      updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision IS ?`)
-    .bind(status, message.slice(0, 1000), status, input.creatorId, input.assetId, input.sourceRevision).run();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE asset_preview_jobs SET status=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision=?")
+      .bind(status, message.slice(0, 1000), input.creatorId, input.assetId, input.sourceRevision),
+    env.DB.prepare("UPDATE asset_media_authorities SET state=?,preview_failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND authority_kind='r2_native'")
+      .bind(status === "failed" ? "preview_failed" : "canonical_verified", message.slice(0, 200), input.creatorId, input.assetId),
+  ]);
+}
+
+async function processPreviewMessage(env: Env, input: PreviewQueueMessage) {
+  const asset = await env.DB.prepare(`SELECT o.object_key,o.r2_etag,o.sha256,a.preview_r2_key,j.status AS job_status,j.source_revision
+    FROM assets a JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    JOIN asset_storage_objects o ON o.asset_id=a.id AND o.creator_id=a.creator_id AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
+    JOIN asset_preview_jobs j ON j.asset_id=a.id AND j.creator_id=a.creator_id
+    WHERE a.id=? AND a.creator_id=? AND a.source_available=1`).bind(input.assetId, input.creatorId)
+    .first<{ object_key: string; r2_etag: string; sha256: string; preview_r2_key: string | null; job_status: string; source_revision: string }>();
+  if (!asset || asset.source_revision !== input.sourceRevision || asset.preview_r2_key || asset.job_status === "done") return;
+  const claimed = await env.DB.prepare("UPDATE asset_preview_jobs SET status='processing',attempts=attempts+1,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision=? AND status IN ('queued','failed')")
+    .bind(input.creatorId, input.assetId, input.sourceRevision).run();
+  if (!claimed.meta.changes) return;
+  const source = await env.LIBRARY_MEDIA.get(asset.object_key, { onlyIf: { etagMatches: asset.r2_etag } });
+  if (!source || !("body" in source)) throw new Error("r2_source_media_not_available");
+  const transformed = await env.IMAGES.input(source.body).transform({ width: 720, height: 720, fit: "scale-down" }).output({ format: "image/jpeg", quality: 84, anim: false });
+  const bytes = await new Response(transformed.image()).arrayBuffer();
+  if (!bytes.byteLength) throw new Error("native_preview_empty");
+  const objectId = await sha256(`${input.creatorId}:${input.assetId}`);
+  const key = `creators/${input.creatorId}/assets/${objectId}/previews/${asset.sha256}.jpg`;
+  await env.PREVIEWS.put(key, bytes, { httpMetadata: { contentType: "image/jpeg", cacheControl: "private, no-store" }, customMetadata: { creator_id: input.creatorId, asset_id: input.assetId, source_sha256: asset.sha256, derivative: "native_preview_v1" } });
+  await env.DB.batch([
+    env.DB.prepare("UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=? AND preview_r2_key IS NULL").bind(key, input.assetId, input.creatorId),
+    env.DB.prepare("UPDATE asset_media_authorities SET state='preview_ready',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native'").bind(input.assetId, input.creatorId),
+    env.DB.prepare("UPDATE asset_preview_jobs SET status='done',completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND source_revision=?").bind(input.assetId, input.creatorId, input.sourceRevision),
+  ]);
 }
 
 async function claimJob(request: Request, env: Env, identity: BridgeIdentity) {
@@ -777,138 +361,6 @@ async function fanslyOutbox(request: Request, env: Env, identity: BridgeIdentity
   return json(request, { ok: true, status: sent ? "sent" : "failed" });
 }
 
-function normaliseHandle(value: string) {
-  return value.trim().replace(/^u\//i, "").replace(/^@/, "").toLowerCase();
-}
-
-async function claimRedditJob(request: Request, env: Env, identity: RedditBridgeIdentity) {
-  if (request.headers.get("x-thot-os-reddit-client") !== "native-v1") return json(request, { ok: false, error: "Update the THOT OS bridge extension before posting." }, 428);
-  const candidate = await env.DB.prepare(`
-    SELECT p.id,p.asset_id,p.title,p.caption,p.content_rating,rc.name AS community_name,
-      a.basename,a.bytes,a.extension,oa.handle AS expected_handle
-    FROM social_posts p
-    JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
-    JOIN operational_accounts oa ON oa.id=p.account_id AND oa.creator_id=p.creator_id
-    WHERE p.creator_id=? AND p.account_id=? AND p.platform='reddit' AND p.status='publishing'
-      AND oa.publishing_mode='local_bridge' AND oa.publishing_authority='device_only'
-      AND (p.device_claimed_at IS NULL OR p.device_claimed_at<datetime('now','-10 minutes'))
-    ORDER BY COALESCE(p.scheduled_at,p.created_at) LIMIT 1
-  `).bind(identity.creator_id, identity.account_id).first<RedditNativeJob>();
-  if (!candidate) return json(request, { ok: true, job: null });
-  const claimed = await env.DB.prepare(`
-    UPDATE social_posts SET device_claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-    WHERE id=? AND creator_id=? AND account_id=? AND status='publishing'
-      AND (device_claimed_at IS NULL OR device_claimed_at<datetime('now','-10 minutes'))
-      AND EXISTS (
-        SELECT 1 FROM operational_accounts oa
-        WHERE oa.id=social_posts.account_id AND oa.creator_id=social_posts.creator_id
-          AND oa.platform='reddit' AND oa.publishing_mode='local_bridge' AND oa.publishing_authority='device_only'
-      )
-  `).bind(candidate.id, identity.creator_id, identity.account_id).run();
-  if (!claimed.meta.changes) return json(request, { ok: true, job: null });
-  await env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_job_claimed','{}')")
-    .bind(crypto.randomUUID(), candidate.id, identity.creator_id).run();
-  return json(request, { ok: true, job: { ...candidate, mediaUrl: `${new URL(request.url).origin}/reddit/jobs/${encodeURIComponent(candidate.id)}/media` } });
-}
-
-async function redditMediaResponse(request: Request, env: Env, identity: RedditBridgeIdentity, postId: string) {
-  const media = await env.DB.prepare(`
-    SELECT p.asset_id
-    FROM social_posts p
-    JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    JOIN operational_accounts oa ON oa.id=p.account_id AND oa.creator_id=p.creator_id
-    WHERE p.id=? AND p.creator_id=? AND p.account_id=? AND p.platform='reddit' AND p.status='publishing' AND p.device_claimed_at IS NOT NULL
-      AND oa.publishing_mode='local_bridge' AND oa.publishing_authority='device_only'
-  `).bind(postId, identity.creator_id, identity.account_id).first<{ asset_id: string }>();
-  if (!media) return json(request, { ok: false, error: "Reddit media is not available for this paired device." }, 404);
-  return resolvedMediaResponse(request, await resolveCreatorMedia(env, identity.creator_id, media.asset_id));
-}
-
-async function verifyRedditNativePost(externalUrl: URL, externalId: string, post: { title: string; expected_handle: string; community_name: string }, deviceMetadata?: RedditPublicPost) {
-  let published: RedditPublicPost | undefined;
-  let status = 0;
-  for (let attempt = 0; attempt < 6 && !published; attempt += 1) {
-    const response = await fetch(`https://www.reddit.com/comments/${encodeURIComponent(externalId)}.json?raw_json=1`, {
-      headers: { accept: "application/json", "user-agent": "THOT-OS-Receipt-Verifier/1.0" },
-    });
-    status = response.status;
-    if (response.ok) {
-      const payload = await response.json().catch(() => null) as Array<{ data?: { children?: Array<{ data?: RedditPublicPost }> } }> | null;
-      published = payload?.[0]?.data?.children?.[0]?.data;
-    }
-    if (!published && attempt < 5 && (response.ok || response.status === 404 || response.status === 429 || response.status >= 500)) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    } else if (!published) break;
-  }
-  if (!published && deviceMetadata) published = deviceMetadata;
-  if (!published && status && status !== 200) throw new Error(`Reddit receipt verification returned ${status}.`);
-  if (!published) throw new Error("Reddit did not return the submitted post metadata.");
-  return { ...verifyRedditPostMetadata(published, externalId, post), verifiedUrl: externalUrl.toString() };
-}
-
-async function recordRedditReceipt(request: Request, env: Env, identity: RedditBridgeIdentity, postId: string) {
-  const input = await request.json<{ status?: string; error?: string; externalUrl?: string; externalPostId?: string; observedHandle?: string; uncertain?: boolean; receipt?: unknown }>();
-  const post = await env.DB.prepare(`
-    SELECT p.id,p.caption,p.title,p.status,rc.name AS community_name,oa.handle AS expected_handle,
-      oa.publishing_mode,oa.publishing_authority,pc.connected_account_id
-    FROM social_posts p JOIN operational_accounts oa ON oa.id=p.account_id AND oa.creator_id=p.creator_id
-    JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
-    LEFT JOIN provider_connections pc ON pc.creator_id=p.creator_id AND pc.service='reddit' AND pc.status='active'
-    WHERE p.id=? AND p.creator_id=? AND p.account_id=? AND p.platform='reddit'
-  `).bind(postId, identity.creator_id, identity.account_id).first<{ id: string; caption: string; title: string; status: string; community_name: string; expected_handle: string; publishing_mode: string; publishing_authority: string; connected_account_id: string | null }>();
-  if (!post || post.status !== "publishing" || post.publishing_mode !== "local_bridge" || post.publishing_authority !== "device_only") {
-    return json(request, { ok: false, error: "Reddit publishing is owned by the API and is not awaiting a device receipt." }, 409);
-  }
-  const observedHandle = normaliseHandle(input.observedHandle ?? "");
-  const expectedHandle = normaliseHandle(post.expected_handle);
-  if (input.status === "published" && observedHandle !== expectedHandle) return json(request, { ok: false, error: "The signed-in Reddit browser does not match this creator’s configured account." }, 409);
-  const receipt = JSON.stringify(input.receipt ?? {}).slice(0, 12000);
-  const receiptRecord = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt) ? input.receipt as Record<string, unknown> : {};
-  if (input.status !== "published") {
-    const identityWarning = observedHandle && observedHandle !== expectedHandle ? `The paired browser reported u/${observedHandle}, expected u/${expectedHandle}. ` : "";
-    const uncertaintyWarning = input.uncertain ? "Outcome uncertain; verify Reddit before retrying. " : "";
-    const error = `${identityWarning}${uncertaintyWarning}${String(input.error || "Native Reddit publishing failed.")}`.slice(0, 2000);
-    await env.DB.batch([
-      env.DB.prepare("UPDATE social_posts SET status='failed',error=?,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND account_id=? AND status='publishing'").bind(error, receipt, postId, identity.creator_id, identity.account_id),
-      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_publish_failed',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ error, uncertain: Boolean(input.uncertain) })),
-    ]);
-    return json(request, { ok: true, status: "failed" });
-  }
-  let externalUrl: URL;
-  try { externalUrl = new URL(String(input.externalUrl ?? "")); }
-  catch { return json(request, { ok: false, error: "Reddit did not return a valid post URL." }, 400); }
-  const postMatch = externalUrl.pathname.match(/\/comments\/([a-z0-9]+)(?:\/|$)/i);
-  if (!/(^|\.)reddit\.com$/i.test(externalUrl.hostname) || !postMatch) return json(request, { ok: false, error: "The native receipt is not a Reddit post URL." }, 400);
-  const redditId = postMatch[1];
-  const externalPostId = `t3_${redditId}`;
-  const deviceMetadata = receiptRecord.redditMetadata && typeof receiptRecord.redditMetadata === "object" && !Array.isArray(receiptRecord.redditMetadata)
-    ? receiptRecord.redditMetadata as RedditPublicPost
-    : undefined;
-  const verification = await verifyRedditNativePost(externalUrl, redditId, post, deviceMetadata);
-  if (!verification.nativeMedia) {
-    const error = "Reddit created a text or link post without the approved native media. THOT OS did not accept it as published.";
-    await env.DB.batch([
-      env.DB.prepare("UPDATE social_posts SET status='failed',external_post_id=?,external_url=?,error=?,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND account_id=? AND status='publishing'").bind(externalPostId, externalUrl.toString(), error, receipt, postId, identity.creator_id, identity.account_id),
-      env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_publish_rejected',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ externalPostId, externalUrl: externalUrl.toString(), error, isSelf: verification.published.is_self === true, domain: verification.published.domain ?? null })),
-    ]);
-    return json(request, { ok: true, status: "failed", error, externalPostId, externalUrl: externalUrl.toString() });
-  }
-  let warning = "";
-  if (post.caption.trim() && post.caption.trim() !== post.title.trim() && receiptRecord.bodyFilled !== true) {
-    if (!post.connected_account_id) warning = "Post published, but the caption comment could not be added because Reddit OAuth is unavailable.";
-    else {
-      try { await executeReddit(env, identity.creator_id, post.connected_account_id, "REDDIT_POST_REDDIT_COMMENT", { thing_id: externalPostId, text: post.caption }); }
-      catch (error) { warning = `Post published, but the caption comment failed: ${error instanceof Error ? error.message : "Unknown error"}`; }
-    }
-  }
-  await env.DB.batch([
-    env.DB.prepare("UPDATE social_posts SET status='published',published_at=CURRENT_TIMESTAMP,external_post_id=?,external_url=?,error=?,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND account_id=? AND status='publishing'").bind(externalPostId, externalUrl.toString(), warning || null, receipt, postId, identity.creator_id, identity.account_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-device','service','native_publish_completed',?)").bind(crypto.randomUUID(), postId, identity.creator_id, JSON.stringify({ externalPostId, externalUrl: externalUrl.toString(), warning })),
-    env.DB.prepare("UPDATE operational_accounts SET connection_status='connected',publishing_mode='local_bridge',publishing_authority='device_only',last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(identity.account_id, identity.creator_id),
-  ]);
-  return json(request, { ok: true, status: "published", externalPostId, externalUrl: externalUrl.toString(), warning });
-}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -917,23 +369,6 @@ export default {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/pair") return pairingPage();
       if (request.method === "POST" && url.pathname === "/internal/source-media/health") return sourceMediaHealth(request, env);
-      if (request.method === "POST" && url.pathname === "/catalogue/refresh") return refreshDropboxCatalogue(request, env);
-      if (request.method === "POST" && url.pathname === "/catalogue/dropbox/reconnect") return startDropboxReconnect(request, env);
-      if (url.pathname === "/reddit" || url.pathname.startsWith("/reddit/")) {
-        const identity = await authenticateReddit(request, env);
-        if (!identity) return json(request, { ok: false, error: "unauthorized" }, 401);
-        if (request.method === "GET" && url.pathname === "/reddit/status") {
-          const account = await env.DB.prepare("SELECT handle,publishing_mode,publishing_authority FROM operational_accounts WHERE id=? AND creator_id=? AND platform='reddit'").bind(identity.account_id, identity.creator_id).first<{ handle: string; publishing_mode: string; publishing_authority: string }>();
-          const devicePublishing = account?.publishing_mode === "local_bridge" && account.publishing_authority === "device_only";
-          return json(request, { ok: true, paired: devicePublishing, platform: "reddit", expected_handle: account?.handle ?? "", publishing_mode: account?.publishing_mode ?? "", ...identity });
-        }
-        if (request.method === "GET" && url.pathname === "/reddit/jobs/claim") return claimRedditJob(request, env, identity);
-        const media = url.pathname.match(/^\/reddit\/jobs\/([^/]+)\/media$/);
-        if (request.method === "GET" && media) return redditMediaResponse(request, env, identity, decodeURIComponent(media[1]));
-        const receipt = url.pathname.match(/^\/reddit\/jobs\/([^/]+)\/receipt$/);
-        if (request.method === "POST" && receipt) return recordRedditReceipt(request, env, identity, decodeURIComponent(receipt[1]));
-        return json(request, { ok: false, error: "not_found" }, 404);
-      }
       const identity = await authenticate(request, env);
       if (!identity) return json(request, { ok: false, error: "unauthorized" }, 401);
       if (request.method === "GET" && url.pathname === "/status") return json(request, { ok: true, paired: true, ...identity });
@@ -956,11 +391,7 @@ export default {
   async queue(batch: MessageBatch<PreviewQueueMessage>, env: Env): Promise<void> {
     await Promise.all(batch.messages.map(async (message) => {
       const input = message.body;
-      if (!validPreviewMessage(input)) {
-        console.error(JSON.stringify({ event: "dropbox_preview_invalid_message", messageId: message.id }));
-        message.ack();
-        return;
-      }
+      if (!validPreviewMessage(input)) { message.ack(); return; }
       if (batch.queue === "thot-os-preview-dlq-staging") {
         await recordPreviewFailure(env, input, "Preview generation exhausted its automatic retries.", "failed");
         message.ack();
@@ -971,14 +402,8 @@ export default {
         message.ack();
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Preview generation failed.";
-        console.warn(JSON.stringify({ event: "dropbox_preview_retry", creatorId: input.creatorId, assetId: input.assetId, attempt: message.attempts, message: detail }));
-        if (permanentPreviewFailure(detail)) {
-          await recordPreviewFailure(env, input, detail, "failed");
-          message.ack();
-        } else {
-          await recordPreviewFailure(env, input, detail, "queued");
-          message.retry({ delaySeconds: Math.min(30 * (2 ** Math.max(0, message.attempts - 1)), 900) });
-        }
+        await recordPreviewFailure(env, input, detail, "queued");
+        message.retry({ delaySeconds: Math.min(30 * (2 ** Math.max(0, message.attempts - 1)), 900) });
       }
     }));
   },

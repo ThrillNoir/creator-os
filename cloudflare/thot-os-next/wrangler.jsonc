@@ -30,7 +30,7 @@
       "INTERNAL_INSTAGRAM_SCHEDULER_TOKEN",
       "INTERNAL_REDDIT_SCHEDULER_TOKEN",
       "INTERNAL_TELEGRAM_BRIDGE_TOKEN",
-      "INTERNAL_VAULT_CATALOGUE_TOKEN",
+      "INTERNAL_VAULT_BRIDGE_TOKEN",
       "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN",
       "VAULT_MASTER_KEY_V1",
       "VAULT_PIN_PEPPER",
@@ -68,5 +68,10 @@
     { "binding": "MEDIA", "bucket_name": "thot-os-media-staging" },
     { "binding": "PREVIEWS", "bucket_name": "thot-os-previews-staging" },
     { "binding": "LIBRARY_MEDIA", "bucket_name": "thot-os-library-media-staging" }
-  ]
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "PREVIEW_QUEUE", "queue": "thot-os-preview-staging" }
+    ]
+  }
 }

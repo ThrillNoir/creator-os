@@ -5,7 +5,7 @@ import { internalServiceAuditStatement, requireInternalServiceForCreator } from 
 import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 type DuePost = {
   id: string; creator_id: string; asset_id: string; title: string; caption: string;
-  content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; extension: string; bytes: number; dropbox_root: string;
+  content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; extension: string; bytes: number;
   community_name: string; flair_required: number; allows_nsfw: number; reddit_flair_id: string | null; reddit_flair_text: string | null;
 };
 
@@ -86,35 +86,16 @@ async function executeReddit<T>(env: Env, creatorId: string, connectedAccountId:
   return response.data;
 }
 
-async function getDropboxTemporaryLink(env: Env, post: DuePost) {
-  const userId = `creator-os:${post.creator_id}:service:dropbox`;
-  const connection = await env.DB.prepare("SELECT connected_account_id,status FROM provider_connections WHERE creator_id=? AND service='dropbox'")
-    .bind(post.creator_id).first<{ connected_account_id: string; status: string }>();
-  if (!connection || connection.status !== "active" || !connection.connected_account_id) throw new Error("This creator’s Dropbox source is not connected.");
-  const path = `/${[post.dropbox_root, post.relative_path].map((part) => part.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/")}`;
-  const response = await jsonRequest<{ successful?: boolean; data?: { link?: string }; error?: string | { message?: string } }>(
-    `${COMPOSIO_V31}/tools/execute/DROPBOX_GET_TEMPORARY_LINK`, env.COMPOSIO_API_KEY,
-    { method: "POST", body: JSON.stringify({ connected_account_id: connection.connected_account_id, user_id: userId, version: "latest", arguments: { path } }) },
-  );
-  if (response.successful === false || !response.data?.link) throw new Error("Dropbox did not return the approved Reddit image.");
-  return response.data.link;
-}
-
 type CanonicalR2Source = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string };
 
 async function approvedRedditImage(env: Env, post: DuePost) {
-  const state = await env.DB.prepare("SELECT active_backend FROM creator_media_source_states WHERE creator_id=?").bind(post.creator_id).first<{ active_backend: "dropbox" | "r2" }>();
-  if (state?.active_backend !== "r2") {
-    const source = await fetch(await getDropboxTemporaryLink(env, post));
-    if (!source.ok) throw new Error(`Dropbox image download failed (${source.status}).`);
-    return { bytes: await source.arrayBuffer(), mimeType: imageMimeType(post.basename, source.headers.get("content-type") || ""), source: "dropbox" as const };
-  }
   if (!env.LIBRARY_MEDIA) throw new Error("r2_source_media_binding_missing");
   const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
     FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
     WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
-      AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.source_provider='dropbox'
-      AND o.source_revision IS a.dropbox_revision AND o.byte_count=a.bytes AND a.source_available=1
+      AND o.bucket_role='library_media' AND o.ingest_status='verified'
+      AND o.object_key=a.media_r2_key AND o.byte_count=a.bytes AND a.source_available=1
+      AND EXISTS (SELECT 1 FROM asset_media_authorities ma WHERE ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native')
       AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL
     ORDER BY o.verified_at DESC LIMIT 1`).bind(post.creator_id, post.asset_id).first<CanonicalR2Source>();
   if (!record) throw new Error("r2_source_media_not_available");
@@ -249,11 +230,10 @@ async function publishPost(env: Env, post: DuePost) {
 
 async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
-    SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,c.dropbox_root,
+    SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
       rc.name AS community_name,rc.flair_required,rc.allows_nsfw
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    JOIN creators c ON c.id=p.creator_id
     JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
     WHERE p.id=? AND p.creator_id=? AND p.platform='reddit' AND p.status='scheduled' AND p.approved_at IS NOT NULL
   `).bind(postId, creatorId).first<DuePost>();
@@ -287,11 +267,10 @@ async function processDue(env: Env, triggerType: string) {
   let claimed = 0, published = 0, failed = 0;
   try {
     const due = await env.DB.prepare(`
-      SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,c.dropbox_root,
+      SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
         rc.name AS community_name,rc.flair_required,rc.allows_nsfw
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-      JOIN creators c ON c.id=p.creator_id
       JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
       WHERE p.platform='reddit' AND p.status='scheduled' AND p.approved_at IS NOT NULL
         AND p.scheduled_at IS NOT NULL AND unixepoch(p.scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)

@@ -102,17 +102,6 @@ export async function hashAndValidateR2Object(bucket: R2Bucket, objectKey: strin
   return { byteCount, sha256: hash.digest("hex"), detectedMime: mime, codec, width, height, r2Version: object.version, r2Etag: object.etag, object };
 }
 
-export type CreatorMediaSourceState = {
-  active_backend: "dropbox" | "r2";
-  migration_state: "dropbox" | "planned" | "transferring" | "verified" | "r2_active" | "rollback" | "retired";
-  dropbox_fallback_enabled: number;
-};
-
-export async function getCreatorMediaSourceState(DB: D1Database, creatorId: string): Promise<CreatorMediaSourceState> {
-  const state = await DB.prepare("SELECT active_backend,migration_state,dropbox_fallback_enabled FROM creator_media_source_states WHERE creator_id=?").bind(creatorId).first<CreatorMediaSourceState>();
-  return state ?? { active_backend: "dropbox", migration_state: "dropbox", dropbox_fallback_enabled: 1 };
-}
-
 export function sourceMediaObjectHeaders(mime: string, bytes: number) {
   return noStoreHeaders({ "content-type": mime, "content-length": String(bytes), "content-disposition": "attachment" });
 }

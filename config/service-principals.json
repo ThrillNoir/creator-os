@@ -48,12 +48,11 @@
       ]
     },
     {
-      "id": "web-vault-catalogue",
-      "principalName": "thot-os-web-vault-catalogue",
-      "secretName": "INTERNAL_VAULT_CATALOGUE_TOKEN",
+      "id": "web-vault",
+      "principalName": "thot-os-web-vault",
+      "secretName": "INTERNAL_VAULT_BRIDGE_TOKEN",
       "receiver": "vault",
       "capabilities": [
-        "vault.catalogue.refresh",
         "vault.source_media.health"
       ]
     },

@@ -26,10 +26,10 @@ function messageFor(error: string) {
     completion_requires_reconciliation: "Verification was interrupted. Choose this same video again to retry finalization.",
     session_finalizing: "Verification was interrupted. Choose this same video again to retry finalization.",
     source_media_container_invalid: "The uploaded file is not a valid MP4 or MOV container.",
-    source_media_metadata_mismatch: "The stored video metadata did not match this upload session.",
     source_media_type_unsupported: "The uploaded object is not a supported MP4 or MOV video.",
     source_media_video_codec_unsupported: "This video container is valid, but its H.264 or H.265 codec could not be verified.",
-    source_media_verification_failed: "The bytes received did not match the selected video.",
+    source_media_byte_mismatch: "The completed R2 object did not match the selected video's verified byte count.",
+    source_media_metadata_mismatch: "The completed R2 object metadata did not match this upload session.",
   } as Record<string, string>)[error] ?? "Video upload failed. You can retry this file without changing its source.";
 }
 

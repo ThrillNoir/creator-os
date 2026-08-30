@@ -12,7 +12,7 @@ function browserPollingState() {
   };
 }
 
-export function PreviewProgress({ initial, source = "all" }: { initial: PreviewProgressState; source?: "native" | "legacy" | "all" }) {
+export function PreviewProgress({ initial }: { initial: PreviewProgressState }) {
   const [progress, setProgress] = useState(initial);
   const [browserState, setBrowserState] = useState(browserPollingState);
   const router = useRouter();
@@ -59,7 +59,7 @@ export function PreviewProgress({ initial, source = "all" }: { initial: PreviewP
       controller = new AbortController();
       let nextDelayMs: number = previewPollDelayMs(delayIndex.current);
       try {
-        const response = await fetch(`/api/library/preview-status?source=${encodeURIComponent(source)}`, { cache: "no-store", signal: controller.signal });
+        const response = await fetch("/api/library/preview-status", { cache: "no-store", signal: controller.signal });
         if (!response.ok) {
           delayIndex.current = nextPreviewPollDelayIndex(delayIndex.current, false);
           nextDelayMs = Math.max(previewPollDelayMs(delayIndex.current), boundedRetryAfterMs(response.headers.get("retry-after")) ?? 0);
@@ -92,14 +92,13 @@ export function PreviewProgress({ initial, source = "all" }: { initial: PreviewP
       if (timer !== undefined) window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [browserState.online, browserState.visible, pending, router, source]);
+  }, [browserState.online, browserState.visible, pending, router]);
 
   if (!progress.total) return null;
   const percent = Math.round((progress.ready / progress.total) * 100);
-  const native = source === "native";
   return <section className={`preview-progress ${pending ? "active" : progress.failed ? "attention" : "complete"}`} aria-live="polite">
     <div><strong>{pending ? "Generating private previews" : progress.failed ? "Preview generation needs attention" : "Private previews ready"}</strong><span>{progress.ready} of {progress.total} ready{pending ? ` · ${pending} queued` : ""}{progress.failed ? ` · ${progress.failed} failed` : ""}</span></div>
     <progress max={progress.total} value={progress.ready}>{percent}%</progress>
-    <small>{pending ? "This continues securely in the background; you can leave this page." : progress.failed ? native ? "Retry the preview from the upload row before leaving this page." : "Run Sync Dropbox to retry failed previews." : native ? "All Cloudflare-native images have private previews." : "All supported legacy assets have previews."}</small>
+    <small>{pending ? "This continues securely in the background; you can leave this page." : progress.failed ? "Retry the preview from the upload row before leaving this page." : "All Cloudflare-native images have private previews."}</small>
   </section>;
 }

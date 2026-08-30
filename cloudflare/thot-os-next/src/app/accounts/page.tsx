@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, saveDropboxCatalogueSourceAction, startDropboxReconnectAction, startInstagramReconnectAction } from "@/app/actions";
+import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, startInstagramReconnectAction } from "@/app/actions";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
@@ -16,7 +16,6 @@ type FanslySetup = {
   profile_verified_at: string | null;
   bridge_last_seen_at: string | null;
 };
-type DropboxSource = { dropbox_root: string | null; dropbox_link: string | null };
 type InstagramSetup = {
   id: string;
   label: string;
@@ -47,7 +46,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const [query, context] = await Promise.all([searchParams, requireCreatorContext()]);
   const creatorId = context.creator.creator_id;
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
-  const [setup, instagram, dropbox] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
+  const [setup, instagram] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
     bp.label AS profile_label,bp.status AS profile_status,abp.verified_at AS profile_verified_at,
     (SELECT MAX(bc.last_seen_at) FROM bridge_credentials bc WHERE bc.creator_id=oa.creator_id AND bc.account_id=oa.id AND bc.status='active') AS bridge_last_seen_at
     FROM operational_accounts oa
@@ -60,7 +59,6 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       LEFT JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram'
       LEFT JOIN instagram_sync_state state ON state.creator_id=oa.creator_id
       WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label LIMIT 1`).bind(creatorId).first<InstagramSetup>(),
-    cloudflareEnv().DB.prepare("SELECT dropbox_root,dropbox_link FROM creators WHERE id=?").bind(creatorId).first<DropboxSource>(),
   ]);
   const hasAssignedProfile = Boolean(setup?.profile_label && setup.profile_status !== "revoked");
 
@@ -68,12 +66,6 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     {query.saved === "fansly_added" && <div className="success">Fansly account and the assigned Chrome profile were added. Sign in natively, then confirm the visible identity.</div>}
     {query.saved === "fansly_profile_assigned" && <div className="success">Fansly Chrome profile assigned. Sign in natively, then confirm the visible identity.</div>}
     {query.saved === "fansly_identity_confirmed" && <div className="success">Fansly identity confirmed. You can now pair the assigned bridge and open the vault.</div>}
-    {query.saved === "dropbox_source_saved" && <div className="success">Dropbox catalogue source saved. You can now refresh this creator&apos;s read-only catalogue from Content Library.</div>}
-    {query.saved === "dropbox_reconnected" && <div className="success">Dropbox authorization completed. Run Sync Dropbox to validate this creator&apos;s configured source and generate private previews.</div>}
-    {query.connectionError && <div className="connection-banner blocked"><div><strong>Dropbox connection needs attention</strong><span>{query.connectionError}</span></div></div>}
-    <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">DROPBOX</span><h2>Read-only catalogue source</h2><p>Record the Dropbox folder path used for catalogue reads and, if useful, the shared file or folder link for the team. THOT OS never edits, moves or deletes source media.</p></div><span>{dropbox?.dropbox_root ? "Source configured" : "Source required"}</span></div>
-      {canManageIdentity ? <><form action={saveDropboxCatalogueSourceAction} className="inline-form dropbox-source-form"><label>Dropbox folder path<input name="dropboxRoot" required defaultValue={dropbox?.dropbox_root ?? ""} placeholder="/Creator OS/Creator name" autoComplete="off" /></label><label>Dropbox file or folder link <small>(reference only)</small><input name="dropboxLink" type="url" defaultValue={dropbox?.dropbox_link ?? ""} placeholder="https://www.dropbox.com/..." autoComplete="off" /></label><div className="section-divider"><span>The Dropbox link identifies the source for people; the folder path is used for the API catalogue read because a shared-link URL does not reliably include its Dropbox path.</span></div><button className="primary" type="submit">Save Dropbox source</button></form><div className="connection-steps"><section><span>1</span><div><h3>Reconnect the source account</h3><p>If the catalogue shows the wrong folder, open Dropbox&apos;s native sign-in and authorize the account that owns this creator&apos;s configured source. THOT OS never receives the password or edits the source files.</p><form action={startDropboxReconnectAction}><button className="secondary-action" type="submit">Reconnect Dropbox</button></form></div></section></div></> : <div className="empty"><b>Dropbox source is not configured.</b><span>An agency administrator can add the creator&apos;s read-only Dropbox source.</span></div>}
-    </section>
     <section className="panel connection-setup">
       <div className="section-heading"><div><span className="eyebrow">INSTAGRAM</span><h2>Official Instagram connection</h2><p>Connect the creator&apos;s professional Instagram account through the approved provider. Connecting verifies the visible account identity; it does not create, schedule or publish content.</p></div><span>{instagramStatus(instagram)}</span></div>
       {!instagram && <div className="empty"><b>Instagram account setup is required.</b><span>This creator does not yet have an Instagram account record. Add it during creator onboarding before starting OAuth.</span></div>}
@@ -103,6 +95,6 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         </div>}
       </div>}
     </section>
-    <section className="connection-banner muted"><div><strong>Dropbox catalogue remains read-only</strong><span>Refreshing the source catalogue never moves, renames or deletes Dropbox media. Fansly staging stays pending until the native vault and its final confirmation return a receipt.</span></div><Link className="secondary-action" href="/library">Open Content Library</Link></section>
+    <section className="connection-banner muted"><div><strong>Private media stays in Cloudflare</strong><span>Fansly staging consumes creator-scoped R2 originals and remains pending until the native vault returns a receipt.</span></div><Link className="secondary-action" href="/library">Open Content Library</Link></section>
   </AppShell>;
 }

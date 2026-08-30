@@ -17,7 +17,7 @@ export interface AssetRow {
   is_multi: number;
   notes: string;
   destinations: string;
-  media_origin: "r2_native" | "dropbox_legacy";
+  media_origin: "r2_native";
   media_state: string;
   video_state: string | null;
   video_codec: "h264" | "h265" | null;
@@ -25,7 +25,7 @@ export interface AssetRow {
   playback_failure_code: string | null;
 }
 
-export interface LibraryFilters { safety?: string; destination?: string; type?: string; query?: string; source?: string }
+export interface LibraryFilters { safety?: string; destination?: string; type?: string; query?: string }
 export interface CreatorFriend { id: number; display_name: string; stage_name: string | null; consent_status: string }
 export interface AttachedFriend extends CreatorFriend { evidence_platform: string | null; confirmed_at: string | null }
 export interface AssetEvent { id: string; actor: string; event_type: string; snapshot: string; created_at: string }
@@ -34,18 +34,12 @@ export interface VideoPlaybackProgress { total: number; ready: number; queued: n
 export interface LibrarySummary { assets: number; sfw: number; nsfw: number; needs_review: number; previews: number }
 export interface LibraryPageData { summary: LibrarySummary | null; previewProgress: PreviewProgress; videoPlaybackProgress: VideoPlaybackProgress; assets: AssetRow[] }
 
-function sourceCondition(source: string | undefined) {
-  if (source === "legacy") return "NOT EXISTS (SELECT 1 FROM asset_media_authorities native_authority WHERE native_authority.asset_id=a.id AND native_authority.creator_id=a.creator_id AND native_authority.authority_kind='r2_native')";
-  if (source === "native") return "EXISTS (SELECT 1 FROM asset_media_authorities native_authority WHERE native_authority.asset_id=a.id AND native_authority.creator_id=a.creator_id AND native_authority.authority_kind='r2_native')";
-  return "1=1";
-}
-
-export async function getLibrarySummary(creatorId: string, source?: string) {
+export async function getLibrarySummary(creatorId: string) {
   const { DB } = cloudflareEnv();
-  return librarySummaryStatement(DB, creatorId, source).first<LibrarySummary>();
+  return librarySummaryStatement(DB, creatorId).first<LibrarySummary>();
 }
 
-function librarySummaryStatement(DB: D1Database, creatorId: string, source?: string) {
+function librarySummaryStatement(DB: D1Database, creatorId: string) {
   return DB.prepare(`
     SELECT COUNT(*) AS assets,
       SUM(CASE WHEN c.safety='sfw' THEN 1 ELSE 0 END) AS sfw,
@@ -53,28 +47,29 @@ function librarySummaryStatement(DB: D1Database, creatorId: string, source?: str
       SUM(CASE WHEN c.safety IS NULL THEN 1 ELSE 0 END) AS needs_review,
       SUM(CASE WHEN a.preview_r2_key IS NOT NULL THEN 1 ELSE 0 END) AS previews
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-    WHERE a.creator_id=? AND a.source_available=1 AND ${sourceCondition(source)}
+    WHERE a.creator_id=? AND a.source_available=1
+      AND EXISTS (SELECT 1 FROM asset_media_authorities ma WHERE ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native')
   `).bind(creatorId);
 }
 
-export async function getPreviewProgress(creatorId: string, source?: string): Promise<PreviewProgress> {
-  const result = await previewProgressStatement(cloudflareEnv().DB, creatorId, source).first<PreviewProgressRow>();
+export async function getPreviewProgress(creatorId: string): Promise<PreviewProgress> {
+  const result = await previewProgressStatement(cloudflareEnv().DB, creatorId).first<PreviewProgressRow>();
   return toPreviewProgress(result);
 }
 
 type PreviewProgressRow = { total: number; ready: number | null; queued: number | null; processing: number | null; failed: number | null };
 
-function previewProgressStatement(DB: D1Database, creatorId: string, source?: string) {
+function previewProgressStatement(DB: D1Database, creatorId: string) {
   return DB.prepare(`SELECT COUNT(*) AS total,
       SUM(CASE WHEN a.preview_r2_key IS NOT NULL THEN 1 ELSE 0 END) AS ready,
       SUM(CASE WHEN a.preview_r2_key IS NULL AND ma.state='ingesting' THEN 1 ELSE 0 END) AS queued,
       SUM(CASE WHEN a.preview_r2_key IS NULL AND ma.state='canonical_verified' THEN 1 ELSE 0 END) AS processing,
       SUM(CASE WHEN a.preview_r2_key IS NULL AND (ma.state='preview_failed' OR j.status='failed') THEN 1 ELSE 0 END) AS failed
     FROM assets a LEFT JOIN asset_preview_jobs j ON j.creator_id=a.creator_id AND j.asset_id=a.id
-      LEFT JOIN asset_media_authorities ma ON ma.creator_id=a.creator_id AND ma.asset_id=a.id
+      LEFT JOIN asset_media_authorities ma ON ma.creator_id=a.creator_id AND ma.asset_id=a.id AND ma.authority_kind='r2_native'
     WHERE a.creator_id=? AND a.source_available=1
       AND lower(a.extension) IN ('jpg','jpeg','png','webp','heic')
-      AND ${sourceCondition(source)}`).bind(creatorId);
+      AND ma.asset_id IS NOT NULL`).bind(creatorId);
 }
 
 function toPreviewProgress(result: PreviewProgressRow | null | undefined): PreviewProgress {
@@ -109,9 +104,8 @@ export async function getLibraryAssets(creatorId: string, filters: LibraryFilter
 }
 
 function libraryAssetsStatement(DB: D1Database, creatorId: string, filters: LibraryFilters = {}) {
-  const conditions = ["a.creator_id=?", "a.source_available=1"];
+  const conditions = ["a.creator_id=?", "a.source_available=1", "ma.asset_id IS NOT NULL"];
   const values: unknown[] = [creatorId];
-  conditions.push(sourceCondition(filters.source));
   if (filters.safety === "review") conditions.push("c.safety IS NULL");
   if (filters.safety === "sfw" || filters.safety === "nsfw") { conditions.push("c.safety=?"); values.push(filters.safety); }
   if (destinations.includes(filters.destination as Destination)) {
@@ -125,11 +119,11 @@ function libraryAssetsStatement(DB: D1Database, creatorId: string, filters: Libr
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
-      COALESCE(ma.authority_kind,'dropbox_legacy') AS media_origin,
-      COALESCE(vp.state,ma.state,'legacy') AS media_state,
+      ma.authority_kind AS media_origin,
+      COALESCE(vp.state,ma.state) AS media_state,
       vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider,vp.failure_code AS playback_failure_code
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-      LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
+      LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
     WHERE ${conditions.join(" AND ")}
     ORDER BY (a.preview_r2_key IS NULL) ASC,a.modified_at DESC LIMIT 120
@@ -143,8 +137,8 @@ function libraryAssetsStatement(DB: D1Database, creatorId: string, filters: Libr
 export async function getLibraryPageData(creatorId: string, filters: LibraryFilters = {}): Promise<LibraryPageData> {
   const { DB } = cloudflareEnv();
   const [summaryResult, previewResult, videoPlaybackResult, assetsResult] = await DB.batch([
-    librarySummaryStatement(DB, creatorId, filters.source),
-    previewProgressStatement(DB, creatorId, filters.source),
+    librarySummaryStatement(DB, creatorId),
+    previewProgressStatement(DB, creatorId),
     videoPlaybackProgressStatement(DB, creatorId),
     libraryAssetsStatement(DB, creatorId, filters),
   ]);
@@ -157,20 +151,19 @@ export async function getLibraryPageData(creatorId: string, filters: LibraryFilt
 }
 
 export async function getAssetByObjectId(creatorId: string, objectId: string) {
-  const legacyKey = `creators/${creatorId}/assets/${objectId}/preview.jpg`;
   const revisionedPrefix = `creators/${creatorId}/assets/${objectId}/previews/`;
   return cloudflareEnv().DB.prepare(`
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
-      COALESCE(ma.authority_kind,'dropbox_legacy') AS media_origin,
-      COALESCE(vp.state,ma.state,'legacy') AS media_state,
+      ma.authority_kind AS media_origin,
+      COALESCE(vp.state,ma.state) AS media_state,
       vp.state AS video_state,vp.source_codec AS video_codec,vp.playback_provider,vp.failure_code AS playback_failure_code
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
-      LEFT JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
+      JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
-    WHERE a.creator_id=? AND (a.preview_r2_key=? OR (substr(a.preview_r2_key,1,?)=? AND substr(a.preview_r2_key,-4)='.jpg')) AND a.source_available=1
-  `).bind(creatorId, legacyKey, revisionedPrefix.length, revisionedPrefix).first<AssetRow>();
+    WHERE a.creator_id=? AND substr(a.preview_r2_key,1,?)=? AND substr(a.preview_r2_key,-4)='.jpg' AND a.source_available=1
+  `).bind(creatorId, revisionedPrefix.length, revisionedPrefix).first<AssetRow>();
 }
 
 export function objectIdFor(asset: AssetRow) {
