@@ -169,7 +169,7 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(uploader, /\["finalized", "finalizing"\]/);
   assert.doesNotMatch(uploader, /"session_failed", "completion_requires_reconciliation"/);
   assert.match(intent, /existing\.status === "finalized" \? "finalized" : existing\.finalization_state === "incomplete" \? existing\.status : "finalizing"/);
-  assert.match(wrangler, /"cpu_ms": 300000/);
+  assert.doesNotMatch(wrangler, /"cpu_ms"/);
   assert.match(uploader, /canonicalR2MultipartPartEtag/);
   assert.match(assetCard, /Video upload finalization failed/);
   assert.match(assetCard, /browser playback can be prepared/);
