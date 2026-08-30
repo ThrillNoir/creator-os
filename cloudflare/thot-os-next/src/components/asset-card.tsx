@@ -1,19 +1,22 @@
 import Link from "next/link";
 import { objectIdFor, type AssetRow } from "@/lib/library";
+import { PrivateStreamPlayer } from "@/components/private-stream-player";
+import { VideoPlaybackControl } from "@/components/video-playback-control";
 
-export function AssetCard({ asset, selectable = false, templateHref }: { asset: AssetRow; selectable?: boolean; templateHref?: string }) {
+export function AssetCard({ asset, selectable = false, templateHref, canPreparePlayback = false }: { asset: AssetRow; selectable?: boolean; templateHref?: string; canPreparePlayback?: boolean }) {
   const objectId = objectIdFor(asset);
   const native = asset.media_origin === "r2_native";
+  const video = asset.video_state !== null;
   const unavailablePreview = native
     ? asset.media_state === "preview_failed" ? "Private preview needs a retry" : asset.media_state === "ingesting" ? "Private original is uploading" : "Creating private preview"
     : "Waiting for Dropbox download";
-  const tags = [native ? "native" : "legacy", asset.safety ?? "needs review", asset.is_teaser ? "tease" : "", asset.is_multi ? "multi" : "", ...asset.destinations.split("|")].filter(Boolean);
+  const videoStatus = asset.video_state === "playback_ready" ? "Browser playback ready" : asset.video_state === "processing" ? "Preparing browser playback" : asset.video_state === "processing_queued" ? "Playback submission needs review" : asset.video_state === "processing_failed" ? "Playback preparation failed · original preserved" : asset.video_state === "uploading" ? "Private video is uploading" : asset.video_state === "archived" ? "Video upload finalization failed—start this video again" : "Private original verified · browser playback can be prepared";
+  const tags = [native ? "native" : "legacy", video ? "video" : "", asset.video_codec ?? "", asset.safety ?? "needs review", asset.is_teaser ? "tease" : "", asset.is_multi ? "multi" : "", ...asset.destinations.split("|")].filter(Boolean);
+  const card = <><div className="asset-preview">{video ? <span>{videoStatus}</span> : objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
+    <div className="asset-info"><strong title={asset.basename}>{asset.basename}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div></>;
   return <article className="asset-card">
     {selectable && <label className="asset-select"><input type="checkbox" name="assetId" value={asset.id} /><span>Select</span></label>}
-    <Link href={objectId ? `/library/${objectId}` : "/library"}>
-      <div className="asset-preview">{objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
-      <div className="asset-info"><strong title={asset.basename}>{asset.basename}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div>
-    </Link>
+    {video ? <>{card}{asset.video_state === "playback_ready" && <PrivateStreamPlayer assetId={asset.id} />}{native && asset.video_state === "canonical_verified" && canPreparePlayback && <VideoPlaybackControl assetId={asset.id} />}{native && <a className="copy-attributes" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a>}</> : <Link href={objectId ? `/library/${objectId}` : "/library"}>{card}</Link>}
     {selectable && templateHref && objectId && <Link className="copy-attributes" href={`${templateHref}${templateHref.includes("?") ? "&" : "?"}template=${objectId}`}>Copy attributes for batch edit</Link>}
   </article>;
 }

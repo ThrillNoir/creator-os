@@ -4,7 +4,9 @@
   "purpose": "Canonical service-principal capability contract. This file contains only names and allowed capabilities; it never contains credential material, hashes, creator grants, or deployment approval.",
   "runtimeSecrets": [
     "VAULT_MASTER_KEY_V1",
-    "VAULT_PIN_PEPPER"
+    "VAULT_PIN_PEPPER",
+    "R2_VIDEO_UPLOAD_ACCESS_KEY_ID",
+    "R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY"
   ],
   "principals": [
     {

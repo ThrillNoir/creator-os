@@ -14,6 +14,9 @@
   "images": {
     "binding": "IMAGES"
   },
+  "stream": {
+    "binding": "STREAM"
+  },
   "services": [
     { "binding": "WORKER_SELF_REFERENCE", "service": "thot-os-staging" },
     { "binding": "REDDIT_SCHEDULER", "service": "thot-os-reddit-scheduler-staging" },
@@ -30,7 +33,9 @@
       "INTERNAL_VAULT_CATALOGUE_TOKEN",
       "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN",
       "VAULT_MASTER_KEY_V1",
-      "VAULT_PIN_PEPPER"
+      "VAULT_PIN_PEPPER",
+      "R2_VIDEO_UPLOAD_ACCESS_KEY_ID",
+      "R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY"
     ]
   },
   "vars": {
@@ -42,7 +47,9 @@
     "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
     "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
     "ADULT_PROFILE_PUBLISHING_ENABLED": "1",
-    "STAGING_QA_ENABLED": "1"
+    "STAGING_QA_ENABLED": "1",
+    "R2_VIDEO_DIRECT_UPLOADS_ENABLED": "1",
+    "R2_STREAM_PLAYBACK_ENABLED": "1"
   },
   "observability": {
     "enabled": true,

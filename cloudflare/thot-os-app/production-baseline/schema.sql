@@ -57,6 +57,8 @@
 -- 0050_r2_native_source_media.sql c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801
 -- 0051_r2_source_media_hardening.sql 52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1
 -- 0052_creator_scoped_r2_readiness.sql 18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939
+-- 0053_native_asset_authority.sql 5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7
+-- 0054_native_video_intake.sql f2cde4f908b498e0c6ed6f0e34b0d4f70b3db8d5fe54b5608d86d930b176be27
 
 PRAGMA foreign_keys = ON;
 
@@ -115,6 +117,8 @@ INSERT INTO d1_migrations (id, name) VALUES (51, '0049_creator_onboarding_access
 INSERT INTO d1_migrations (id, name) VALUES (52, '0050_r2_native_source_media.sql');
 INSERT INTO d1_migrations (id, name) VALUES (53, '0051_r2_source_media_hardening.sql');
 INSERT INTO d1_migrations (id, name) VALUES (54, '0052_creator_scoped_r2_readiness.sql');
+INSERT INTO d1_migrations (id, name) VALUES (55, '0053_native_asset_authority.sql');
+INSERT INTO d1_migrations (id, name) VALUES (56, '0054_native_video_intake.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -188,8 +192,23 @@ CREATE TABLE asset_ingest_sessions (
   failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, object_key TEXT, multipart_upload_id TEXT, chunk_bytes INTEGER, uploaded_bytes INTEGER NOT NULL DEFAULT 0, actor_email TEXT, actor_role TEXT CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')), finalization_state TEXT NOT NULL DEFAULT 'incomplete'
-  CHECK(finalization_state IN ('incomplete','completing','completed_unreconciled','verifying','verified','failed','quarantined','expired','aborted')), completed_r2_version TEXT, completed_r2_etag TEXT, completion_observed_at TEXT, reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts >= 0),
+  CHECK(finalization_state IN ('incomplete','completing','completed_unreconciled','verifying','verified','failed','quarantined','expired','aborted')), completed_r2_version TEXT, completed_r2_etag TEXT, completion_observed_at TEXT, reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts >= 0), ingest_kind TEXT NOT NULL DEFAULT 'legacy_direct'
+  CHECK(ingest_kind IN ('legacy_direct','native_image')), client_upload_id TEXT,
   UNIQUE(creator_id, asset_id, source_revision, expected_sha256)
+);
+
+CREATE TABLE asset_media_authorities (
+  asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  authority_kind TEXT NOT NULL CHECK(authority_kind IN ('r2_native','dropbox_legacy')),
+  ingest_channel TEXT NOT NULL CHECK(ingest_channel IN ('cloudflare_direct','dropbox_catalogue')),
+  canonical_storage_object_id TEXT REFERENCES asset_storage_objects(id) ON DELETE RESTRICT,
+  state TEXT NOT NULL DEFAULT 'ingesting' CHECK(state IN ('ingesting','canonical_verified','preview_ready','preview_failed','archived')),
+  preview_failure_code TEXT CHECK(preview_failure_code IS NULL OR length(preview_failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK((authority_kind='r2_native' AND ingest_channel='cloudflare_direct' AND canonical_storage_object_id IS NOT NULL)
+    OR (authority_kind='dropbox_legacy' AND ingest_channel='dropbox_catalogue'))
 );
 
 CREATE TABLE asset_paid_consent_attestations (
@@ -253,6 +272,78 @@ CREATE TABLE asset_storage_objects (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, r2_version TEXT, r2_etag TEXT,
   UNIQUE(creator_id, asset_id, storage_role, sha256),
   UNIQUE(bucket_role, object_key)
+);
+
+CREATE TABLE asset_video_ingest_events (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES asset_video_ingest_sessions(id) ON DELETE SET NULL,
+  actor_email TEXT NOT NULL,
+  actor_role TEXT NOT NULL CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')),
+  event_type TEXT NOT NULL CHECK(event_type IN ('intent_created','part_uploaded','ingest_verified','ingest_failed','processing_queued','processing_failed','playback_ready')),
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE asset_video_ingest_parts (
+  session_id TEXT NOT NULL REFERENCES asset_video_ingest_sessions(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  part_number INTEGER NOT NULL CHECK(part_number BETWEEN 1 AND 10000),
+  byte_count INTEGER NOT NULL CHECK(byte_count > 0),
+  etag TEXT,
+  status TEXT NOT NULL CHECK(status IN ('uploading','uploaded','failed')),
+  failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(session_id,part_number)
+);
+
+CREATE TABLE asset_video_ingest_sessions (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  storage_object_id TEXT NOT NULL REFERENCES asset_storage_objects(id) ON DELETE RESTRICT,
+  source_revision TEXT NOT NULL,
+  expected_sha256 TEXT NOT NULL CHECK(expected_sha256 GLOB '[0-9a-f]*' AND length(expected_sha256)=64),
+  expected_bytes INTEGER NOT NULL CHECK(expected_bytes > 0 AND expected_bytes <= 5368709120),
+  expected_mime_type TEXT NOT NULL CHECK(expected_mime_type IN ('video/mp4','video/quicktime')),
+  status TEXT NOT NULL CHECK(status IN ('created','uploading','finalized','aborted','expired','failed')),
+  finalization_state TEXT NOT NULL DEFAULT 'incomplete' CHECK(finalization_state IN ('incomplete','completing','completed_unreconciled','verifying','verified','quarantined','failed','expired','aborted')),
+  expires_at TEXT NOT NULL,
+  object_key TEXT NOT NULL CHECK(length(object_key) BETWEEN 1 AND 1024),
+  multipart_upload_id TEXT,
+  chunk_bytes INTEGER NOT NULL CHECK(chunk_bytes BETWEEN 5242880 AND 214748364),
+  uploaded_bytes INTEGER NOT NULL DEFAULT 0 CHECK(uploaded_bytes >= 0),
+  actor_email TEXT NOT NULL,
+  actor_role TEXT NOT NULL CHECK(actor_role IN ('agency_admin','operator','creator','viewer','service')),
+  client_upload_id TEXT NOT NULL CHECK(length(client_upload_id)=36),
+  completed_r2_version TEXT,
+  completed_r2_etag TEXT,
+  completion_observed_at TEXT,
+  reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts BETWEEN 0 AND 20),
+  failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(creator_id,client_upload_id)
+);
+
+CREATE TABLE asset_video_playback_states (
+  asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  canonical_storage_object_id TEXT NOT NULL REFERENCES asset_storage_objects(id) ON DELETE RESTRICT,
+  state TEXT NOT NULL DEFAULT 'uploading' CHECK(state IN ('uploading','canonical_verified','processing_queued','processing','playback_ready','processing_failed','archived')),
+  source_codec TEXT CHECK(source_codec IN ('h264','h265')),
+  playback_provider TEXT NOT NULL DEFAULT 'none' CHECK(playback_provider IN ('none','stream')),
+  playback_external_id TEXT,
+  playback_manifest_path TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND 20),
+  next_retry_at TEXT,
+  failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code)<=120),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK((playback_provider='none' AND playback_external_id IS NULL AND playback_manifest_path IS NULL)
+    OR playback_provider='stream')
 );
 
 CREATE TABLE assets (
@@ -1724,6 +1815,17 @@ CREATE INDEX asset_ingest_sessions_expiry
 CREATE INDEX asset_ingest_sessions_finalization
   ON asset_ingest_sessions(finalization_state,updated_at);
 
+CREATE UNIQUE INDEX asset_ingest_sessions_native_client_upload
+  ON asset_ingest_sessions(creator_id,client_upload_id)
+  WHERE client_upload_id IS NOT NULL;
+
+CREATE UNIQUE INDEX asset_media_authorities_canonical_object
+  ON asset_media_authorities(canonical_storage_object_id)
+  WHERE canonical_storage_object_id IS NOT NULL;
+
+CREATE INDEX asset_media_authorities_creator_state
+  ON asset_media_authorities(creator_id,authority_kind,state,updated_at DESC);
+
 CREATE INDEX asset_people_creator_asset
   ON asset_people(creator_id, asset_id);
 
@@ -1735,6 +1837,18 @@ CREATE INDEX asset_storage_objects_asset_source_revision
 
 CREATE INDEX asset_storage_objects_creator_asset_status
   ON asset_storage_objects(creator_id, asset_id, storage_role, ingest_status, updated_at DESC);
+
+CREATE INDEX asset_video_ingest_events_creator_created
+  ON asset_video_ingest_events(creator_id,created_at DESC);
+
+CREATE INDEX asset_video_ingest_parts_session_status
+  ON asset_video_ingest_parts(session_id,status,part_number);
+
+CREATE INDEX asset_video_ingest_sessions_creator_status
+  ON asset_video_ingest_sessions(creator_id,status,expires_at);
+
+CREATE INDEX asset_video_playback_states_creator_state
+  ON asset_video_playback_states(creator_id,state,updated_at DESC);
 
 CREATE INDEX assets_creator_available_modified
   ON assets(creator_id, source_available, modified_at DESC);
@@ -2062,6 +2176,26 @@ WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id
   OR (NEW.storage_object_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id))
 BEGIN SELECT RAISE(ABORT,'asset_ingest_session_creator_mismatch'); END;
 
+CREATE TRIGGER asset_media_authority_creator_scope_insert
+BEFORE INSERT ON asset_media_authorities
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.canonical_storage_object_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM asset_storage_objects o
+    WHERE o.id=NEW.canonical_storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id
+      AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
+  ))
+BEGIN SELECT RAISE(ABORT,'asset_media_authority_creator_mismatch'); END;
+
+CREATE TRIGGER asset_media_authority_creator_scope_update
+BEFORE UPDATE OF asset_id,creator_id,canonical_storage_object_id ON asset_media_authorities
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.canonical_storage_object_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM asset_storage_objects o
+    WHERE o.id=NEW.canonical_storage_object_id AND o.creator_id=NEW.creator_id AND o.asset_id=NEW.asset_id
+      AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
+  ))
+BEGIN SELECT RAISE(ABORT,'asset_media_authority_creator_mismatch'); END;
+
 CREATE TRIGGER asset_paid_consent_creator_insert
 BEFORE INSERT ON asset_paid_consent_attestations
 WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
@@ -2115,6 +2249,46 @@ BEFORE UPDATE OF provider,ingest_status,r2_version,r2_etag ON asset_storage_obje
 WHEN NEW.provider='r2' AND NEW.ingest_status='verified'
   AND (NEW.r2_version IS NULL OR length(NEW.r2_version)=0 OR NEW.r2_etag IS NULL OR length(NEW.r2_etag)=0)
 BEGIN SELECT RAISE(ABORT,'verified_r2_identity_required'); END;
+
+CREATE TRIGGER asset_video_ingest_event_creator_scope_insert
+BEFORE INSERT ON asset_video_ingest_events
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR (NEW.session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM asset_video_ingest_sessions s WHERE s.id=NEW.session_id AND s.creator_id=NEW.creator_id AND s.asset_id=NEW.asset_id))
+BEGIN SELECT RAISE(ABORT,'asset_video_ingest_event_creator_mismatch'); END;
+
+CREATE TRIGGER asset_video_ingest_part_creator_scope_insert
+BEFORE INSERT ON asset_video_ingest_parts
+WHEN NOT EXISTS (SELECT 1 FROM asset_video_ingest_sessions s WHERE s.id=NEW.session_id AND s.creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'asset_video_ingest_part_creator_mismatch'); END;
+
+CREATE TRIGGER asset_video_ingest_part_creator_scope_update
+BEFORE UPDATE OF session_id,creator_id ON asset_video_ingest_parts
+WHEN NOT EXISTS (SELECT 1 FROM asset_video_ingest_sessions s WHERE s.id=NEW.session_id AND s.creator_id=NEW.creator_id)
+BEGIN SELECT RAISE(ABORT,'asset_video_ingest_part_creator_mismatch'); END;
+
+CREATE TRIGGER asset_video_ingest_session_creator_scope_insert
+BEFORE INSERT ON asset_video_ingest_sessions
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.asset_id=NEW.asset_id AND o.creator_id=NEW.creator_id AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media')
+BEGIN SELECT RAISE(ABORT,'asset_video_ingest_session_creator_mismatch'); END;
+
+CREATE TRIGGER asset_video_ingest_session_creator_scope_update
+BEFORE UPDATE OF creator_id,asset_id,storage_object_id ON asset_video_ingest_sessions
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.storage_object_id AND o.asset_id=NEW.asset_id AND o.creator_id=NEW.creator_id AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media')
+BEGIN SELECT RAISE(ABORT,'asset_video_ingest_session_creator_mismatch'); END;
+
+CREATE TRIGGER asset_video_playback_creator_scope_insert
+BEFORE INSERT ON asset_video_playback_states
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.canonical_storage_object_id AND o.asset_id=NEW.asset_id AND o.creator_id=NEW.creator_id AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media')
+BEGIN SELECT RAISE(ABORT,'asset_video_playback_creator_mismatch'); END;
+
+CREATE TRIGGER asset_video_playback_creator_scope_update
+BEFORE UPDATE OF creator_id,asset_id,canonical_storage_object_id ON asset_video_playback_states
+WHEN NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=NEW.asset_id AND a.creator_id=NEW.creator_id)
+  OR NOT EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.id=NEW.canonical_storage_object_id AND o.asset_id=NEW.asset_id AND o.creator_id=NEW.creator_id AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media')
+BEGIN SELECT RAISE(ABORT,'asset_video_playback_creator_mismatch'); END;
 
 CREATE TRIGGER creator_access_audit_actor_scope BEFORE INSERT ON creator_access_audit_events
 WHEN NOT EXISTS (SELECT 1 FROM creator_memberships WHERE creator_id=NEW.creator_id AND lower(user_email)=lower(NEW.actor_email) AND role=NEW.actor_role AND status='active')

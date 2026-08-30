@@ -82,6 +82,7 @@ function configResources(config) {
       r2: r2.map((binding) => binding.binding),
       assets: config.assets?.binding ? [config.assets.binding] : [],
       images: config.images?.binding ? [config.images.binding] : [],
+      stream: config.stream?.binding ? [config.stream.binding] : [],
       analytics: analytics.map((binding) => binding.binding),
       kv: kv.map((binding) => binding.binding),
       queues: queueProducers.map((binding) => binding.binding),

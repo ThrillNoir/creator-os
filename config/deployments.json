@@ -67,12 +67,13 @@
           "directory": "cloudflare/thot-os-next",
           "worker": "thot-os-staging",
           "deployable": true,
-          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN", "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN", "VAULT_MASTER_KEY_V1", "VAULT_PIN_PEPPER"],
+          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN", "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN", "VAULT_MASTER_KEY_V1", "VAULT_PIN_PEPPER", "R2_VIDEO_UPLOAD_ACCESS_KEY_ID", "R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY"],
           "bindings": {
             "d1": ["DB"],
             "r2": ["MEDIA", "PREVIEWS", "LIBRARY_MEDIA"],
             "assets": ["ASSETS"],
             "images": ["IMAGES"],
+            "stream": ["STREAM"],
             "services": ["WORKER_SELF_REFERENCE", "REDDIT_SCHEDULER", "INSTAGRAM_SCHEDULER", "TELEGRAM_BRIDGE", "VAULT_BRIDGE", "PUBLIC_LINKS_CONTROL"]
           },
           "resources": {

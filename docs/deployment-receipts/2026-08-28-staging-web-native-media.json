@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 2,
+  "component": "web",
+  "service": "thot-os-web",
+  "environment": "staging",
+  "source": {
+    "gitSha": "694d66bf19b0592f86ec06737e6ada2d13737488",
+    "gitBranch": "codex/r2-readiness-coordinator",
+    "artifactSha256": "657f46312e850c4a97ea6ed01be34b68effef060925778d1a72e9d957c05045b"
+  },
+  "buildTime": "2026-08-28T07:08:12.351Z",
+  "worker": {
+    "name": "thot-os-staging",
+    "version": "0dde31cb-a9e8-4db2-8a5b-3e1a6e090a94",
+    "traffic": [
+      {
+        "versionId": "0dde31cb-a9e8-4db2-8a5b-3e1a6e090a94",
+        "percentage": 100
+      }
+    ],
+    "observedAt": "2026-08-28T07:58:34.359Z",
+    "evidenceSource": "cloudflare"
+  },
+  "migration": {
+    "state": "55 migrations; latest 0053_native_asset_authority.sql",
+    "observedAt": "2026-08-28T07:32:13.356Z",
+    "verified": true
+  },
+  "smokeTest": {
+    "status": "AUTHENTICATED_HEALTH_AND_NATIVE_LIBRARY_PASS",
+    "observedAt": "2026-08-28T07:58:34.359Z",
+    "verified": true,
+    "detail": "Cloudflare Access admitted the authenticated creator session; protected health reported the deployed Web SHA, connected D1, 0053, and required bindings. The native Library screen rendered the private Cloudflare upload interface without browser console errors. No upload, media mutation, or provider action was performed."
+  },
+  "operator": "Codex",
+  "tool": "controlled-deployment-receipt",
+  "verification": "remote-observed"
+}
