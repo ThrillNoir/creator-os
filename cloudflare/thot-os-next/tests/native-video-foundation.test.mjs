@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { IncrementalSha256 } from "../src/lib/incremental-sha256.ts";
 import { IsoBmffValidator } from "../src/lib/iso-bmff-validator.ts";
 import { canonicalR2MultipartPartEtag } from "../src/lib/r2-multipart-etag.ts";
+import { completedR2MultipartEtag, validateR2VideoMetadata } from "../src/lib/r2-video-metadata.ts";
 import { detectedMime, parseSingleRange } from "../src/lib/source-media-algorithms.ts";
 import { canStartVideoPlaybackPoll, hasPendingVideoPlayback, nextVideoPlaybackDelayIndex, videoPlaybackDelay } from "../src/lib/video-playback-polling.ts";
 
@@ -36,6 +38,40 @@ test("H.264 and H.265 container fixtures are accepted only as private canonical 
   assert.throws(() => spoofedPayload.finish(), /source_media_video_codec_unsupported/);
 });
 
+test("completed multipart video verification reads metadata instead of the media payload", async () => {
+  const bytes = join(
+    box("ftyp", encoder.encode("isom\u0000\u0000\u0000\u0000avc1mp41")),
+    box("moov", encoder.encode("avc1")),
+    box("mdat", new Uint8Array(1024 * 1024)),
+  );
+  const midpoint = Math.floor(bytes.length / 2);
+  const partEtags = [bytes.slice(0, midpoint), bytes.slice(midpoint)].map((part) => createHash("md5").update(part).digest("hex"));
+  const multipartEtag = completedR2MultipartEtag(partEtags);
+  assert.ok(multipartEtag);
+  const sha256 = "a".repeat(64);
+  const metadata = {
+    size: bytes.length,
+    etag: multipartEtag,
+    version: "version-1",
+    httpMetadata: { contentType: "video/mp4" },
+    customMetadata: { expected_sha256: sha256, creator_id: "creator-1", asset_id: "asset-1", source_session: "session-1" },
+  };
+  const ranges = [];
+  const bucket = {
+    head: async () => metadata,
+    get: async (_key, options) => {
+      assert.equal(options.onlyIf.etagMatches, multipartEtag);
+      ranges.push(options.range);
+      const value = bytes.slice(options.range.offset, options.range.offset + options.range.length);
+      return { ...metadata, body: new Blob([value]).stream(), arrayBuffer: async () => value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) };
+    },
+  };
+  const verified = await validateR2VideoMetadata(bucket, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 });
+  assert.equal(verified.codec, "h264");
+  assert.ok(ranges.reduce((total, range) => total + range.length, 0) < bytes.length / 10);
+  await assert.rejects(() => validateR2VideoMetadata({ ...bucket, head: async () => ({ ...metadata, size: bytes.length - 1 }) }, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 }), /source_media_verification_failed/);
+});
+
 test("browser hashing is incremental and range parsing stays bounded", () => {
   const hash = new IncrementalSha256();
   for (const value of ["a", "b", "c"]) hash.update(encoder.encode(value));
@@ -65,7 +101,7 @@ test("video playback polling is single-flight eligible only for accepted process
 });
 
 test("native video routes are creator-scoped, direct-to-R2, private, and do not provision playback", async () => {
-  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, assetCard, playbackStart, playbackStatus, playbackToken, streamPlayback, lazyUploader, libraryPage, library, health] = await Promise.all([
+  const [migration, media, validator, intent, part, authorize, confirm, failure, lifecycle, signer, finalize, download, uploader, assetCard, playbackStart, playbackStatus, playbackToken, streamPlayback, lazyUploader, libraryPage, library, health, wrangler] = await Promise.all([
     source("../thot-os-app/migrations/0054_native_video_intake.sql"),
     source("src/lib/source-media.ts"),
     source("src/lib/iso-bmff-validator.ts"),
@@ -88,6 +124,7 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
     source("src/app/library/page.tsx"),
     source("src/lib/library.ts"),
     source("src/app/health/route.ts"),
+    source("wrangler.jsonc"),
   ]);
   for (const table of ["asset_video_ingest_sessions", "asset_video_ingest_parts", "asset_video_playback_states", "asset_video_ingest_events"]) assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
   assert.match(migration, /asset_video_ingest_session_creator_mismatch/);
@@ -114,8 +151,11 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(validator, /source_media_video_codec_unsupported/);
   assert.match(validator, /hvc1.*hev1/);
   assert.match(media, /private, no-store/);
-  assert.match(finalize, /hashAndValidateR2Object/);
+  assert.match(finalize, /validateR2VideoMetadata/);
+  assert.match(finalize, /completedR2MultipartEtag/);
+  assert.doesNotMatch(finalize, /hashAndValidateR2Object/);
   assert.match(finalize, /source_media_verification_failed/);
+  assert.doesNotMatch(finalize, /fansly|vault/i);
   assert.match(finalize, /playback_provider='none'/);
   assert.match(download, /requireCreatorContext\("view"\)/);
   assert.match(download, /parseSingleRange/);
@@ -125,6 +165,11 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(uploader, /\/api\/source-media\/videos\/intents/);
   assert.match(uploader, /credentials: "omit"/);
   assert.match(uploader, /completion_requires_reconciliation/);
+  assert.match(uploader, /finalized\.error \?\? "session_finalizing"/);
+  assert.match(uploader, /\["finalized", "finalizing"\]/);
+  assert.doesNotMatch(uploader, /"session_failed", "completion_requires_reconciliation"/);
+  assert.match(intent, /existing\.status === "finalized" \? "finalized" : existing\.finalization_state === "incomplete" \? existing\.status : "finalizing"/);
+  assert.match(wrangler, /"cpu_ms": 300000/);
   assert.match(uploader, /canonicalR2MultipartPartEtag/);
   assert.match(assetCard, /Video upload finalization failed/);
   assert.match(assetCard, /browser playback can be prepared/);

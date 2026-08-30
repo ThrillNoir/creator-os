@@ -23,8 +23,11 @@ function messageFor(error: string) {
     session_failed: "That upload could not be resumed. Start this video again.",
     direct_video_upload_unavailable: "Direct private video uploads are not configured yet. Try again after staging setup is complete.",
     direct_part_upload_failed: "That video part did not reach private storage. You can retry this file.",
-    completion_requires_reconciliation: "Video upload finalization failed. This upload needs cleanup before starting it again.",
-    session_finalizing: "Video upload finalization is still being checked. Refresh the Library before trying again.",
+    completion_requires_reconciliation: "Verification was interrupted. Choose this same video again to retry finalization.",
+    session_finalizing: "Verification was interrupted. Choose this same video again to retry finalization.",
+    source_media_container_invalid: "The uploaded file is not a valid MP4 or MOV container.",
+    source_media_metadata_mismatch: "The stored video metadata did not match this upload session.",
+    source_media_type_unsupported: "The uploaded object is not a supported MP4 or MOV video.",
     source_media_video_codec_unsupported: "This video container is valid, but its H.264 or H.265 codec could not be verified.",
     source_media_verification_failed: "The bytes received did not match the selected video.",
   } as Record<string, string>)[error] ?? "Video upload failed. You can retry this file without changing its source.";
@@ -67,7 +70,7 @@ export function NativeVideoUploader() {
       const intent = await payload<IntentResponse>(intentResponse);
       if (!intentResponse.ok || !intent.ok || !intent.sessionId || !intent.partBytes) throw new Error(intent.error ?? "intent_failed");
       update(item.id, { sourceHash, status: "uploading", detail: intent.replay ? "Resuming private R2 upload…" : "Uploading directly to private Cloudflare storage…" });
-      if (intent.status !== "finalized") {
+      if (!["finalized", "finalizing"].includes(intent.status ?? "")) {
         const partCount = Math.ceil(item.file.size / intent.partBytes);
         for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
           const start = (partNumber - 1) * intent.partBytes;
@@ -79,13 +82,13 @@ export function NativeVideoUploader() {
       update(item.id, { status: "finalizing", detail: "Verifying canonical bytes and codec…", progress: 95 });
       const finalizeResponse = await fetch(`/api/source-media/videos/intents/${intent.sessionId}/finalize`, { method: "POST", credentials: "same-origin" });
       const finalized = await payload<IntentResponse>(finalizeResponse);
-      if (!finalizeResponse.ok || !finalized.ok) throw new Error(finalized.error ?? "source_media_verification_failed");
+      if (!finalizeResponse.ok || !finalized.ok) throw new Error(finalized.error ?? "session_finalizing");
       sessionStorage.removeItem(storageKey(sourceHash));
       update(item.id, { status: "complete", detail: finalized.playback === "ready" ? "Private original and browser playback are ready." : `Private ${finalized.sourceCodec?.toUpperCase() ?? "video"} original is verified. Cross-browser playback is awaiting the approved Stream provider.`, progress: 100 });
       router.refresh();
     } catch (error) {
       const code = error instanceof Error ? error.message : "upload_failed";
-      if (["session_expired", "session_aborted", "session_failed", "completion_requires_reconciliation"].includes(code) && sourceHash) sessionStorage.removeItem(storageKey(sourceHash));
+      if (["session_expired", "session_aborted", "session_failed"].includes(code) && sourceHash) sessionStorage.removeItem(storageKey(sourceHash));
       update(item.id, { status: "failed", detail: messageFor(code) });
     }
   };

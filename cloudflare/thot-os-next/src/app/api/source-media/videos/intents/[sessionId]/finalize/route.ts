@@ -2,23 +2,36 @@ import { humanAuditActor, identityAuditStatement, isSameOriginRequest } from "@/
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { archiveTerminalVideoIngest, expireVideoIngest, failVideoIngestAfterAbort } from "@/lib/native-video-lifecycle";
-import { expectedPartBytes, hashAndValidateR2Object, noStoreJson, safeFailureCode } from "@/lib/source-media";
+import { completedR2MultipartEtag, validateR2VideoMetadata } from "@/lib/r2-video-metadata";
+import { expectedPartBytes, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
 type Context = Awaited<ReturnType<typeof requireCreatorContext>>;
 type Session = { id: string; asset_id: string; storage_object_id: string; object_key: string; multipart_upload_id: string | null; expected_sha256: string; expected_bytes: number; expected_mime_type: string; chunk_bytes: number; status: string; finalization_state: string; expires_at: string };
 type Part = { part_number: number; etag: string | null; byte_count: number; status: string };
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+const terminalValidationFailures = new Set(["source_media_container_invalid", "source_media_metadata_mismatch", "source_media_metadata_too_large", "source_media_type_unsupported", "source_media_verification_failed", "source_media_video_codec_unsupported"]);
 
 async function quarantine(DB: D1Database, session: Session, creatorId: string, failure: string, context: Context) {
   await archiveTerminalVideoIngest(DB, session, creatorId, "failed", failure, { audit: humanAuditActor(context), email: context.email, role: context.creator.role });
 }
 
-async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, session: Session, creatorId: string, context: Context) {
+async function verifiedParts(DB: D1Database, session: Session) {
+  const parts = (await DB.prepare("SELECT part_number,etag,byte_count,status FROM asset_video_ingest_parts WHERE session_id=? ORDER BY part_number").bind(session.id).all<Part>()).results;
+  const partCount = Math.ceil(session.expected_bytes / session.chunk_bytes);
+  return parts.length === partCount && parts.every((part, index) => part.status === "uploaded" && part.etag && part.part_number === index + 1 && part.byte_count === expectedPartBytes(session.expected_bytes, index + 1, session.chunk_bytes)) ? parts : null;
+}
+
+async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, session: Session, parts: Part[], creatorId: string, context: Context) {
   await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='verifying',reconcile_attempts=reconcile_attempts+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(session.id, creatorId).run();
-  const verified = await hashAndValidateR2Object(bucket, session.object_key, undefined, { allowVideo: true });
-  if (!verified.codec || !["h264", "h265"].includes(verified.codec) || verified.byteCount !== session.expected_bytes || verified.sha256 !== session.expected_sha256 || verified.detectedMime !== session.expected_mime_type) {
-    await quarantine(DB, session, creatorId, "source_media_verification_failed", context);
-    throw new Error("source_media_verification_failed");
+  const multipartEtag = completedR2MultipartEtag(parts.map((part) => part.etag!));
+  if (!multipartEtag) throw new Error("source_media_checksum_unavailable");
+  let verified: Awaited<ReturnType<typeof validateR2VideoMetadata>>;
+  try {
+    verified = await validateR2VideoMetadata(bucket, session.object_key, { assetId: session.asset_id, bytes: session.expected_bytes, creatorId, mimeType: session.expected_mime_type, multipartEtag, sessionId: session.id, sha256: session.expected_sha256 });
+  } catch (error) {
+    const failure = safeFailureCode(error, "source_media_verification_failed");
+    if (terminalValidationFailures.has(failure)) await quarantine(DB, session, creatorId, failure, context);
+    throw error;
   }
   await DB.batch([
     DB.prepare("UPDATE asset_video_ingest_sessions SET status='finalized',finalization_state='verified',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=COALESCE(completion_observed_at,CURRENT_TIMESTAMP),multipart_upload_id=NULL,uploaded_bytes=?,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(verified.r2Version, verified.r2Etag, verified.byteCount, session.id, creatorId),
@@ -52,28 +65,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ ses
         const result = await failVideoIngestAfterAbort(DB, LIBRARY_MEDIA, session, context.creator.creator_id, "multipart_completion_failed", { audit: humanAuditActor(context), email: context.email, role: context.creator.role });
         return noStoreJson({ ok: false, error: result.failed ? "session_failed" : "completion_abort_uncertain" }, result.failed ? 422 : 503);
       }
+      const parts = await verifiedParts(DB, session);
+      if (!parts) return noStoreJson({ ok: false, error: "parts_incomplete" }, 409);
       await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='completed_unreconciled',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=COALESCE(completion_observed_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(head.version, head.etag, session.id, context.creator.creator_id).run();
-      const sourceCodec = await verifyAndPersist(DB, LIBRARY_MEDIA, session, context.creator.creator_id, context);
+      const sourceCodec = await verifyAndPersist(DB, LIBRARY_MEDIA, session, parts, context.creator.creator_id, context);
       return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", reconciled: true, playback: "provider_not_configured", sourceCodec });
-    } catch (error) { return noStoreJson({ ok: false, error: safeFailureCode(error, "reconciliation_required") }, 409); }
+    } catch (error) {
+      const failure = safeFailureCode(error, "reconciliation_required");
+      return noStoreJson({ ok: false, error: terminalValidationFailures.has(failure) ? failure : "completion_requires_reconciliation" }, terminalValidationFailures.has(failure) ? 422 : 503);
+    }
   }
   if (!session.multipart_upload_id || Date.parse(session.expires_at) <= Date.now()) {
     const result = await expireVideoIngest(DB, LIBRARY_MEDIA, session, context.creator.creator_id, { audit: humanAuditActor(context), email: context.email, role: context.creator.role });
     return noStoreJson({ ok: false, error: result.expired ? "session_expired" : "expiry_abort_uncertain" }, result.expired ? 410 : 503);
   }
-  const parts = (await DB.prepare("SELECT part_number,etag,byte_count,status FROM asset_video_ingest_parts WHERE session_id=? ORDER BY part_number").bind(session.id).all<Part>()).results;
-  const partCount = Math.ceil(session.expected_bytes / session.chunk_bytes);
-  if (parts.length !== partCount || parts.some((part, index) => part.status !== "uploaded" || !part.etag || part.part_number !== index + 1 || part.byte_count !== expectedPartBytes(session.expected_bytes, index + 1, session.chunk_bytes))) return noStoreJson({ ok: false, error: "parts_incomplete" }, 409);
+  const parts = await verifiedParts(DB, session);
+  if (!parts) return noStoreJson({ ok: false, error: "parts_incomplete" }, 409);
   const claimed = await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='completing',failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete' AND status IN ('created','uploading')").bind(session.id, context.creator.creator_id).run();
   if (!claimed.meta?.changes) return noStoreJson({ ok: false, error: "finalization_in_progress" }, 409);
   try {
     const completed = await LIBRARY_MEDIA.resumeMultipartUpload(session.object_key, session.multipart_upload_id).complete(parts.map((part) => ({ partNumber: part.part_number, etag: part.etag! })));
     await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='completed_unreconciled',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='completing'").bind(completed.version, completed.etag, session.id, context.creator.creator_id).run();
-    const sourceCodec = await verifyAndPersist(DB, LIBRARY_MEDIA, session, context.creator.creator_id, context);
+    const sourceCodec = await verifyAndPersist(DB, LIBRARY_MEDIA, session, parts, context.creator.creator_id, context);
     return noStoreJson({ ok: true, sessionId: session.id, status: "finalized", playback: "provider_not_configured", sourceCodec });
   } catch (error) {
     const failure = safeFailureCode(error, "completed_unreconciled");
     await DB.prepare("UPDATE asset_video_ingest_sessions SET failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(failure, session.id, context.creator.creator_id).run().catch(() => undefined);
-    return noStoreJson({ ok: false, error: failure === "source_media_verification_failed" ? failure : "completion_requires_reconciliation" }, failure === "source_media_verification_failed" ? 422 : 503);
+    return noStoreJson({ ok: false, error: terminalValidationFailures.has(failure) ? failure : "completion_requires_reconciliation" }, terminalValidationFailures.has(failure) ? 422 : 503);
   }
 }

@@ -45,13 +45,13 @@ export async function POST(request: Request) {
   if (!LIBRARY_MEDIA) return noStoreJson({ ok: false, error: "source_media_unavailable" }, 503);
   await expireAbandonedSessions(DB, LIBRARY_MEDIA, context.creator.creator_id, humanAuditActor(context), context.email, context.creator.role);
   if (!directVideoUploadsAvailable(cloudflareEnv())) return noStoreJson({ ok: false, error: "direct_video_upload_unavailable" }, 503);
-  const existing = await DB.prepare(`SELECT id,asset_id,status,expected_bytes,expected_mime_type,expected_sha256,chunk_bytes
+  const existing = await DB.prepare(`SELECT id,asset_id,status,finalization_state,expected_bytes,expected_mime_type,expected_sha256,chunk_bytes
     FROM asset_video_ingest_sessions WHERE creator_id=? AND client_upload_id=?`).bind(context.creator.creator_id, input.clientUploadId)
-    .first<{ id: string; asset_id: string; status: string; expected_bytes: number; expected_mime_type: string; expected_sha256: string; chunk_bytes: number }>();
+    .first<{ id: string; asset_id: string; status: string; finalization_state: string; expected_bytes: number; expected_mime_type: string; expected_sha256: string; chunk_bytes: number }>();
   if (existing) {
     if (existing.expected_bytes !== bytes || existing.expected_mime_type !== details.mimeType || existing.expected_sha256 !== sha256) return noStoreJson({ ok: false, error: "idempotency_conflict" }, 409);
     if (["aborted", "expired", "failed"].includes(existing.status)) return noStoreJson({ ok: false, error: `session_${existing.status}` }, 409);
-    return noStoreJson({ ok: true, sessionId: existing.id, assetId: existing.asset_id, status: existing.status, partBytes: existing.chunk_bytes, replay: true });
+    return noStoreJson({ ok: true, sessionId: existing.id, assetId: existing.asset_id, status: existing.status === "finalized" ? "finalized" : existing.finalization_state === "incomplete" ? existing.status : "finalizing", partBytes: existing.chunk_bytes, replay: true });
   }
   const active = await DB.prepare("SELECT COUNT(*) AS count FROM asset_video_ingest_sessions WHERE creator_id=? AND status IN ('created','uploading') AND finalization_state='incomplete' AND expires_at>CURRENT_TIMESTAMP").bind(context.creator.creator_id).first<{ count: number }>();
   if ((active?.count ?? 0) >= SOURCE_MEDIA_MAX_ACTIVE_VIDEO_UPLOADS) return noStoreJson({ ok: false, error: "active_video_upload_limit" }, 429);

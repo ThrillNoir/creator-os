@@ -4,6 +4,19 @@
  * never arbitrary media payload, so an `mdat` byte sequence cannot masquerade
  * as a supported codec.
  */
+export function isoBmffBoxHeader(input: Uint8Array) {
+  if (input.length < 8) return null;
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  const size32 = view.getUint32(0);
+  const headerBytes = size32 === 1 ? 16 : 8;
+  if (input.length < headerBytes) return null;
+  const type = String.fromCharCode(...input.subarray(4, 8));
+  if (!/^[\x20-\x7e]{4}$/.test(type)) throw new Error("source_media_container_invalid");
+  const size = size32 === 1 ? Number(view.getBigUint64(8)) : size32;
+  if (!Number.isSafeInteger(size) || size < headerBytes) throw new Error("source_media_container_invalid");
+  return { headerBytes, size, type };
+}
+
 export class IsoBmffValidator {
   private readonly mime: string;
   private pending = new Uint8Array();
@@ -50,15 +63,9 @@ export class IsoBmffValidator {
       const next = new Uint8Array(this.pending.length + take);
       next.set(this.pending); next.set(input.subarray(offset, offset + take), this.pending.length);
       this.pending = next; offset += take;
-      if (this.pending.length < 8) continue;
-      const view = new DataView(this.pending.buffer, this.pending.byteOffset, this.pending.byteLength);
-      const size32 = view.getUint32(0);
-      const headerBytes = size32 === 1 ? 16 : 8;
-      if (this.pending.length < headerBytes) continue;
-      const type = String.fromCharCode(...this.pending.subarray(4, 8));
-      if (!/^[\x20-\x7e]{4}$/.test(type)) throw new Error("source_media_container_invalid");
-      const size = size32 === 1 ? Number(view.getBigUint64(8)) : size32;
-      if (!Number.isSafeInteger(size) || size < headerBytes) throw new Error("source_media_container_invalid");
+      const header = isoBmffBoxHeader(this.pending);
+      if (!header) continue;
+      const { headerBytes, size, type } = header;
       if (this.firstBox && type !== "ftyp") throw new Error("source_media_container_invalid");
       this.firstBox = false;
       this.boxCount += 1;
@@ -76,6 +83,11 @@ export class IsoBmffValidator {
       this.pending = new Uint8Array();
       if (remainder.length) this.push(remainder);
     }
+  }
+
+  skipPayload(byteCount: number) {
+    if (!Number.isSafeInteger(byteCount) || byteCount < 0 || this.pending.length || this.codecPayloadRemaining || byteCount > this.payloadRemaining) throw new Error("source_media_container_invalid");
+    this.payloadRemaining -= byteCount;
   }
 
   finish() {
