@@ -1,4 +1,3 @@
-import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 
 type BridgeIdentity = { creator_id: string; account_id: string; profile_id: string; platform: "fansly" };
@@ -88,25 +87,6 @@ function pairingPage() {
     "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
     "referrer-policy": "no-referrer", "x-content-type-options": "nosniff",
   } });
-}
-
-async function sourceMediaHealth(request: Request, env: Env) {
-  const input: { creatorId?: string } = await request.json<{ creatorId?: string }>().catch(() => ({}));
-  const creatorId = String(input.creatorId ?? "");
-  if (!creatorId) return json(request, { ok: false, error: "creator_scope_required" }, 400);
-  const service = await requireInternalServiceForCreator(request, env.DB, creatorId, "thot-os-web-vault", "vault.source_media.health");
-  await internalServiceAuditStatement(env.DB, service, "/internal/source-media/health").run();
-  const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
-    FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
-    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
-    WHERE o.creator_id=? AND o.ingest_status='verified' AND o.object_key=a.media_r2_key AND a.source_available=1
-    ORDER BY o.verified_at DESC LIMIT 1`).bind(creatorId).first<LibraryObject>();
-  let probe = true;
-  if (record?.r2_etag) {
-    const object = await env.LIBRARY_MEDIA.head(record.object_key);
-    probe = Boolean(object && immutableR2IdentityMatches(record, object));
-  }
-  return json(request, { ok: probe, sourceMediaCapability: "r2-source-v2", reasonCode: probe ? "ready" : "r2_source_media_integrity_failed", bindings: { libraryMedia: true } }, probe ? 200 : 503);
 }
 
 function validPreviewMessage(value: unknown): value is PreviewQueueMessage {
@@ -368,7 +348,6 @@ export default {
     try {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/pair") return pairingPage();
-      if (request.method === "POST" && url.pathname === "/internal/source-media/health") return sourceMediaHealth(request, env);
       const identity = await authenticate(request, env);
       if (!identity) return json(request, { ok: false, error: "unauthorized" }, 401);
       if (request.method === "GET" && url.pathname === "/status") return json(request, { ok: true, paired: true, ...identity });

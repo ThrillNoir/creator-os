@@ -100,8 +100,8 @@ test("receiving Workers use named D1-backed service credentials and device crede
     assert.match(worker, /requireInternalServiceForCreator/);
     assert.match(worker, new RegExp(service));
   }
-  assert.match(vault, /thot-os-web-vault/);
   assert.doesNotMatch(vault, /CATALOGUE_SYNC_TOKEN/);
+  assert.doesNotMatch(vault, /\/internal\/source-media\/health/);
   assert.match(vault, /x-thot-os-installation-id/);
   assert.match(vault, /installation_id=\? AND status<>'revoked'/);
   assert.match(extension, /x-thot-os-installation-id/);

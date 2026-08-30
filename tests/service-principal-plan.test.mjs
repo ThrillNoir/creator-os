@@ -13,10 +13,10 @@ test("service-principal provisioning plans require explicit, allowed creator cap
     environment: "staging",
     contract,
     registry,
-    grants: ["thot-os-web-reddit:adelaide:reddit.status.read", "thot-os-web-vault:adelaide:vault.source_media.health"],
+    grants: ["thot-os-web-reddit:adelaide:reddit.status.read", "thot-os-web-public-links:adelaide:public.profile.publish"],
   });
   assert.equal(plan.mode, "plan-only");
-  assert.equal(plan.principalCount, 5);
+  assert.equal(plan.principalCount, 4);
   assert.equal(plan.grants.length, 2);
   assert.ok(plan.requiredRemoteGates.some((gate) => gate.includes("0029")));
   assert.ok(plan.prohibited.includes("secret output"));
