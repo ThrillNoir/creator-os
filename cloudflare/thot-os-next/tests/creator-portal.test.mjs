@@ -41,12 +41,11 @@ test("the creator portal shell has no switcher or agency controls", async () => 
 });
 
 test("viewer interface is read-only and hidden controls are denied server-side", async () => {
-  const [library, asset, operations, messages, migration, actions] = await Promise.all([
+  const [library, asset, operations, messages, actions] = await Promise.all([
     source("../src/app/library/page.tsx"),
     source("../src/app/library/[objectId]/page.tsx"),
     source("../src/app/operations/page.tsx"),
     source("../src/app/messages/page.tsx"),
-    source("../src/app/migration/page.tsx"),
     source("../src/app/actions.ts"),
   ]);
   assert.match(library, /roleCan\(context\.creator\.role, "mutate"\)/);
@@ -54,7 +53,7 @@ test("viewer interface is read-only and hidden controls are denied server-side",
   assert.match(asset, /Viewer access is read-only/);
   assert.match(operations, /context\.creator\.role === "viewer"\) notFound\(\)/);
   assert.match(messages, /context\.creator\.role === "viewer"\) notFound\(\)/);
-  assert.match(migration, /requireCreatorContext\("manage_identity"\)/);
+  assert.doesNotMatch(operations, /Migration/);
   assert.doesNotMatch(actions, /formData\.get\(["'](?:creatorId|actor_?role|role)["']\)/);
   assert.match(actions, /requireCreatorContext\("mutate"\)/);
   assert.match(actions, /identity\.creator\.role/);
@@ -72,7 +71,7 @@ test("Accounts exposes creator-scoped Instagram OAuth state without treating con
   assert.match(accounts, /Connect Instagram/);
   assert.match(accounts, /does not create, schedule or publish content/i);
   assert.match(accounts, /Open read-only analytics/);
-  assert.match(actions, /requireCreatorContext\("manage_identity"\)/);
+  assert.match(actions, /startInstagramReconnectAction[\s\S]*requireCreatorContext\("mutate"\)/);
   assert.match(actions, /instagram\.connection\.manage/);
 });
 

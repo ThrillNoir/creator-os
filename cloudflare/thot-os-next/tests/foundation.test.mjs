@@ -44,7 +44,7 @@ test("library supports list view and copy-then-apply batch attributes", async ()
 test("workspace navigation shows working modules without a disabled-module wall", async () => {
   const shell = await source("src/components/app-shell.tsx");
   assert.match(shell, /WORKSPACE/);
-  assert.match(shell, /Migration progress/);
+  assert.doesNotMatch(shell, /Migration progress/);
   assert.doesNotMatch(shell, /MIGRATING NEXT/);
   assert.doesNotMatch(shell, /const upcoming/);
   assert.match(shell, /Money & health/);
@@ -172,14 +172,15 @@ test("Reddit delivery uses verified R2 media and the approved API", async () => 
   assert.doesNotMatch(scheduler, /dropbox/i);
 });
 
-test("Instagram Operations retains OAuth and fails closed for private R2 handoff", async () => {
+test("Instagram Operations retains OAuth and publishes only verified private R2 authority", async () => {
   const [config, actions, scheduler] = await Promise.all([
     source("wrangler.jsonc"), source("src/app/actions.ts"), source("../instagram-scheduler/src/index.ts"),
   ]);
   assert.match(config, /INSTAGRAM_SCHEDULER/);
   assert.match(actions, /startInstagramReconnectAction/);
   assert.match(actions, /Instagram publishing requires an asset classified SFW/);
-  assert.match(scheduler, /instagram_r2_provider_handoff_not_implemented/);
+  assert.match(scheduler, /authority_kind='r2_native'/);
+  assert.match(scheduler, /INSTAGRAM_CREATE_MEDIA_CONTAINER/);
   assert.match(scheduler, /INSTAGRAM_LIST_ALL_CONVERSATIONS/);
   assert.doesNotMatch(scheduler, /dropbox/i);
 });

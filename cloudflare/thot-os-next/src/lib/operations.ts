@@ -4,13 +4,8 @@ import type { AssetRow, Destination } from "./library";
 
 export const operationPlatforms = [
   { id: "instagram", label: "Instagram", short: "IG", destination: "instagram" },
-  { id: "tiktok", label: "TikTok", short: "TT", destination: "tiktok" },
-  { id: "threads", label: "Threads", short: "TH", destination: "threads" },
-  { id: "facebook", label: "Facebook", short: "FB", destination: "facebook" },
-  { id: "x", label: "X", short: "X", destination: "x" },
   { id: "reddit", label: "Reddit", short: "R", destination: "reddit" },
   { id: "fansly", label: "Vault", short: "V", destination: "subscription" },
-  { id: "youtube", label: "YouTube", short: "YT", destination: null },
 ] as const;
 
 export type OperationPlatform = (typeof operationPlatforms)[number]["id"];
@@ -226,7 +221,7 @@ export async function getVaultOperations(creatorId: string) {
   const base = await getPlatformOperations(creatorId, "fansly");
   const { DB } = cloudflareEnv();
   const [accounts, jobs, pairing, assets] = await Promise.all([
-    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform IN ('fansly','myroomz') ORDER BY platform,label").bind(creatorId).all<OperationalAccount>(),
+    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform='fansly' ORDER BY label").bind(creatorId).all<OperationalAccount>(),
     DB.prepare(`
       SELECT j.id,j.platform,j.status,j.asset_id,a.basename,a.bytes,j.error,j.receipt,j.approved_at,j.claimed_at,j.completed_at,j.created_at
       FROM vault_upload_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id

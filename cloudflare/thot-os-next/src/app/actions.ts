@@ -689,7 +689,7 @@ export async function reviewFailedRedditPostAction(formData: FormData) {
 }
 
 export async function startRedditReconnectAction() {
-  const identity = await requireCreatorContext("manage_identity");
+  const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/operations/reddit/callback", env.APP_BASE_URL).toString();
   const response = await fetchInternalService(env, "reddit", "reddit.connection.manage", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/start", {
@@ -735,7 +735,7 @@ export async function createInstagramPostAction(formData: FormData) {
   if (!asset) throw new Error("That asset is no longer available for Instagram.");
   if (asset.safety !== "sfw") throw new Error("Instagram publishing requires an asset classified SFW.");
   const extension = asset.extension.toLowerCase().replace(/^\./, "");
-  if (!["jpg", "jpeg", "png", "mp4", "mov"].includes(extension)) throw new Error("Instagram supports JPG, PNG, MP4 or MOV in this workflow.");
+  if (!["jpg", "jpeg", "mp4", "mov"].includes(extension)) throw new Error("Instagram supports JPEG, MP4 or MOV in this workflow.");
   if (!account) throw new Error("Add the Instagram account before creating a post.");
   if (intent !== "draft" && (account.connection_status !== "connected" || account.publishing_authority !== "confirmed")) throw new Error("Reconnect and verify Instagram before approving delivery.");
   if (existingPostId && (!existingPost || !["draft", "scheduled"].includes(existingPost.status))) throw new Error("Only draft or scheduled Instagram posts can be edited.");
@@ -802,7 +802,7 @@ export async function reviewFailedInstagramPostAction(formData: FormData) {
 }
 
 export async function startInstagramReconnectAction() {
-  const identity = await requireCreatorContext("manage_identity");
+  const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
   const callbackUrl = new URL("/api/operations/instagram/callback", env.APP_BASE_URL).toString();
   const response = await fetchInternalService(env, "instagram", "instagram.connection.manage", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/start", {
@@ -993,22 +993,6 @@ export async function openFanslyVaultAction() {
 
 export async function openFanslyMessagesAction() {
   redirect(await issueFanslyBridgePairing("messages"));
-}
-
-export async function verifyFanslyVaultJobAction(formData: FormData) {
-  const identity = await requireCreatorContext("approve");
-  const creatorId = identity.creator.creator_id;
-  const jobId = String(formData.get("jobId") ?? "");
-  const actor = identity.email;
-  const { DB } = cloudflareEnv();
-  const updated = await creatorPrepare(DB, creatorId, "UPDATE vault_upload_jobs SET status='verified',completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='fansly' AND status='staged'").bind(jobId).run();
-  if (!updated.meta?.changes) throw new Error("Only a staged Fansly upload can be confirmed.");
-  await DB.batch([
-    creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'upload_verified','{}')").bind(crypto.randomUUID(), jobId, actor, identity.creator.role),
-    creatorPrepare(DB, creatorId, "UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND platform='fansly'").bind(),
-  ]);
-  revalidatePath("/operations");
-  redirect("/operations?platform=fansly&section=queue&saved=vault_verified");
 }
 
 export async function retryFanslyVaultJobAction(formData: FormData) {

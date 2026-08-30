@@ -1,5 +1,7 @@
 type UnknownRecord = Record<string, unknown>;
+import { AwsClient } from "aws4fetch";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
+import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 type DuePost = {
   id: string;
   creator_id: string;
@@ -7,6 +9,8 @@ type DuePost = {
   asset_id: string;
   caption: string;
   extension: string;
+  basename: string;
+  bytes: number;
   relative_path: string;
   provider_container_id: string | null;
   provider_container_type: string | null;
@@ -39,6 +43,9 @@ class OutcomeUncertainError extends Error {}
 
 const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
 const COMPOSIO_V31 = "https://backend.composio.dev/api/v3.1";
+const R2_PRESIGN_TTL_SECONDS = 45 * 60;
+const R2_BUCKET = "thot-os-library-media-staging";
+type CanonicalR2Source = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string };
 
 function record(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : undefined;
@@ -317,6 +324,18 @@ function d1TimestampMs(value: string | null) {
 
 function isDefinitiveInstagramRejection(message: string) {
   return /\bstatus 4\d\d\b/i.test(message) || /outside of allowed window/i.test(message);
+}
+
+function r2ObjectPath(key: string) { return key.split("/").map(encodeURIComponent).join("/"); }
+async function approvedInstagramMedia(env: Env, post: DuePost) {
+  if (!env.LIBRARY_MEDIA) throw new Error("r2_source_media_binding_missing");
+  const source = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key AND o.byte_count=a.bytes AND a.source_available=1 AND ma.authority_kind='r2_native' AND ma.state IN ('canonical_verified','preview_ready') AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL ORDER BY o.verified_at DESC LIMIT 1`).bind(post.creator_id, post.asset_id).first<CanonicalR2Source>();
+  if (!source || !immutableR2IdentityMatches(source, await env.LIBRARY_MEDIA.head(source.object_key))) throw new Error("r2_source_media_integrity_failed");
+  const extension = post.extension.toLowerCase().replace(/^\./, ""); if (!["jpg", "jpeg", "mp4", "mov"].includes(extension)) throw new Error("instagram_media_format_not_supported");
+  const url = new URL(`https://3e7cfa6efb7a97825f1dc24515410c63.r2.cloudflarestorage.com/${R2_BUCKET}/${r2ObjectPath(source.object_key)}`); url.searchParams.set("X-Amz-Expires", String(R2_PRESIGN_TTL_SECONDS));
+  const client = new AwsClient({ accessKeyId: env.R2_VIDEO_UPLOAD_ACCESS_KEY_ID.trim(), secretAccessKey: env.R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY.trim(), service: "s3", region: "auto" });
+  const signed = await client.sign(new Request(url, { method: "GET" }), { aws: { signQuery: true } });
+  return { url: signed.url, video: extension === "mp4" || extension === "mov" };
 }
 
 async function currentInstagramConnection(env: Env, creatorId: string) {
@@ -780,7 +799,7 @@ async function beginInstagramPublish(env: Env, post: DuePost) {
 async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
     SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.caption,p.provider_container_id,p.provider_container_type,
-      a.extension,a.relative_path
+      a.extension,a.basename,a.bytes,a.relative_path
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
     WHERE p.id=? AND p.creator_id=? AND p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL
@@ -790,10 +809,15 @@ async function loadPost(env: Env, creatorId: string, postId: string) {
 async function claimAndPublish(env: Env, post: DuePost) {
   const claim = await env.DB.prepare("UPDATE social_posts SET status='publishing',claimed_at=CURRENT_TIMESTAMP,last_attempt_at=CURRENT_TIMESTAMP,attempt_count=attempt_count+1,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='scheduled'").bind(post.id, post.creator_id).run();
   if (!claim.meta.changes) return { claimed: false, published: false, failed: false };
-  // Instagram Graph requires a provider-fetchable URL. Private R2 media stays
-  // private until a reviewed provider-private handoff exists.
-  await markFailed(env, post, "instagram_r2_provider_handoff_not_implemented");
-  return { claimed: true, published: false, failed: true };
+  try {
+    const connection = await currentInstagramAnalyticsConnection(env, post.creator_id); const media = await approvedInstagramMedia(env, post); const operationId = await beginInstagramPublish(env, post); const userId = storedInstagramComposioUserId(connection);
+    const container = await executeTool<unknown>(env, "INSTAGRAM_CREATE_MEDIA_CONTAINER", connection.connected_account_id, userId, { ig_user_id: connection.external_account_id, caption: post.caption, content_type: media.video ? "reel" : "photo", ...(media.video ? { video_url: media.url } : { image_url: media.url }) });
+    const containerId = responseId(container, "Instagram media container"); await env.DB.prepare("UPDATE social_posts SET provider_container_id=?,provider_container_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='publishing'").bind(containerId, media.video ? "reel" : "photo", post.id, post.creator_id).run();
+    if (media.video) for (let attempt = 0; attempt < 10; attempt++) { const status = record(await executeTool<unknown>(env, "INSTAGRAM_GET_POST_STATUS", connection.connected_account_id, userId, { ig_container_id: containerId })); if (status?.status_code === "FINISHED" || status?.status === "FINISHED") break; if (status?.status_code === "ERROR" || status?.status === "ERROR") throw new Error("Instagram rejected the video container."); if (attempt === 9) throw new OutcomeUncertainError("Instagram video container is still processing; check the provider before retrying."); await new Promise((resolve) => setTimeout(resolve, 3_000)); }
+    let published: unknown; try { published = await executeTool<unknown>(env, "INSTAGRAM_CREATE_POST", connection.connected_account_id, userId, { ig_user_id: connection.external_account_id, creation_id: containerId }); } catch (error) { throw new OutcomeUncertainError(`Instagram publish response was interrupted: ${error instanceof Error ? error.message : "network error"}.`); }
+    const externalPostId = responseId(published, "Instagram publish"); await env.DB.batch([env.DB.prepare("UPDATE social_posts SET status='published',external_post_id=?,published_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='publishing'").bind(externalPostId, post.id, post.creator_id), env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:instagram-scheduler','service','api_publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, containerId })), env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='instagram'").bind(externalPostId, JSON.stringify({ externalPostId, containerId }), operationId, post.creator_id), env.DB.prepare("UPDATE operation_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(operationId, post.creator_id)]);
+    return { claimed: true, published: true, failed: false };
+  } catch (error) { await markFailed(env, post, error instanceof Error ? error.message : "Instagram publishing failed.", error instanceof OutcomeUncertainError); return { claimed: true, published: false, failed: true }; }
 }
 
 async function publishOne(request: Request, env: Env) {
@@ -813,7 +837,7 @@ async function processDue(env: Env, triggerType: string) {
   try {
     const due = await env.DB.prepare(`
       SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.caption,p.provider_container_id,p.provider_container_type,
-        a.extension,a.relative_path
+        a.extension,a.basename,a.bytes,a.relative_path
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
       WHERE p.platform='instagram' AND p.status='scheduled' AND p.approved_at IS NOT NULL

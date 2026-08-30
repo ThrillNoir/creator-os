@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { objectIdFor, type AssetRow } from "@/lib/library";
 import { PrivateStreamPlayer } from "@/components/private-stream-player";
-import { VideoPlaybackControl } from "@/components/video-playback-control";
 
 export function AssetCard({ asset, selectable = false, templateHref, canPreparePlayback = false }: { asset: AssetRow; selectable?: boolean; templateHref?: string; canPreparePlayback?: boolean }) {
   const objectId = objectIdFor(asset);
@@ -13,7 +12,7 @@ export function AssetCard({ asset, selectable = false, templateHref, canPrepareP
     <div className="asset-info"><strong title={asset.basename}>{asset.basename}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div></>;
   return <article className="asset-card">
     {selectable && <label className="asset-select"><input type="checkbox" name="assetId" value={asset.id} /><span>Select</span></label>}
-    {video ? <>{card}{asset.video_state === "playback_ready" && <PrivateStreamPlayer assetId={asset.id} />}{asset.video_state === "canonical_verified" && canPreparePlayback && <VideoPlaybackControl assetId={asset.id} />}<a className="copy-attributes" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a></> : <Link href={objectId ? `/library/${objectId}` : "/library"}>{card}</Link>}
+    {video ? <>{card}{canPreparePlayback && ["canonical_verified", "processing", "playback_ready"].includes(asset.video_state ?? "") && <PrivateStreamPlayer assetId={asset.id} />}<a className="copy-attributes" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a></> : <Link href={objectId ? `/library/${objectId}` : "/library"}>{card}</Link>}
     {selectable && templateHref && objectId && <Link className="copy-attributes" href={`${templateHref}${templateHref.includes("?") ? "&" : "?"}template=${objectId}`}>Copy attributes for batch edit</Link>}
   </article>;
 }

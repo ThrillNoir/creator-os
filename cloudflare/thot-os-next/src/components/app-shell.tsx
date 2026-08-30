@@ -42,7 +42,7 @@ function AgencyShell({ active, children, identity, roleLabel }: { active: string
     ? selectableWorkspaceMemberships(identity.memberships).map((membership) => ({ id: membership.creator_id, name: membership.creator_name }))
     : undefined;
   return <div className="os-cloud-shell">
-    <AppNavigation active={active} activeCreatorId={identity.creator.creator_id} creatorInitials={identity.creator.creator_initials} creatorName={identity.creator.creator_name} creatorOptions={creatorOptions} email={identity.email} items={agencyNavigation} migrationLabel="Migration progress" mode="agency" navigationLabel="WORKSPACE" roleLabel={roleLabel} switchCreatorAction={switchCreatorAction} />
+    <AppNavigation active={active} activeCreatorId={identity.creator.creator_id} creatorInitials={identity.creator.creator_initials} creatorName={identity.creator.creator_name} creatorOptions={creatorOptions} email={identity.email} items={agencyNavigation} mode="agency" navigationLabel="WORKSPACE" roleLabel={roleLabel} switchCreatorAction={switchCreatorAction} />
     <main className="workspace">{children}</main>
   </div>;
 }

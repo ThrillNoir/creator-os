@@ -95,7 +95,6 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
           {creator.id === creatorId ? <span className="state">Selected</span> : <Link href={`/creators?creator=${encodeURIComponent(creator.id)}`}>Manage</Link>}
         </article>)}
       </section>
-      <section className="panel reserved-control"><span className="eyebrow">RESERVED GLOBAL CONTROL</span><h2>Pause all AI messaging</h2><p>This location is reserved for a future agency-wide emergency control. It has no action or side effect in Phase 1G.</p><button type="button" disabled>Not enabled</button><small>Phase 1H must define authority, confirmation, audit and recovery semantics before activation.</small></section>
     </div>
 
     <section className="panel admin-section"><div className="section-heading"><div><h2>Onboard a canonical creator workspace</h2><p>Creates identity, one agency-administrator membership and an immutable receipt only. It does not import legacy data, create accounts or connect credentials.</p></div><span>Metadata only</span></div>

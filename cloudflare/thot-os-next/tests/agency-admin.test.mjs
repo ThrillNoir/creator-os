@@ -24,8 +24,7 @@ test("the administrator page is scoped, explicit and credential-redacted", async
   assert.match(page, /SELECTED CREATOR WORKSPACE/);
   assert.match(page, /Administrative view only/);
   assert.match(page, /switching never impersonates the creator|administrative actions remain attributed to you/i);
-  assert.match(page, /Pause all AI messaging/);
-  assert.match(page, /disabled>Not enabled/);
+  assert.doesNotMatch(page, /Pause all AI messaging/);
   assert.match(page, /unixepoch\(bc\.expires_at\)>unixepoch\(CURRENT_TIMESTAMP\)/);
   assert.doesNotMatch(page, /token_hash/);
   assert.doesNotMatch(page, /SELECT[^\n]+installation_id/i);

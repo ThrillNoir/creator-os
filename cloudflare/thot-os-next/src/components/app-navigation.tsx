@@ -8,7 +8,6 @@ import {
   CircleDollarSign,
   ExternalLink,
   FolderOpen,
-  GitBranch,
   House,
   Layers3,
   Menu,
@@ -63,7 +62,6 @@ type AppNavigationProps = {
   email: string;
   items: readonly NavigationItem[];
   mode: "agency" | "creator" | "viewer";
-  migrationLabel?: string;
   navigationLabel?: string;
   portalLabel?: string;
   roleLabel: string;
@@ -139,22 +137,11 @@ function Brand({ mode, portalLabel }: { mode: AppNavigationProps["mode"]; portal
 }
 
 function NavigationBody({ mobile = false, props }: { mobile?: boolean; props: AppNavigationProps }) {
-  const migrationLink = (
-    <Link aria-current={props.active === "Migration" ? "page" : undefined} className={`os-cloud-migration ${props.active === "Migration" ? "active" : ""}`} href="/migration">
-      <GitBranch aria-hidden="true" />
-      <span><b>{props.migrationLabel ?? "Migration progress"}</b><small>View the rollout plan</small></span>
-      <strong>6 live</strong>
-    </Link>
-  );
-
   return (
     <>
       <Brand mode={props.mode} portalLabel={props.portalLabel} />
       <p className="os-cloud-nav-label">{props.navigationLabel ?? (props.mode === "agency" ? "WORKSPACE" : "MY WORKSPACE")}</p>
       <NavigationLinks active={props.active} items={props.items} mobile={mobile} />
-      {props.mode === "agency" && (
-        mobile ? <SheetClose asChild>{migrationLink}</SheetClose> : migrationLink
-      )}
       <Separator className="os-cloud-divider" />
       <CreatorContext idPrefix={mobile ? "mobile" : "desktop"} props={props} />
     </>
