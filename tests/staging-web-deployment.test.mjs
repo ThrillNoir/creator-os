@@ -35,9 +35,10 @@ test("staging deployment plan binds source, artifact, ledger, secrets, and Worke
 
 test("Vault uses the same bounded plan/apply/reconcile contract", () => {
   const vaultMetadata = { ...metadata, component: "vault", worker: "thot-os-vault-bridge-staging", config: "cloudflare/vault-bridge/wrangler.jsonc" };
-  const vaultState = { ...workerState, secretNames: ["COMPOSIO_API_KEY"] };
-  const plan = createDeploymentPlan({ metadata: vaultMetadata, artifactManifest, migrationNames, requiredSecretNames: ["COMPOSIO_API_KEY"], workerState: vaultState });
+  const vaultState = { ...workerState, secretNames: [] };
+  const plan = createDeploymentPlan({ metadata: vaultMetadata, artifactManifest, migrationNames, requiredSecretNames: [], workerState: vaultState });
   assert.equal(plan.kind, "staging-vault-deployment-plan");
+  assert.deepEqual(plan.requiredSecretNames, []);
   assert.equal(plan.artifact.versionTag, `creatoros-${artifactManifest.artifact.sha256.slice(0, 48)}`);
   assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: vaultMetadata, artifactManifest, migrationNames, workerState: vaultState }), true);
   assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest, migrationNames, workerState }), /unsupported schema or kind/);
@@ -45,9 +46,9 @@ test("Vault uses the same bounded plan/apply/reconcile contract", () => {
 
 test("Vault receipt binds the fresh Worker version to the reviewed artifact tag", () => {
   const vaultMetadata = { ...metadata, component: "vault", worker: "thot-os-vault-bridge-staging", config: "cloudflare/vault-bridge/wrangler.jsonc" };
-  const vaultState = { ...workerState, secretNames: ["COMPOSIO_API_KEY"] };
-  const plan = createDeploymentPlan({ metadata: vaultMetadata, artifactManifest, migrationNames, requiredSecretNames: ["COMPOSIO_API_KEY"], workerState: vaultState });
-  const after = { latestVersionId: "after", versionIds: ["after", "before", "older"], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: ["COMPOSIO_API_KEY"], versionTag: plan.artifact.versionTag } };
+  const vaultState = { ...workerState, secretNames: [] };
+  const plan = createDeploymentPlan({ metadata: vaultMetadata, artifactManifest, migrationNames, requiredSecretNames: [], workerState: vaultState });
+  const after = { latestVersionId: "after", versionIds: ["after", "before", "older"], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: [], versionTag: plan.artifact.versionTag } };
   assert.equal(createApplyReceipt({ plan, before: vaultState, after }).deployment.workerVersion, "after");
   after.latestSecretVersion.versionTag = "creatoros-unrelated";
   assert.throws(() => createApplyReceipt({ plan, before: vaultState, after }), /not tagged with the reviewed artifact identity/);
@@ -80,7 +81,7 @@ test("apply receipt requires one fresh 100-percent version with all secret names
   assert.deepEqual(receipt.rollback.traffic, workerState.deployment.versions);
 });
 
-test("apply receipt rejects a fresh version that lost a vault secret binding", () => {
+test("apply receipt rejects a fresh version that lost a required web secret binding", () => {
   const plan = createDeploymentPlan({ metadata, artifactManifest, migrationNames, requiredSecretNames, workerState });
   const after = {
     latestVersionId: "after",

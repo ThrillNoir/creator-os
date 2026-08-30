@@ -25,7 +25,7 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
   const expectedWorker = { web: "thot-os-staging", vault: "thot-os-vault-bridge-staging" }[metadata?.component];
   if (metadata?.environment !== "staging" || !expectedWorker || metadata?.worker !== expectedWorker) throw new Error("Controlled deployment supports only the reviewed staging web and Vault Workers.");
   if (!Array.isArray(migrationNames) || migrationNames.length === 0) throw new Error("Deployment plan requires an exact staging migration ledger.");
-  if (!Array.isArray(requiredSecretNames) || requiredSecretNames.length === 0) throw new Error("Deployment plan requires reviewed secret names.");
+  if (!Array.isArray(requiredSecretNames)) throw new Error("Deployment plan requires reviewed secret names.");
   const remoteSecrets = new Set(workerState?.secretNames ?? []);
   const missing = requiredSecretNames.filter((name) => !remoteSecrets.has(name));
   if (missing.length) throw new Error(`Staging Worker secret inventory is missing required names: ${missing.join(", ")}.`);
