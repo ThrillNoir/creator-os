@@ -57,6 +57,9 @@ export function validateContract(contract) {
     names.add(principal.principalName);
     secrets.add(principal.secretName);
   }
+  if (contract.runtimeSecrets !== undefined && (!Array.isArray(contract.runtimeSecrets) || !contract.runtimeSecrets.every((secret) => typeof secret === "string" && /^[A-Z][A-Z0-9_]{2,127}$/.test(secret)) || new Set(contract.runtimeSecrets).size !== contract.runtimeSecrets.length)) {
+    throw new Error("Runtime secret names must be valid and unique.");
+  }
 }
 
 export function buildServicePrincipalPlan({ environment, contract, registry, grants = [] }) {
@@ -66,7 +69,7 @@ export function buildServicePrincipalPlan({ environment, contract, registry, gra
   if (!staging?.provisioned || !staging?.deployable || registryHasProductionOperationalSurface(registry)) throw new Error("Staging must be the only provisioned operational target for this plan; an isolated production public-links foundation is permitted.");
   const web = staging.components?.web;
   if (!web || !Array.isArray(web.requiredSecrets)) throw new Error("Canonical web deployment metadata is missing.");
-  const expectedSecrets = contract.principals.map((principal) => principal.secretName).sort();
+  const expectedSecrets = [...contract.principals.map((principal) => principal.secretName), ...(contract.runtimeSecrets ?? [])].sort();
   const actualSecrets = [...web.requiredSecrets].sort();
   if (JSON.stringify(expectedSecrets) !== JSON.stringify(actualSecrets)) throw new Error("Canonical web secret contract does not match the service-principal contract.");
   const normalizedGrants = grants.map((grant) => parseGrant(grant, contract.principals));

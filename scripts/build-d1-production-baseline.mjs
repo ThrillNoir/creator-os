@@ -1,6 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,44 +8,26 @@ import Database from "better-sqlite3";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsRoot = path.join(projectRoot, "cloudflare/thot-os-app/migrations");
 const outputPath = path.join(projectRoot, "cloudflare/thot-os-app/production-baseline/schema.sql");
-const wrangler = path.join(projectRoot, "cloudflare/thot-os-next/node_modules/.bin/wrangler");
+const ledgerPath = path.join(projectRoot, "config/staging-d1-migration-ledger.json");
 
 function checksum(value) {
   return createHash("sha256").update(value.replaceAll("\r\n", "\n")).digest("hex");
 }
 
-async function findDatabase(directory) {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const candidate = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      const nested = await findDatabase(candidate);
-      if (nested) return nested;
-    } else if (entry.name.endsWith(".sqlite") && entry.name !== "metadata.sqlite") {
-      return candidate;
-    }
-  }
-  return null;
-}
-
 async function baselineSql() {
   const root = await mkdtemp(path.join(os.tmpdir(), "thot-os-production-baseline-"));
-  const migrations = path.join(root, "migrations");
-  const state = path.join(root, "state");
   try {
-    await mkdir(migrations);
-    const names = (await readdir(migrationsRoot)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
-    for (const name of names) await copyFile(path.join(migrationsRoot, name), path.join(migrations, name));
-    await writeFile(path.join(root, "wrangler.jsonc"), JSON.stringify({
-      name: "thot-os-production-baseline-local",
-      compatibility_date: "2026-08-17",
-      d1_databases: [{ binding: "DB", database_name: "thot-os-production-baseline-local", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "./migrations" }],
-    }));
-    const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-production-baseline-local", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" } });
-    if (replay.status !== 0) throw new Error(`${replay.stdout}\n${replay.stderr}`.trim());
-    const databasePath = await findDatabase(state);
-    if (!databasePath) throw new Error("Local D1 replay did not create a database.");
-    const database = new Database(databasePath, { readonly: true });
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
+    if (ledger?.schemaVersion !== 1 || !Array.isArray(ledger.migrations) || ledger.migrations.some((entry) => !/^\d{4}_.+\.sql$/.test(entry?.name ?? ""))) throw new Error("Reviewed staging migration ledger is invalid.");
+    const names = ledger.migrations.map((entry) => entry.name);
+    const database = new Database(path.join(root, "replay.sqlite"));
     try {
+      database.exec("PRAGMA foreign_keys = ON; CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);");
+      for (const name of names) {
+        const source = await readFile(path.join(migrationsRoot, name), "utf8");
+        database.exec(source);
+        database.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(name);
+      }
       const rows = database.prepare(`SELECT type,name,sql FROM sqlite_master
         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name<>'d1_migrations'
         ORDER BY CASE type WHEN 'table' THEN 1 WHEN 'index' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, name`).all();

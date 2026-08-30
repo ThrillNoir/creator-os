@@ -11,7 +11,9 @@ const result = {
   deployment: { gitSha: "abc123", gitBranch: "codex/staging-readiness-maintenance", buildTime: "2026-08-24T00:00:00.000Z" },
   creatorId: "staging-synthetic-creator",
   database: { connected: true, migration: "0043" },
-  bindings: { d1: true },
+  sourceMediaCapability: "r2-source-v2",
+  consumers: { vault: { compatible: true }, instagram: { compatible: false }, reddit: { compatible: false } },
+  bindings: { d1: true, libraryMedia: true },
 };
 
 test("the smoke contract requires Access denial and the approved artifact identity", () => {

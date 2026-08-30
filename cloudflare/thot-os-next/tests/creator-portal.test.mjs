@@ -107,3 +107,13 @@ test("the non-browser health checker requires Access authentication and never pr
   assert.match(checker, /validateAuthenticatedHealth/);
   assert.match(checker, /artifact-manifest/);
 });
+
+test("Access PIN PBKDF2 stays within the Workers limit and verifies with the stored iteration count", async () => {
+  const vault = await source("../src/lib/access-vault.ts");
+  assert.match(vault, /const PIN_ITERATIONS = 100_000/);
+  assert.match(vault, /const MAX_PIN_ITERATIONS = 100_000/);
+  assert.match(vault, /iterations > MAX_PIN_ITERATIONS/);
+  assert.match(vault, /SELECT id,pin_scope,salt,verifier,kdf_iterations,locked_until/);
+  assert.match(vault, /pinVerifier\(input\.pin, row\.salt, row\.kdf_iterations\)/);
+  assert.doesNotMatch(vault, /310_000/);
+});

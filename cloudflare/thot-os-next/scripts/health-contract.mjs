@@ -17,6 +17,7 @@ export function validateAuthenticatedHealth({ status, result, expected }) {
   if (result.service !== expected.component || result.environment !== expected.environment) throw new Error("Authenticated health response did not match the approved component or environment.");
   if (result.deployment?.gitSha !== expected.gitSha || result.deployment?.gitBranch !== expected.gitBranch || result.deployment?.buildTime !== expected.buildTime) throw new Error("Authenticated health response did not match the approved artifact identity.");
   if (typeof result.creatorId !== "string" || !result.creatorId || result.database?.connected !== true || typeof result.database?.migration !== "string" || result.bindings?.d1 !== true) throw new Error("Authenticated health response did not prove the D1-backed creator contract.");
+  if (result.sourceMediaCapability !== "r2-source-v2" || result.bindings?.libraryMedia !== true || !result.consumers || !["vault", "instagram", "reddit"].every((name) => typeof result.consumers[name]?.compatible === "boolean")) throw new Error("Authenticated health response did not report the cross-service R2 source-media contract.");
   return true;
 }
 

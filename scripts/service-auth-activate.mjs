@@ -163,10 +163,8 @@ export function parseWorkerVersionsJson(stdout) {
   });
   const versionIds = versions.map((entry) => entry.id);
   if (new Set(versionIds).size !== versionIds.length) throw new Error("Wrangler versions metadata contained duplicate version ids.");
-  // The command currently returns the most recent version first, but staging
-  // verification below binds to Wrangler's acknowledged version id rather
-  // than relying on that ordering.
-  return { latestVersionId: versionIds[0], versionIds };
+  // Wrangler returns its retained version window oldest-to-newest.
+  return { latestVersionId: versionIds.at(-1), versionIds };
 }
 
 export function parseD1WriteAuthorizationPreflightJson(stdout) {
@@ -211,15 +209,17 @@ export function parseWorkerVersionSecretMetadataJson(stdout, expectedVersionId) 
     return name;
   });
   if (new Set(secretNames).size !== secretNames.length) throw new Error("Wrangler latest-version secret metadata contained duplicate names.");
-  return { versionId: expectedVersionId, secretNames: secretNames.sort() };
+  const annotations = value.annotations && typeof value.annotations === "object" && !Array.isArray(value.annotations) ? value.annotations : {};
+  const versionTag = typeof annotations["workers/tag"] === "string" ? annotations["workers/tag"] : null;
+  return { versionId: expectedVersionId, secretNames: secretNames.sort(), versionTag };
 }
 
 /**
  * Reads only Worker version, deployment, and secret-name metadata. No secret
  * value is requested and no output is passed through to the terminal.
  */
-function workerMetadataConfig(registry) {
-  const config = registry?.environments?.staging?.components?.web?.config;
+function workerMetadataConfig(registry, component = "web") {
+  const config = registry?.environments?.staging?.components?.[component]?.config;
   if (typeof config !== "string" || config.trim() === "") throw new Error("Staging Worker metadata requires the reviewed Wrangler config.");
   return config;
 }
@@ -235,8 +235,12 @@ function captureWorkerVersionState(registry, runMetadataRead) {
   return { config, versions, deployment };
 }
 
-export function captureWorkerMetadata(registry, runMetadataRead = runWranglerMetadataRead) {
-  const { config, versions, deployment } = captureWorkerVersionState(registry, runMetadataRead);
+export function captureWorkerMetadata(registry, componentOrRead = "web", maybeRead = runWranglerMetadataRead) {
+  const component = typeof componentOrRead === "string" ? componentOrRead : "web";
+  const runMetadataRead = typeof componentOrRead === "function" ? componentOrRead : maybeRead;
+  const config = workerMetadataConfig(registry, component);
+  const versions = parseWorkerVersionsJson(runMetadataRead(["versions", "list", "--json", "--config", config], registry));
+  const deployment = parseDeploymentStatusJson(runMetadataRead(["deployments", "status", "--json", "--config", config], registry));
   const versionMetadata = readWorkerVersionMetadata(registry, config, versions.latestVersionId, runMetadataRead);
   const trafficPercentage = deployment.versions.find((entry) => entry.versionId === versions.latestVersionId)?.percentage ?? 0;
   const latestSecretVersion = { ...versionMetadata, trafficPercentage };

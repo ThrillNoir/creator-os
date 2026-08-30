@@ -34,6 +34,7 @@
           "thot-os-public-media-staging",
           "thot-os-adult-media-staging",
           "thot-os-previews-staging",
+          "thot-os-library-media-staging",
           "thot-os-creator-intake-staging",
           "thot-os-creator-packages-staging"
         ],
@@ -66,17 +67,17 @@
           "directory": "cloudflare/thot-os-next",
           "worker": "thot-os-staging",
           "deployable": true,
-          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN", "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN"],
+          "requiredSecrets": ["INTERNAL_INSTAGRAM_SCHEDULER_TOKEN", "INTERNAL_REDDIT_SCHEDULER_TOKEN", "INTERNAL_TELEGRAM_BRIDGE_TOKEN", "INTERNAL_VAULT_CATALOGUE_TOKEN", "INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN", "VAULT_MASTER_KEY_V1", "VAULT_PIN_PEPPER"],
           "bindings": {
             "d1": ["DB"],
-            "r2": ["MEDIA", "PREVIEWS"],
+            "r2": ["MEDIA", "PREVIEWS", "LIBRARY_MEDIA"],
             "assets": ["ASSETS"],
             "images": ["IMAGES"],
             "services": ["WORKER_SELF_REFERENCE", "REDDIT_SCHEDULER", "INSTAGRAM_SCHEDULER", "TELEGRAM_BRIDGE", "VAULT_BRIDGE", "PUBLIC_LINKS_CONTROL"]
           },
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": ["thot-os-media-staging", "thot-os-previews-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-previews-staging", "thot-os-library-media-staging"],
             "images": ["IMAGES"],
             "queues": [],
             "services": {
@@ -112,7 +113,7 @@
           "requiredSecrets": ["COMPOSIO_API_KEY", "COMPOSIO_REDDIT_AUTH_CONFIG_ID"],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": [],
+            "r2": ["thot-os-library-media-staging"],
             "queues": [],
             "services": {}
           }
@@ -140,7 +141,7 @@
           "requiredSecrets": ["COMPOSIO_API_KEY"],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": ["thot-os-previews-staging"],
+            "r2": ["thot-os-previews-staging", "thot-os-library-media-staging"],
             "queues": ["thot-os-preview-staging", "thot-os-preview-dlq-staging"],
             "services": {}
           }

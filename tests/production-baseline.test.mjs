@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
@@ -7,15 +7,14 @@ import { targetFor } from "../scripts/bounded-d1-migrations-lib.mjs";
 import { readJsoncFile, runPreflight } from "../scripts/deployment-preflight.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const migrationsRoot = path.join(root, "cloudflare/thot-os-app/migrations");
 const baselinePath = path.join(root, "cloudflare/thot-os-app/production-baseline/schema.sql");
 
 test("production baseline has no operational seed data and records complete D1 migration provenance", async () => {
-  const [baseline, migrationNames] = await Promise.all([
+  const [baseline, ledger] = await Promise.all([
     readFile(baselinePath, "utf8"),
-    readdir(migrationsRoot),
+    readFile(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8").then(JSON.parse),
   ]);
-  const expected = migrationNames.filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+  const expected = ledger.migrations.map((entry) => entry.name);
   const db = new Database(":memory:");
   try {
     db.exec(baseline);

@@ -40,6 +40,10 @@ function buildEnvironment(metadata) {
   return {
     ...process.env,
     CI: "1",
+    // Match the standalone/output-tracing mode OpenNext sets when it owns the
+    // Next build, while retaining the explicit worktree-safe Webpack command.
+    NEXT_PRIVATE_STANDALONE: "true",
+    NEXT_PRIVATE_OUTPUT_TRACE_ROOT: webDirectory,
     THOT_OS_COMPONENT: metadata.component,
     THOT_OS_ENVIRONMENT: metadata.environment,
     THOT_OS_GIT_SHA: metadata.gitSha,
@@ -58,8 +62,11 @@ export function buildStagingArtifact() {
   if (!existsSync(nextBinary) || !existsSync(openNextBinary)) throw new Error("Install the pinned web dependencies before building a staging artifact.");
 
   const env = buildEnvironment(metadata);
-  execFileSync(process.execPath, [nextBinary, "build"], { cwd: webDirectory, env, stdio: "inherit" });
-  execFileSync(process.execPath, [openNextBinary, "build"], { cwd: webDirectory, env, stdio: "inherit" });
+  // Turbopack rejects the intentionally external node_modules symlink used by
+  // isolated release worktrees. Webpack is explicit so the same pinned build
+  // remains reproducible in both the canonical checkout and safe worktrees.
+  execFileSync(process.execPath, [nextBinary, "build", "--webpack"], { cwd: webDirectory, env, stdio: "inherit" });
+  execFileSync(process.execPath, [openNextBinary, "build", "--skipNextBuild"], { cwd: webDirectory, env, stdio: "inherit" });
   assertCompiledHealthMetadata({ artifactPath: healthArtifact, metadata });
   const manifest = createStagingArtifactManifest({ artifactDirectory, lockfilePath, metadata });
   writeFileSync(artifactManifest, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

@@ -47,6 +47,15 @@ export function assertInventory(migrations) {
   const seen = new Set();
   for (const migration of migrations) {
     if (!migrationPattern.test(migration.name) || !Number.isInteger(migration.number)) throw new Error("Migration inventory contains an invalid filename.");
+    if (seen.has(migration.name)) throw new Error(`Duplicate migration filename ${migration.name}.`);
+    seen.add(migration.name);
+  }
+  return migrations;
+}
+
+function assertContiguousDirectoryInventory(migrations) {
+  const seen = new Set();
+  for (const migration of migrations) {
     if (seen.has(migration.number)) throw new Error(`Duplicate migration number ${String(migration.number).padStart(4, "0")}.`);
     seen.add(migration.number);
   }
@@ -68,7 +77,28 @@ export function inventoryFromDirectory(directory, readdir) {
     const file = path.join(directory, name);
     return { number: Number(match[1]), name, sha256: hashText(readFileSync(file, "utf8")) };
   }).sort((left, right) => left.number - right.number || left.name.localeCompare(right.name));
-  return assertInventory(migrations);
+  return assertContiguousDirectoryInventory(migrations);
+}
+
+/**
+ * Resolve an explicitly reviewed migration ledger. This is intentionally
+ * separate from the ordinary directory inventory because staging has a
+ * historical, already-applied sequence with duplicate numeric prefixes.
+ */
+export function inventoryFromLedger(directory, ledger, readdir) {
+  if (ledger?.schemaVersion !== 1 || !Array.isArray(ledger.migrations) || ledger.migrations.length === 0 || (ledger.pendingMigrations !== undefined && !Array.isArray(ledger.pendingMigrations))) throw new Error("Reviewed staging migration ledger is invalid.");
+  const names = readdir(directory).filter((name) => name.endsWith(".sql"));
+  const reviewed = [...ledger.migrations, ...(ledger.pendingMigrations ?? [])].map((entry, index) => {
+    if (!entry || typeof entry.name !== "string" || !migrationPattern.test(entry.name) || !/^[a-f0-9]{64}$/i.test(entry.sha256 ?? "")) throw new Error("Reviewed staging migration ledger contains an invalid entry.");
+    const match = entry.name.match(migrationPattern);
+    const file = path.join(directory, entry.name);
+    if (!existsSync(file) || hashFileBytes(file) !== entry.sha256) throw new Error(`Reviewed staging migration source is missing or changed: ${entry.name}.`);
+    return { number: Number(match[1]), name: entry.name, sha256: entry.sha256, ledgerIndex: index + 1 };
+  });
+  assertInventory(reviewed);
+  const reviewedNames = new Set(reviewed.map((entry) => entry.name));
+  if (names.length !== reviewedNames.size || names.some((name) => !reviewedNames.has(name))) throw new Error("Migration directory does not exactly match the reviewed staging migration ledger.");
+  return reviewed;
 }
 
 function exact(left, right) { return stableJson(left) === stableJson(right); }
@@ -76,20 +106,18 @@ function exact(left, right) { return stableJson(left) === stableJson(right); }
 function canonicalHistory(history, label) {
   if (!Array.isArray(history)) throw new Error(`${label} must be an ordered migration array.`);
   const seen = new Set();
-  return history.map((name, index) => {
+  return history.map((name) => {
     if (typeof name !== "string" || !migrationPattern.test(name)) throw new Error(`${label} contains an invalid migration filename.`);
-    const number = Number(name.slice(0, 4));
-    if (seen.has(number)) throw new Error(`${label} contains a duplicate migration number.`);
-    if (number !== index + 1) throw new Error(`${label} must be contiguous and ordered from 0001.`);
-    seen.add(number);
+    if (seen.has(name)) throw new Error(`${label} contains a duplicate migration filename.`);
+    seen.add(name);
     return name;
   });
 }
 
 /**
- * Canonical D1 history is an ordered, contiguous filename sequence. Comparing
- * the whole sequence—not just its final number—rejects gaps, duplicate names,
- * renamed files, and unexpected earlier migrations.
+ * Canonical D1 history is a reviewed ordered filename sequence. Comparing the
+ * whole sequence rejects duplicate names, reordered rows, renamed files, and
+ * unexpected earlier migrations, including historical duplicate number prefixes.
  */
 export function assertExactMigrationHistory(observed, expected, label = "Migration history") {
   const reviewed = canonicalHistory(expected, `Reviewed ${label}`);
@@ -112,12 +140,18 @@ export function buildBoundedPlan({ environment, from, through, inventory, remote
   const target = targetFor({ environment, registry, policy });
   if (!/^[a-z0-9][a-z0-9._-]{2,95}$/i.test(releaseId ?? "")) throw new Error("A safe release identifier is required.");
   assertInventory(inventory);
-  const fromNumber = migrationNumber(from);
-  const throughNumber = migrationNumber(through);
-  if (fromNumber > throughNumber) throw new Error("Migration range is reversed.");
-  const start = inventory.findIndex((migration) => migration.number === fromNumber);
-  const end = inventory.findIndex((migration) => migration.number === throughNumber);
+  const resolveBoundary = (value) => {
+    const exactName = inventory.findIndex((migration) => migration.name === value);
+    if (exactName !== -1) return exactName;
+    const number = migrationNumber(value);
+    const matches = inventory.map((migration, index) => ({ migration, index })).filter(({ migration }) => migration.number === number);
+    if (matches.length !== 1) throw new Error("Migration boundary is ambiguous; use the exact migration filename.");
+    return matches[0].index;
+  };
+  const start = resolveBoundary(from);
+  const end = resolveBoundary(through);
   if (start === -1 || end === -1) throw new Error("Requested migration boundary does not exist in the repository inventory.");
+  if (start > end) throw new Error("Migration range is reversed.");
   const expectedPreState = inventory.slice(0, start).map((migration) => migration.name);
   try {
     assertExactMigrationHistory(remoteApplied, expectedPreState, "Structured D1 migration history");
@@ -155,10 +189,8 @@ export function validateReleaseExportPlan({ plan, target, inventory }) {
   if (plan?.schemaVersion !== 2 || plan.mode !== "PLAN" || plan.environment !== "staging" || planDigest(plan) !== plan.planSha256) throw new Error("Approved bounded migration plan digest is invalid.");
   if (!target || ["environment", "accountId", "databaseName", "databaseId"].some((field) => plan.target?.[field] !== target[field])) throw new Error("Approved bounded migration plan does not match the staging D1 identity.");
   assertInventory(inventory);
-  const from = migrationNumber(plan.requestedRange?.from);
-  const through = migrationNumber(plan.requestedRange?.through);
-  const start = inventory.findIndex((migration) => migration.number === from);
-  const end = inventory.findIndex((migration) => migration.number === through);
+  const start = inventory.findIndex((migration) => migration.name === plan.requestedRange?.from);
+  const end = inventory.findIndex((migration) => migration.name === plan.requestedRange?.through);
   if (start === -1 || end === -1 || start > end) throw new Error("Approved bounded migration plan has invalid range boundaries.");
   const expectedPreState = inventory.slice(0, start).map((migration) => migration.name);
   const expectedExecution = inventory.slice(start, end + 1).map(({ number, name, sha256: digest }) => ({ number, name, sha256: digest }));

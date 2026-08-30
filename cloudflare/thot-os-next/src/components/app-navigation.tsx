@@ -38,6 +38,7 @@ type IconComponent = ComponentType<{ "aria-hidden"?: boolean; className?: string
 
 const iconMap: Record<string, IconComponent> = {
   accounts: PlugZap,
+  access: BadgeCheck,
   adult: ShieldAlert,
   creators: UsersRound,
   growth: TrendingUp,

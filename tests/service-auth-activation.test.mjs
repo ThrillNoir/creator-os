@@ -92,7 +92,7 @@ test("service-auth activation plan is redacted, deterministic, staging-only, and
   assert.equal(plan.compatibilityReady, false);
   assert.equal(plan.activationReady, false);
   assert.equal(plan.principals.length, 5);
-  assert.equal(plan.grants.length, 19);
+  assert.equal(plan.grants.length, 20);
   assert.equal(plan.operationsIfApplied.d1CredentialHashes, 5);
   assert.equal(plan.operationsIfApplied.legacyAuthenticationRemoved, false);
   assert.equal(plan.confirmation, activationConfirmation(plan.activationId, plan.planSha256));
@@ -180,7 +180,7 @@ test("structured D1 activation status reads only safe state and makes a satisfie
   assert.equal(status.state, "SATISFIED");
   assert.equal(status.counts.activationRuns, 1);
   assert.equal(status.counts.canonicalCredentialCount, 5);
-  assert.equal(status.counts.canonicalGrantCount, 19);
+  assert.equal(status.counts.canonicalGrantCount, 20);
   assert.equal(calls.length, 6);
   assert.ok(calls.every((call) => call.target.databaseId === activation.expected.databaseId));
   assert.ok(calls.every((call) => !/token_hash|\bdetail\b|operator_identity/i.test(call.statement)));
@@ -286,8 +286,8 @@ test("Worker metadata is strictly parsed and proves secret staging did not route
   assert.equal(comparison.addedSecretNames.length, 5);
   assert.throws(() => compareWorkerMetadata(before, { ...after, deployment: { versions: [{ versionId: "unpublished-secret-version", percentage: 100 }] } }, plan.principals.map((principal) => principal.secretName)), /deployment|traffic/i);
   assert.throws(() => captureStagedWorkerMetadata(before, registry, "missing-version", runner), /absent|acknowledged/i);
-  assert.deepEqual(parseWorkerVersionsJson(JSON.stringify([{ id: "newest" }, { id: "older" }])), { latestVersionId: "newest", versionIds: ["newest", "older"] });
-  assert.deepEqual(parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "newest", resources: { bindings: [{ type: "secret_text", name: "SAFE_SECRET" }, { type: "plain_text", name: "SAFE_VAR" }] } }), "newest"), { versionId: "newest", secretNames: ["SAFE_SECRET"] });
+  assert.deepEqual(parseWorkerVersionsJson(JSON.stringify([{ id: "older" }, { id: "newest" }])), { latestVersionId: "newest", versionIds: ["older", "newest"] });
+  assert.deepEqual(parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "newest", resources: { bindings: [{ type: "secret_text", name: "SAFE_SECRET" }, { type: "plain_text", name: "SAFE_VAR" }] } }), "newest"), { versionId: "newest", secretNames: ["SAFE_SECRET"], versionTag: null });
   assert.throws(() => parseWorkerVersionSecretMetadataJson(JSON.stringify({ id: "wrong", resources: { bindings: [] } }), "newest"), /did not match/i);
   assert.doesNotMatch(JSON.stringify(comparison), /value|Bearer|token_hash/i);
 });

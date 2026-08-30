@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+  "observedAt": "2026-08-28",
+  "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
+  "migrations": [
+    {
+      "remoteId": 1,
+      "name": "0001_adelaide_library.sql",
+      "sha256": "10b2a42251bcb8c4e0914ee14ae6e63a6e16bf92008dc19cde1e9e3fc6153dc6"
+    },
+    {
+      "remoteId": 2,
+      "name": "0002_library_classification_events.sql",
+      "sha256": "b13c8181cf422c6f5e8dc9dccf2f6dae65cf507df5af4da9b6d872e1ef8a9b4c"
+    },
+    {
+      "remoteId": 3,
+      "name": "0003_operations_foundation.sql",
+      "sha256": "33d4628aeeb09ec42a9fce819a5f4281dd224b04b2f17d4bd3df42415d4af032"
+    },
+    {
+      "remoteId": 4,
+      "name": "0004_reddit_scheduler.sql",
+      "sha256": "eb225557490c533f931368ef5060857487a0bd74e9a8e582d6cfda78f3e49acb"
+    },
+    {
+      "remoteId": 5,
+      "name": "0005_reddit_queue_controls.sql",
+      "sha256": "41231b2f9b38d9b4dffb15d189a0b18e9143722a9c137ad38716c76ccd191ce6"
+    },
+    {
+      "remoteId": 6,
+      "name": "0006_instagram_operations.sql",
+      "sha256": "f9b059e208ab981dd3f3c0a1c3365ece38f59b6d7dfc82b2021525bb7b7501ee"
+    },
+    {
+      "remoteId": 7,
+      "name": "0007_vault_bridge.sql",
+      "sha256": "224d63a813197375a6d4e57c7497c44105ce6297d49cec0ba273e4140eae5a80"
+    },
+    {
+      "remoteId": 8,
+      "name": "0008_reddit_native_bridge.sql",
+      "sha256": "2beeb80a5e70986d029556d4d56afcd41eb8b1b452794c7975d113b30675ba9f"
+    },
+    {
+      "remoteId": 9,
+      "name": "0009_unified_messages.sql",
+      "sha256": "10cef6399ec21dfa2191811619daea50eb442b011f016509e56fff8d055e7753"
+    },
+    {
+      "remoteId": 10,
+      "name": "0010_telegram_connector.sql",
+      "sha256": "7a73e5e3899275436ff23f42d468f59f2f3c6b599142407adc63791d42095172"
+    },
+    {
+      "remoteId": 11,
+      "name": "0011_instagram_completion.sql",
+      "sha256": "1c79ff32ea4411819d2771911922e5895a8de35c33eab6cf6b697f77d5a3eda6"
+    },
+    {
+      "remoteId": 12,
+      "name": "0012_instagram_replies.sql",
+      "sha256": "577b6128640eb166d53992a34c72d6ebdb23a66459ac65a0f8935da9ff7d3e3e"
+    },
+    {
+      "remoteId": 13,
+      "name": "0013_instagram_reply_window.sql",
+      "sha256": "65eb6d054588c56b611a7a77e16f050a14a3a51e9fe11f3b1c24fe865b9a0a81"
+    },
+    {
+      "remoteId": 14,
+      "name": "0014_instagram_message_subscription.sql",
+      "sha256": "b95bc3f0d2b49088f17f5d5541f3a5b94568a2b153b570285363a62c501f11e2"
+    },
+    {
+      "remoteId": 15,
+      "name": "0015_message_attachments.sql",
+      "sha256": "1c69135a902badeed4e6e21d63a1bf16c5d9dc1192064bb0812f260cded76d4f"
+    },
+    {
+      "remoteId": 16,
+      "name": "0016_telegram_fansly_messages.sql",
+      "sha256": "158229b1df56561dfa3c3b772136e5a800424388b4213a69f53ad1420cf42602"
+    },
+    {
+      "remoteId": 17,
+      "name": "0017_reddit_community_events.sql",
+      "sha256": "37fd370f245a448c2e5b7a6c8670bfdc111e32dd315112e3773f0815d50505f8"
+    },
+    {
+      "remoteId": 18,
+      "name": "0018_creator_identity_profiles.sql",
+      "sha256": "f8e1bb1662e0fab8e5345983373f4d666ef12bc95fc26bb736c40684155de0fd"
+    },
+    {
+      "remoteId": 19,
+      "name": "0019_actor_role_audit.sql",
+      "sha256": "70ad156c2e894c3eb1fab47f89e8bb836986431741a4ffc8b6361240c6f5d7b7"
+    },
+    {
+      "remoteId": 20,
+      "name": "0020_actor_role_contract.sql",
+      "sha256": "8929cd24e814f8a858cc8d1fa4b01d61b593573e92d281dec86113edb74e3999"
+    },
+    {
+      "remoteId": 21,
+      "name": "0021_creator_dropbox_source.sql",
+      "sha256": "e94306c2b4ca55c46303a7d53cd4f469d6f6410bb1a7f4df501f67553e991686"
+    },
+    {
+      "remoteId": 22,
+      "name": "0022_asset_preview_queue.sql",
+      "sha256": "bff15521c327fc4fb44221b4f629ece31a3b5b1c9e87011c590e712dc24c5541"
+    },
+    {
+      "remoteId": 23,
+      "name": "0023_fansly_account_invariant.sql",
+      "sha256": "5d35c5507fa268bacc2bc5f22e3ea31c5d551a3f6f51bee3cd9b058ef624b3f3"
+    },
+    {
+      "remoteId": 24,
+      "name": "0024_finance_foundation.sql",
+      "sha256": "6d66ce06ad5289d14f2be92562a6583e60a4ddc7ab399c36cb0c3fc9160a209e"
+    },
+    {
+      "remoteId": 25,
+      "name": "0025_reddit_composio_native_api.sql",
+      "sha256": "d20863e4bcc41afe013f2514f6a9f3da5ff50ada148a72d6c04bdfbf9b8400ab"
+    },
+    {
+      "remoteId": 26,
+      "name": "0026_retire_reddit_browser_bridge.sql",
+      "sha256": "be24ab173b7310a81c5c8b58cd9404a0696f41c865c2d6b019b92db26fc77431"
+    },
+    {
+      "remoteId": 27,
+      "name": "0027_reddit_post_flairs.sql",
+      "sha256": "1a30baf6155f42433dcc343297d8566b10407ebc4253e766fa80163a6bcf72c2"
+    },
+    {
+      "remoteId": 28,
+      "name": "0028_migration_ledger.sql",
+      "sha256": "efdc454682d7afac6e78b0e9dc75cb057aab7c4295a515b71211366d9e655fe9"
+    },
+    {
+      "remoteId": 29,
+      "name": "0029_service_principal_capabilities.sql",
+      "sha256": "bc78ed7fe45da8f2f9365314c4f49c12ce94bc98242e75e6b1dc6ca68ea508e8"
+    },
+    {
+      "remoteId": 30,
+      "name": "0030_canonical_control_plane.sql",
+      "sha256": "5af26213782ae8b41d748f8cb8adbe0697cbd03f4256ef98fd810814bbd70fc8"
+    },
+    {
+      "remoteId": 31,
+      "name": "0031_service_auth_activation_support.sql",
+      "sha256": "b588a4db5dbe1276fde28165a569f29f938dabee6c1d386aaa19da0f6ff02948"
+    },
+    {
+      "remoteId": 32,
+      "name": "0032_service_auth_compatibility.sql",
+      "sha256": "93ac4104a7acfb38e2ebba847fc296f5c170ec418b0e6e9b83e411361184161f"
+    },
+    {
+      "remoteId": 33,
+      "name": "0033_tenant_integrity_and_quarantine.sql",
+      "sha256": "067db9a9a789e64559639ba42d56b9a7589ad0e5761ac7cd2de71e9d8d9087a9"
+    },
+    {
+      "remoteId": 34,
+      "name": "0034_public_profiles_and_approved_links.sql",
+      "sha256": "f6bc1eae648d729684cb862dffc2e9580f86f16509a1e21616e85c391bf00d8d"
+    },
+    {
+      "remoteId": 35,
+      "name": "0035_delivery_outbox_and_metric_observations.sql",
+      "sha256": "52b4cc45f47ff1c80933491cd5ae89a4872716566023e76511b60534e26d9767"
+    },
+    {
+      "remoteId": 36,
+      "name": "0036_public_profile_authoring_guards.sql",
+      "sha256": "62e7d2140b80b7ebeffc50f1cf2dbb5e62f0d9e8460e0ada731c264616d53df8"
+    },
+    {
+      "remoteId": 37,
+      "name": "0037_instagram_analytics_collection_runs.sql",
+      "sha256": "184f296e49fb0b1a7be8d7d19211aaa464d913cae06692cb6d3f9e632e692dcf"
+    },
+    {
+      "remoteId": 38,
+      "name": "0038_instagram_analytics_metric_coverage.sql",
+      "sha256": "4f67076eca0b6e4196c8f6683f4b8cacf2554b00042993fd624f6be795c4b73a"
+    },
+    {
+      "remoteId": 39,
+      "name": "0039_production_environment_audit_contract.sql",
+      "sha256": "132aca9a09b09bfb349bb4c5bcef7923e975a732f1eecdd3d018dbd45953ad9c"
+    },
+    {
+      "remoteId": 40,
+      "name": "0040_creator_profile_interactions.sql",
+      "sha256": "d79b782e42cc7a7924caa2d2c3ee435dd62f9b6de43f238a52b4cf5d73284df3"
+    },
+    {
+      "remoteId": 41,
+      "name": "0041_creator_profile_appearance.sql",
+      "sha256": "88e3e139d41bf64285a334ac9731bee70fd7e50af7ab85232d62bfba9db37977"
+    },
+    {
+      "remoteId": 42,
+      "name": "0042_creator_profile_image_derivatives.sql",
+      "sha256": "5c727792884d1eca6919be804633e0b20d7f911433b013492b7464abde09f352"
+    },
+    {
+      "remoteId": 43,
+      "name": "0043_creator_profile_projection_delivery.sql",
+      "sha256": "64d84accfe04a9c968c1121f6a6750ee69dbb24b8ebd2fa6656973629004063e"
+    },
+    {
+      "remoteId": 44,
+      "name": "0044_onlyfans_upload_bridge.sql",
+      "sha256": "0e05068cace10bf881d5d5de95c96bd6063db9dee46ccf6caae542bb30995413",
+      "recoveredFrom": {
+        "commit": "db19e0a23a158136a6c421f46a9c144154a9afc5",
+        "path": "cloudflare/thot-os-app/migrations/0044_onlyfans_upload_bridge.sql"
+      }
+    },
+    {
+      "remoteId": 45,
+      "name": "0045_onlyfans_authorized_delivery.sql",
+      "sha256": "9d71946d845db2a3024f6c6350e305b108bd00a22927516e71ebc676e59202b7",
+      "recoveredFrom": {
+        "commit": "909462df24501a47e5d20bcdff2a2259f94e085c",
+        "path": "cloudflare/thot-os-app/migrations/0045_onlyfans_authorized_delivery.sql"
+      }
+    },
+    {
+      "remoteId": 46,
+      "name": "0046_onlyfans_sequential_batches.sql",
+      "sha256": "aaa6819075edb50d1a97d4e2b35c078df663b5827e3d4d2d27af1b111c3063ef",
+      "recoveredFrom": {
+        "commit": "7d55a29cb6e763901637e574524fbf25276dbc7d",
+        "path": "cloudflare/thot-os-app/migrations/0046_onlyfans_sequential_batches.sql"
+      }
+    },
+    {
+      "remoteId": 47,
+      "name": "0047_onlyfans_supervised_delivery.sql",
+      "sha256": "8b3a0212d0f21917b0bac1dba7a7bb58c7cfc4bf943496fea2a3ad2bfe859233",
+      "recoveredFrom": {
+        "commit": "395bb725dea26323968e28dc4213132ccce05e14",
+        "path": "cloudflare/thot-os-app/migrations/0047_onlyfans_supervised_delivery.sql"
+      }
+    },
+    {
+      "remoteId": 48,
+      "name": "0048_onlyfans_grouped_message_delivery.sql",
+      "sha256": "6a4be245fe175490f067c5c08ee2b03a528df04d4e31440582b68596ce11c34d",
+      "recoveredFrom": {
+        "commit": "1e9fe4d7469c999cacd1f0ba673bfdcf4c0ab242",
+        "path": "cloudflare/thot-os-app/migrations/0048_onlyfans_grouped_message_delivery.sql"
+      }
+    },
+    {
+      "remoteId": 49,
+      "name": "0044_creator_r2_library.sql",
+      "sha256": "0f3d0a0f618ecb45c23b5655f543a7e6687fe541535e58c39d5b5bac724e4ff2",
+      "recoveredFrom": {
+        "commit": "75a356ff07588a4d7c6d2b18e03723e308fcaad7",
+        "path": "cloudflare/thot-os-app/migrations/0044_creator_r2_library.sql"
+      }
+    },
+    {
+      "remoteId": 50,
+      "name": "0045_finished_media_uploads.sql",
+      "sha256": "aa43dafebb51faaf994eb732a3881af47597e3110c3450eefaa15692ba49a886",
+      "recoveredFrom": {
+        "commit": "dac4ef54f4860bad1186e1330176e0a2aa1e314d",
+        "path": "cloudflare/thot-os-app/migrations/0045_finished_media_uploads.sql"
+      }
+    },
+    {
+      "remoteId": 51,
+      "name": "0049_creator_onboarding_access_vault.sql",
+      "sha256": "e75dad101e52a5414f7311b27bebbd53e158a87134d56c474e638573877a114f"
+    },
+    {
+      "remoteId": 52,
+      "name": "0050_r2_native_source_media.sql",
+      "sha256": "c681a99484a73d8f9ada88ce6ffae2399a42eec06ee522a2e4d1558ae6060801",
+      "purpose": "Private R2 source-media multipart sessions and explicit creator cutover state; pending bounded staging review."
+    },
+    {
+      "remoteId": 53,
+      "name": "0051_r2_source_media_hardening.sql",
+      "sha256": "52361888de0b4d5bc139caeeb972e049d729cd08d0404dda025b407d96da81b1",
+      "purpose": "Applied bounded staging migration: immutable R2 identity, recoverable multipart finalization, and creator-scoped Vault capability."
+    },
+    {
+      "remoteId": 54,
+      "name": "0052_creator_scoped_r2_readiness.sql",
+      "sha256": "18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939",
+      "purpose": "Applied bounded staging migration: creator-scoped R2 consumer readiness and auditable cutover receipts."
+    },
+    {
+      "remoteId": 55,
+      "name": "0053_native_asset_authority.sql",
+      "sha256": "5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7",
+      "purpose": "Applied bounded staging migration: per-asset Cloudflare-native authority and resumable native-image session identity."
+    }
+  ]
+}

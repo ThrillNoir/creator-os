@@ -7,6 +7,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
+  "version_metadata": { "binding": "WORKER_VERSION" },
   "secrets": {
     "required": ["COMPOSIO_API_KEY"]
   },
@@ -24,7 +25,8 @@
     }
   ],
   "r2_buckets": [
-    { "binding": "PREVIEWS", "bucket_name": "thot-os-previews-staging" }
+    { "binding": "PREVIEWS", "bucket_name": "thot-os-previews-staging" },
+    { "binding": "LIBRARY_MEDIA", "bucket_name": "thot-os-library-media-staging" }
   ],
   "queues": {
     "producers": [

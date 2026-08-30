@@ -2,6 +2,10 @@
   "schemaVersion": 1,
   "environment": "staging",
   "purpose": "Canonical service-principal capability contract. This file contains only names and allowed capabilities; it never contains credential material, hashes, creator grants, or deployment approval.",
+  "runtimeSecrets": [
+    "VAULT_MASTER_KEY_V1",
+    "VAULT_PIN_PEPPER"
+  ],
   "principals": [
     {
       "id": "web-instagram",
@@ -47,7 +51,8 @@
       "secretName": "INTERNAL_VAULT_CATALOGUE_TOKEN",
       "receiver": "vault",
       "capabilities": [
-        "vault.catalogue.refresh"
+        "vault.catalogue.refresh",
+        "vault.source_media.health"
       ]
     },
     {
