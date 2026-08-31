@@ -4,12 +4,12 @@ import { revalidatePath } from "next/cache";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { humanAuditActor } from "@/lib/audit-identity";
 import { requireCreatorContext } from "@/lib/identity";
+import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
 import { redirect } from "next/navigation";
 
 const sections = new Set(["identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me"]);
 const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "telegram", "other"]);
 const paidPlatforms = new Set(["onlyfans", "fansly", "manyvids", "patreon", "other"]);
-const interviewFields = new Set(["stage_name", "voice_summary", "forbidden_topics_claims", "primary_audience", "content_pillars"]);
 
 function value(form: FormData, key: string, maximum = 2000) { return String(form.get(key) ?? "").replace(/\r\n?/g, "\n").trim().slice(0, maximum); }
 function email(form: FormData, key: string) { const result = value(form, key, 254).toLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new Error("Enter a valid contact email."); return result; }
@@ -83,7 +83,7 @@ export async function saveGuidedInterviewAction(_previous: { ok: boolean; messag
     const identity = await context();
     if (identity.creator.role !== "creator") return { ok: false, message: "Guided answers can only be confirmed by the creator." };
     const field = value(form, "field", 80); const answer = value(form, "answer", 4000);
-    if (!interviewFields.has(field)) return { ok: false, message: "That interview field is not available." };
+    if (!INTERVIEW_FIELDS.has(field)) return { ok: false, message: "That interview field is not available." };
     const creatorId = identity.creator.creator_id; const DB = cloudflareEnv().DB;
     const target = field === "stage_name" ? "creator_onboarding_profiles" : field === "voice_summary" || field === "forbidden_topics_claims" ? "creator_brand_voice_profiles" : "creator_brand_positioning";
     await DB.prepare(`INSERT INTO ${target} (creator_id,${field}) VALUES (?,?) ON CONFLICT(creator_id) DO UPDATE SET ${field}=excluded.${field},updated_at=CURRENT_TIMESTAMP`).bind(creatorId, answer).run();

@@ -74,6 +74,6 @@
     ]
   },
   "send_email": [
-    { "name": "EMAIL", "destination_address": "connect@thrillnoir.com" }
+    { "name": "EMAIL" }
   ]
 }

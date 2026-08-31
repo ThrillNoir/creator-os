@@ -10,7 +10,13 @@ test("guided interview is deterministic and allowlisted", () => {
 });
 
 test("guided interview source uses only the confirmation allowlist", async () => {
-  const source = await (await import("node:fs/promises")).readFile(new URL("../src/app/onboarding/actions.ts", import.meta.url), "utf8");
-  assert.match(source, /interviewFields\.has\(field\)/);
-  assert.match(source, /Guided answers can only be confirmed by the creator/);
+  const readFile = (await import("node:fs/promises")).readFile;
+  const [action, component] = await Promise.all([
+    readFile(new URL("../src/app/onboarding/actions.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/guided-onboarding-interview.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(action, /INTERVIEW_FIELDS\.has\(field\)/);
+  assert.match(action, /Guided answers can only be confirmed by the creator/);
+  assert.match(component, /state\.ok && state\.message/);
+  assert.match(component, /answer \?\?/);
 });
