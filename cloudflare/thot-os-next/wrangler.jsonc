@@ -72,5 +72,8 @@
     "producers": [
       { "binding": "PREVIEW_QUEUE", "queue": "thot-os-preview-staging" }
     ]
-  }
+  },
+  "send_email": [
+    { "name": "EMAIL", "destination_address": "connect@thrillnoir.com" }
+  ]
 }

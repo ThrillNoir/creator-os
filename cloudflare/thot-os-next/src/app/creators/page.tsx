@@ -3,7 +3,7 @@ import { AppShell, PageHeader } from "@/components/app-shell";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorRoleLabel, requireCreatorContext } from "@/lib/identity";
 import type { CreatorRole } from "@/lib/identity";
-import { assignBrowserProfileAction, onboardCreatorWorkspaceAction, registerBrowserProfileAction, revokeBridgeCredentialsAction, saveCreatorMembershipAction, suspendCreatorMembershipAction } from "@/app/identity-actions";
+import { assignBrowserProfileAction, onboardCreatorWorkspaceAction, registerBrowserProfileAction, revokeBridgeCredentialsAction, saveCreatorMembershipAction, suspendCreatorMembershipAction, revokeCreatorInvitationAction, resendCreatorInvitationAction } from "@/app/identity-actions";
 
 type AdminCreator = { id: string; name: string; status: string; assets: number; active_memberships: number; accounts: number; platforms: string | null; profiles: number };
 type Membership = { user_email: string; display_name: string; role: CreatorRole; status: string; created_at: string; updated_at: string };
@@ -11,6 +11,7 @@ type BrowserProfile = { id: string; label: string; status: string; last_seen_at:
 type Account = { id: string; platform: string; label: string; handle: string; connection_status: string; publishing_mode: string };
 type Assignment = { account_id: string; platform: string; account_label: string; handle: string; profile_label: string; profile_status: string; verified_at: string | null; credential_active: number; credential_last_seen_at: string | null };
 type AuditRow = { id: string; actor: string; actor_role: string; event_type: string; target: string; created_at: string; source: string };
+type Invitation = { id: string; invited_email: string; status: string; expires_at: string; sent_at: string | null; created_at: string };
 
 function statusLabel(value: string) {
   return value.replaceAll("_", " ");
@@ -21,7 +22,7 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
   const context = await requireCreatorContext("manage_identity", requestedCreatorId);
   const creatorId = context.creator.creator_id;
   const { DB } = cloudflareEnv();
-  const [creators, memberships, profiles, accounts, assignments, identityAudit, assetAudit, postAudit, communityAudit, vaultAudit, messagingAudit] = await Promise.all([
+  const [creators, memberships, profiles, accounts, assignments, invitations, identityAudit, assetAudit, postAudit, communityAudit, vaultAudit, messagingAudit] = await Promise.all([
     DB.prepare(`SELECT c.id,c.name,c.status,
       COUNT(DISTINCT CASE WHEN a.source_available=1 THEN a.id END) AS assets,
       COUNT(DISTINCT CASE WHEN cm.status='active' THEN lower(cm.user_email) END) AS active_memberships,
@@ -51,6 +52,7 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
       JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id
       JOIN operational_accounts oa ON oa.id=abp.account_id AND oa.creator_id=abp.creator_id
       WHERE abp.creator_id=? ORDER BY abp.platform,oa.label`).bind(creatorId).all<Assignment>(),
+    DB.prepare("SELECT id,invited_email,status,expires_at,sent_at,created_at FROM creator_invitations WHERE creator_id=? ORDER BY created_at DESC LIMIT 20").bind(creatorId).all<Invitation>(),
     DB.prepare("SELECT id,actor_email AS actor,actor_role,event_type,subject AS target,created_at,'identity' AS source FROM identity_audit_events WHERE creator_id=? ORDER BY created_at DESC LIMIT 40").bind(creatorId).all<AuditRow>(),
     DB.prepare("SELECT id,actor,actor_role,event_type,asset_id AS target,created_at,'asset' AS source FROM asset_classification_events WHERE creator_id=? ORDER BY created_at DESC LIMIT 20").bind(creatorId).all<AuditRow>(),
     DB.prepare("SELECT id,actor,actor_role,event_type,post_id AS target,created_at,'social post' AS source FROM social_post_events WHERE creator_id=? ORDER BY created_at DESC LIMIT 20").bind(creatorId).all<AuditRow>(),
@@ -98,7 +100,11 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
     </div>
 
     <section className="panel admin-section"><div className="section-heading"><div><h2>Onboard a canonical creator workspace</h2><p>Creates identity, one agency-administrator membership and an immutable receipt only. It does not import legacy data, create accounts or connect credentials.</p></div><span>Metadata only</span></div>
-      <form action={onboardCreatorWorkspaceAction} className="inline-form admin-membership-form"><label>Canonical ID<input name="creatorId" required maxLength={64} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="thrill-noir" /></label><label>Creator name<input name="name" required maxLength={100} placeholder="THRILL NOIR" /></label><label>Initials<input name="initials" required maxLength={8} pattern="[A-Za-z0-9]+" placeholder="TN" /></label><label>Accent<input name="accent" defaultValue="#6f4df6" required pattern="#[0-9a-fA-F]{6}" /></label><input type="hidden" name="slug" value="" /><button className="primary" type="submit">Create canonical workspace</button></form>
+      <form action={onboardCreatorWorkspaceAction} className="inline-form admin-membership-form"><label>Canonical ID<input name="creatorId" required maxLength={64} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="thrill-noir" /></label><label>Creator name<input name="name" required maxLength={100} placeholder="THRILL NOIR" /></label><label>Initials<input name="initials" required maxLength={8} pattern="[A-Za-z0-9]+" placeholder="TN" /></label><label>Accent<input name="accent" defaultValue="#6f4df6" required pattern="#[a-fA-F0-9]{6}" /></label><label>Invitation email<input name="invitationEmail" type="email" required maxLength={254} /></label><input type="hidden" name="slug" value="" /><button className="primary" type="submit">Approve and invite</button></form>
+    </section>
+
+    <section className="panel admin-section"><div className="section-heading"><div><h2>{selectedCreator.name} invitations</h2><p>Only the hash is stored. Failed delivery leaves a pending invitation for replacement.</p></div><span>{invitations.results.length} recent</span></div>
+      {invitations.results.map((invitation) => <article className="identity-row" key={invitation.id}><div><strong>{invitation.invited_email}</strong><small>{statusLabel(invitation.status)} · expires {invitation.expires_at}</small></div>{invitation.status === "pending" ? <div className="connection-row-actions"><form action={resendCreatorInvitationAction}><input type="hidden" name="invitationId" value={invitation.id} /><button className="secondary-action" type="submit">Replace and resend</button></form><form action={revokeCreatorInvitationAction} className="confirmed-action"><input type="hidden" name="invitationId" value={invitation.id} /><label><input type="checkbox" name="confirmation" value="revoke-invitation" required /> Confirm revocation</label><button className="danger-action" type="submit">Revoke</button></form></div> : null}</article>)}
     </section>
 
     <section className="panel admin-section"><div className="section-heading"><div><h2>{selectedCreator.name} memberships</h2><p>Cloudflare Access establishes identity. These creator-scoped memberships establish authorization.</p></div><span>Administrative action</span></div>

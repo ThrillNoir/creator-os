@@ -24,7 +24,7 @@ async function accessKeys(url: string, forceRefresh = false) {
   return cachedKeys.keys;
 }
 
-export async function requireAccessIdentity() {
+export async function verifyAccessIdentity() {
   const env = cloudflareEnv();
   const localEnv = env as CloudflareEnv & { LOCAL_ACCESS_BYPASS?: string };
   // OpenNext's local platform proxy does not include `.dev.vars` in the
@@ -61,7 +61,12 @@ export async function requireAccessIdentity() {
   const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, decodeBase64Url(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
   if (!valid) throw new Error("Cloudflare Access signature is invalid.");
   const email = claims.email.toLowerCase();
-  const user = await env.DB.prepare("SELECT email FROM users WHERE lower(email)=? AND status='active'").bind(email).first<{ email: string }>();
-  if (!user) throw new Error("This Cloudflare identity is not an active THOT OS user.");
   return { email };
+}
+
+export async function requireAccessIdentity() {
+  const identity = await verifyAccessIdentity();
+  const user = await cloudflareEnv().DB.prepare("SELECT email FROM users WHERE lower(email)=? AND status='active'").bind(identity.email).first<{ email: string }>();
+  if (!user) throw new Error("This Cloudflare identity is not an active THOT OS user.");
+  return identity;
 }

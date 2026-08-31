@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { requireAccessIdentity } from "@/lib/access";
+import { verifyAccessIdentity } from "@/lib/access";
 import "./globals.css";
 import "./boldkit-cloud.css";
 
@@ -12,6 +12,6 @@ export const viewport: Viewport = { colorScheme: "dark light", themeColor: "#1d1
 export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  await requireAccessIdentity();
+  await verifyAccessIdentity();
   return <html className={`${geistSans.variable} ${geistMono.variable} dark`} lang="en" suppressHydrationWarning><body>{children}</body></html>;
 }

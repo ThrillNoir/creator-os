@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { humanAuditActor, identityAuditStatement } from "@/lib/audit-identity";
 import { requireCreatorContext, getCreatorIdentity } from "@/lib/identity";
+import { verifyAccessIdentity } from "@/lib/access";
 import { getOnboardingResult, validateOnboardingRequest } from "@/lib/creator-onboarding";
 import { isAgencyStaffRole } from "@/lib/authorization";
 import { revokeStepUpSessions, STEP_UP_COOKIE } from "@/lib/access-vault";
@@ -21,6 +22,34 @@ function membershipEmail(value: FormDataEntryValue | null) {
 
 function requireConfirmation(formData: FormData, expected: string) {
   if (formData.get("confirmation") !== expected) throw new Error("Explicit confirmation is required for this administrative action.");
+}
+
+function invitationEmail(value: FormDataEntryValue | null) {
+  const email = String(value ?? "").trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter the creator's exact invitation email.");
+  return email;
+}
+
+async function sha256(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function invitationToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sendInvitationEmail(email: string, creatorName: string, token: string) {
+  const env = cloudflareEnv() as CloudflareEnv & { EMAIL?: SendEmail; APP_BASE_URL?: string };
+  if (!env.EMAIL) throw new Error("Email Sending is not configured.");
+  const link = `${env.APP_BASE_URL ?? ""}/invite/${token}`;
+  await env.EMAIL.send({
+    from: "THOT OS <connect@thrillnoir.com>", to: email,
+    subject: "Your THOT OS workspace is ready",
+    text: `Your ${creatorName} THOT OS workspace is ready. Sign in with Cloudflare Access and claim it here: ${link}\n\nThis invitation expires in 7 days.`,
+  });
 }
 
 export async function switchCreatorAction(formData: FormData) {
@@ -46,6 +75,10 @@ export async function onboardCreatorWorkspaceAction(formData: FormData) {
   const operatorMembership = identity.memberships.find((membership) => membership.role === "agency_admin");
   if (!operatorMembership) throw new Error("Only an agency administrator can create a creator workspace.");
   const request = await validateOnboardingRequest(Object.fromEntries(formData), identity.email);
+  const invitedEmail = invitationEmail(formData.get("invitationEmail"));
+  const token = invitationToken();
+  const tokenHash = await sha256(token);
+  const invitationId = crypto.randomUUID();
   const { DB } = cloudflareEnv();
   const completed = await getOnboardingResult(DB, request);
   if (completed) {
@@ -58,11 +91,14 @@ export async function onboardCreatorWorkspaceAction(formData: FormData) {
   const user = await DB.prepare("SELECT status FROM users WHERE lower(email)=?").bind(request.requestedBy).first<{ status: string }>();
   if (user?.status === "suspended") throw new Error("The signed-in operator is globally suspended.");
   const auditActor = { identity: identity.email, role: "agency_admin" as const, creatorId: request.creatorId };
+  let created = true;
   try {
     await DB.batch([
       DB.prepare("INSERT INTO creators (id,name,slug,initials,accent,status) VALUES (?,?,?,?,?,'active')").bind(request.creatorId, request.name, request.slug, request.initials, request.accent),
       DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?,'active')").bind(request.requestedBy, identity.email),
       DB.prepare("INSERT INTO creator_memberships (creator_id,user_email,role,status) VALUES (?,?,'agency_admin','active')").bind(request.creatorId, request.requestedBy),
+      DB.prepare("INSERT INTO creator_onboarding_profiles (creator_id,stage_name) VALUES (?,?)").bind(request.creatorId, request.name),
+      DB.prepare("INSERT INTO creator_invitations (id,creator_id,invited_email,token_hash,expires_at,created_by) VALUES (?,?,?,?,datetime('now','+7 days'),?)").bind(invitationId, request.creatorId, invitedEmail, tokenHash, request.requestedBy),
       DB.prepare(`INSERT INTO creator_onboarding_receipts
         (id,idempotency_key,creator_id,requested_by,request_fingerprint,status)
         VALUES (?,?,?,?,?,'completed')`).bind(crypto.randomUUID(), request.idempotencyKey, request.creatorId, request.requestedBy, request.fingerprint),
@@ -73,9 +109,61 @@ export async function onboardCreatorWorkspaceAction(formData: FormData) {
     // identical immutable receipt; never treat a different request as success.
     const raced = await getOnboardingResult(DB, request);
     if (!raced) throw error;
+    created = false;
   }
+  if (!created) return;
+  await sendInvitationEmail(invitedEmail, request.name, token);
+  await DB.prepare("UPDATE creator_invitations SET sent_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(invitationId).run();
   revalidatePath("/");
   revalidatePath("/creators");
+}
+
+export async function revokeCreatorInvitationAction(formData: FormData) {
+  requireConfirmation(formData, "revoke-invitation");
+  const context = await requireCreatorContext("manage_identity");
+  if (context.creator.role !== "agency_admin") throw new Error("Only an agency administrator can revoke invitations.");
+  const id = String(formData.get("invitationId") ?? "");
+  const { DB } = cloudflareEnv();
+  const result = await DB.prepare("UPDATE creator_invitations SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='pending'").bind(id, context.creator.creator_id).run();
+  if (!result.meta.changes) throw new Error("That invitation is no longer pending.");
+  await DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(), context.creator.creator_id, context.email, context.creator.role, "creator_invitation_revoked", id, JSON.stringify({ administrativeAction: true })).run();
+  revalidatePath("/creators");
+}
+
+export async function resendCreatorInvitationAction(formData: FormData) {
+  const context = await requireCreatorContext("manage_identity");
+  if (context.creator.role !== "agency_admin") throw new Error("Only an agency administrator can resend invitations.");
+  const id = String(formData.get("invitationId") ?? "");
+  const { DB } = cloudflareEnv();
+  const prior = await DB.prepare("SELECT invited_email FROM creator_invitations WHERE id=? AND creator_id=? AND status='pending'").bind(id, context.creator.creator_id).first<{ invited_email: string }>();
+  if (!prior) throw new Error("That invitation is no longer pending.");
+  const creator = await DB.prepare("SELECT name FROM creators WHERE id=?").bind(context.creator.creator_id).first<{ name: string }>();
+  const token = invitationToken();
+  const invitationId = crypto.randomUUID();
+  await DB.batch([
+    DB.prepare("UPDATE creator_invitations SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id),
+    DB.prepare("INSERT INTO creator_invitations (id,creator_id,invited_email,token_hash,expires_at,created_by) VALUES (?,?,?,?,datetime('now','+7 days'),?)").bind(invitationId, context.creator.creator_id, prior.invited_email, await sha256(token), context.email),
+  ]);
+  await sendInvitationEmail(prior.invited_email, creator?.name ?? "your", token);
+  await DB.prepare("UPDATE creator_invitations SET sent_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(invitationId).run();
+  revalidatePath("/creators");
+}
+
+export async function claimCreatorInvitationAction(formData: FormData) {
+  const identity = await verifyAccessIdentity();
+  const token = String(formData.get("token") ?? "").trim();
+  if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("This invitation is invalid or expired.");
+  const tokenHash = await sha256(token);
+  const { DB } = cloudflareEnv();
+  const invitation = await DB.prepare("SELECT id,creator_id,invited_email FROM creator_invitations WHERE token_hash=? AND status='pending' AND unixepoch(expires_at)>unixepoch(CURRENT_TIMESTAMP)").bind(tokenHash).first<{ id: string; creator_id: string; invited_email: string }>();
+  if (!invitation || invitation.invited_email.toLowerCase() !== identity.email) throw new Error("This invitation is not for the signed-in Access identity.");
+  await DB.batch([
+    DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?, 'active')").bind(identity.email, identity.email),
+    DB.prepare("UPDATE creator_invitations SET status='accepted',accepted_at=CURRENT_TIMESTAMP,accepted_by=? WHERE id=? AND status='pending' AND unixepoch(expires_at)>unixepoch(CURRENT_TIMESTAMP)").bind(identity.email, invitation.id),
+    DB.prepare("INSERT INTO creator_memberships (creator_id,user_email,role,status) SELECT ?,?,'creator','active' WHERE EXISTS (SELECT 1 FROM creator_invitations WHERE id=? AND status='accepted')").bind(invitation.creator_id, identity.email, invitation.id),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(), invitation.creator_id, identity.email, "creator", "creator_invitation_accepted", invitation.id, JSON.stringify({ metadataOnly: true })),
+  ]);
+  redirect("/onboarding");
 }
 
 export async function registerBrowserProfileAction(creatorId: string, formData: FormData) {
