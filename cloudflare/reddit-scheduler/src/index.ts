@@ -1,4 +1,4 @@
-import { findPublishedImage, imageMimeType, parseMediaLease, parseRedditFlairChoices, parseRedditMediaReceipt, parseRedditPostRequirements, redditApiErrors, redditSubmissionWebsocketUrl, type RedditMediaReceipt } from "./reddit-api";
+import { findPublishedImage, imageMimeType, parseMediaLease, parseRedditFlairChoices, parseRedditMediaReceipt, parseRedditPostRequirements, redditApiErrors, redditProfileCommunityName, redditSubmissionWebsocketUrl, type RedditMediaReceipt } from "./reddit-api";
 
 type UnknownRecord = Record<string, unknown>;
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
@@ -6,7 +6,8 @@ import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.
 type DuePost = {
   id: string; creator_id: string; account_id: string; asset_id: string; title: string; caption: string;
   content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; extension: string; bytes: number;
-  community_name: string; flair_required: number; allows_nsfw: number; reddit_flair_id: string | null; reddit_flair_text: string | null;
+  community_id: number | null; community_name: string | null; flair_required: number | null; allows_nsfw: number | null;
+  reddit_flair_id: string | null; reddit_flair_text: string | null;
 };
 
 const COMPOSIO_V3 = "https://backend.composio.dev/api/v3";
@@ -141,8 +142,10 @@ async function beginRedditPublish(env: Env, post: DuePost) {
 }
 
 async function publishPost(env: Env, post: DuePost) {
-  if (post.flair_required && !post.reddit_flair_id) throw new Error(`r/${post.community_name} requires flair; refresh its requirements and choose a flair before scheduling.`);
-  if (post.content_rating === "nsfw" && !post.allows_nsfw) throw new Error(`r/${post.community_name} is not recorded as allowing NSFW posts.`);
+  const profileTarget = post.community_id === null;
+  if (!profileTarget && !post.community_name) throw new Error("Reddit post target is missing.");
+  if (!profileTarget && post.flair_required && !post.reddit_flair_id) throw new Error(`r/${post.community_name} requires flair; refresh its requirements and choose a flair before scheduling.`);
+  if (!profileTarget && post.content_rating === "nsfw" && !post.allows_nsfw) throw new Error(`r/${post.community_name} is not recorded as allowing NSFW posts.`);
   if (post.bytes > MAX_REDDIT_IMAGE_BYTES) throw new Error("Reddit images must be 20 MB or smaller.");
   const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.status
     FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id
@@ -150,11 +153,13 @@ async function publishPost(env: Env, post: DuePost) {
     .bind(post.creator_id, post.account_id).first<{ connected_account_id: string; status: string }>();
   if (!connection || connection.status !== "active") throw new Error("Reddit is not connected through Composio. Reconnect it in Operations.");
   const identity = await redditIdentity(env, connection.connected_account_id);
-  const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE id=? AND creator_id=? AND platform='reddit' AND is_active=1").bind(post.account_id, post.creator_id).first<{ handle: string }>();
+  const expected = await env.DB.prepare("SELECT handle,external_identity_confirmed_at FROM operational_accounts WHERE id=? AND creator_id=? AND platform='reddit' AND is_active=1").bind(post.account_id, post.creator_id).first<{ handle: string; external_identity_confirmed_at: string | null }>();
   if (!expected) throw new Error("Reddit post account is missing or inactive.");
+  if (profileTarget && (!expected.handle || !expected.external_identity_confirmed_at)) throw new Error("The selected Reddit account is not verified for profile publishing.");
   if (expected?.handle && expected.handle.replace(/^u\//i, "").toLowerCase() !== identity.name.toLowerCase()) {
     throw new Error(`Composio is authorized as u/${identity.name}, not ${expected.handle}. Reconnect the correct account.`);
   }
+  const destinationCommunity = profileTarget ? redditProfileCommunityName(identity.name) : post.community_name!;
 
   const source = await approvedRedditImage(env, post);
   const image = source.bytes;
@@ -172,7 +177,7 @@ async function publishPost(env: Env, post: DuePost) {
   const submittedAt = Date.now();
   const submitQuery = new URLSearchParams({
     api_type: "json", kind: "image", nsfw: String(post.content_rating === "nsfw"), raw_json: "1", resubmit: "true",
-    sendreplies: "true", sr: post.community_name, title: post.title, url: lease.mediaUrl, validate_on_submit: "true",
+    sendreplies: "true", sr: destinationCommunity, title: post.title, url: lease.mediaUrl, validate_on_submit: "true",
   });
   if (post.reddit_flair_id) submitQuery.set("flair_id", post.reddit_flair_id);
   let submission: unknown;
@@ -194,9 +199,11 @@ async function publishPost(env: Env, post: DuePost) {
       if (attempt) await new Promise((resolve) => setTimeout(resolve, 1_000));
       const endpoint = mediaReceipt
         ? `/api/info?id=${encodeURIComponent(mediaReceipt.externalPostId)}&raw_json=1`
-        : `/r/${encodeURIComponent(post.community_name)}/new?limit=50&raw_json=1`;
+        : profileTarget
+          ? `/user/${encodeURIComponent(identity.name)}/submitted?limit=50&raw_json=1`
+          : `/r/${encodeURIComponent(post.community_name!)}/new?limit=50&raw_json=1`;
       const listing = await composioProxy<unknown>(env, connection.connected_account_id, endpoint);
-      published = findPublishedImage({ children: listing, expectedAuthor: identity.name, expectedCommunity: post.community_name, expectedTitle: post.title, submittedAfterMs: submittedAt, expectedFlairId: post.reddit_flair_id });
+      published = findPublishedImage({ children: listing, expectedAuthor: identity.name, expectedCommunity: destinationCommunity, expectedProfileUsername: profileTarget ? identity.name : null, expectedTitle: post.title, submittedAfterMs: submittedAt, expectedFlairId: profileTarget ? null : post.reddit_flair_id });
     }
   } catch (error) {
     throw new OutcomeUncertainError(`Reddit accepted the image submission, but receipt verification failed: ${error instanceof Error ? error.message : "unknown error"}.`);
@@ -215,11 +222,11 @@ async function publishPost(env: Env, post: DuePost) {
   const completion = [
     env.DB.prepare(`UPDATE social_posts SET status='published',external_post_id=?,external_url=?,published_at=CURRENT_TIMESTAMP,error=NULL,
       device_claimed_at=NULL,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='publishing'`)
-      .bind(externalPostId, externalUrl, JSON.stringify({ method: "composio_reddit_api", nativeMedia: true, author: identity.name, community: post.community_name, flairId: post.reddit_flair_id, flairText: post.reddit_flair_text, firstCommentRequested: Boolean(post.caption.trim()), firstCommentRecorded: Boolean(commentReceipt) }), post.id, post.creator_id),
+      .bind(externalPostId, externalUrl, JSON.stringify({ method: "composio_reddit_api", nativeMedia: true, author: identity.name, targetType: profileTarget ? "profile" : "subreddit", community: destinationCommunity, accountId: post.account_id, flairId: profileTarget ? null : post.reddit_flair_id, flairText: profileTarget ? null : post.reddit_flair_text, firstCommentRequested: Boolean(post.caption.trim()), firstCommentRecorded: Boolean(commentReceipt) }), post.id, post.creator_id),
     env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='reddit'").bind(post.account_id, post.creator_id),
-    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','api_publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, externalUrl, community: post.community_name })),
+    env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','api_publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, externalUrl, targetType: profileTarget ? "profile" : "subreddit", community: destinationCommunity, accountId: post.account_id })),
     env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='reddit'")
-      .bind(externalPostId, JSON.stringify({ externalPostId, externalUrl, community: post.community_name }), operationId, post.creator_id),
+      .bind(externalPostId, JSON.stringify({ externalPostId, externalUrl, targetType: profileTarget ? "profile" : "subreddit", community: destinationCommunity, accountId: post.account_id }), operationId, post.creator_id),
     env.DB.prepare("UPDATE operation_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
       .bind(operationId, post.creator_id),
   ];
@@ -233,12 +240,17 @@ async function publishPost(env: Env, post: DuePost) {
 
 async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
-    SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
+    SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.community_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
       rc.name AS community_name,rc.flair_required,rc.allows_nsfw
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
+    LEFT JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
     WHERE p.id=? AND p.creator_id=? AND p.platform='reddit' AND p.status='scheduled' AND p.approved_at IS NOT NULL
+      AND (p.community_id IS NOT NULL OR EXISTS (
+        SELECT 1 FROM social_post_events profile_event
+        WHERE profile_event.post_id=p.id AND profile_event.creator_id=p.creator_id
+          AND json_extract(profile_event.detail,'$.targetType')='profile'
+      ))
   `).bind(postId, creatorId).first<DuePost>();
 }
 
@@ -270,12 +282,17 @@ async function processDue(env: Env, triggerType: string) {
   let claimed = 0, published = 0, failed = 0;
   try {
     const due = await env.DB.prepare(`
-      SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
+      SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.community_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
         rc.name AS community_name,rc.flair_required,rc.allows_nsfw
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-      JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
+      LEFT JOIN reddit_communities rc ON rc.id=p.community_id AND rc.creator_id=p.creator_id
       WHERE p.platform='reddit' AND p.status='scheduled' AND p.approved_at IS NOT NULL
+        AND (p.community_id IS NOT NULL OR EXISTS (
+          SELECT 1 FROM social_post_events profile_event
+          WHERE profile_event.post_id=p.id AND profile_event.creator_id=p.creator_id
+            AND json_extract(profile_event.detail,'$.targetType')='profile'
+        ))
         AND p.scheduled_at IS NOT NULL AND unixepoch(p.scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)
       ORDER BY p.scheduled_at LIMIT 5
     `).all<DuePost>();

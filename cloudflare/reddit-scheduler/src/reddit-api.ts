@@ -32,6 +32,12 @@ export type RedditMediaReceipt = {
   externalUrl: string;
 };
 
+export function redditProfileCommunityName(username: string) {
+  const normalized = username.trim().replace(/^u\//i, "");
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(normalized)) throw new Error("Reddit returned an invalid profile identity.");
+  return `u_${normalized}`;
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 function record(value: unknown): UnknownRecord | undefined {
@@ -127,21 +133,29 @@ export function findPublishedImage(input: {
   expectedTitle: string;
   submittedAfterMs: number;
   expectedFlairId?: string | null;
+  expectedProfileUsername?: string | null;
 }) {
   const listing = record(input.children);
   const data = record(listing?.data);
   const children = Array.isArray(data?.children) ? data.children : [];
   const expectedAuthor = input.expectedAuthor.replace(/^u\//i, "").toLowerCase();
   const expectedCommunity = input.expectedCommunity.replace(/^r\//i, "").toLowerCase();
+  const expectedProfileCommunity = input.expectedProfileUsername ? redditProfileCommunityName(input.expectedProfileUsername).toLowerCase() : null;
   for (const child of children) {
     const post = record(record(child)?.data) as RedditSubmittedPost | undefined;
     if (!post) continue;
     const createdAt = Number(post.created_utc || 0) * 1000;
     const mediaUrl = String(post.url_overridden_by_dest || post.url || "");
     const nativeImage = post.post_hint === "image" || /^(?:https?:\/\/)?i\.redd\.it\//i.test(mediaUrl) || post.domain === "i.redd.it";
+    const profilePath = input.expectedProfileUsername && post.permalink
+      ? new URL(`https://www.reddit.com${post.permalink}`).pathname.toLowerCase().startsWith(`/user/${input.expectedProfileUsername.replace(/^u\//i, "").toLowerCase()}/`)
+      : false;
+    const targetMatches = expectedProfileCommunity
+      ? post.subreddit?.toLowerCase() === expectedProfileCommunity || profilePath
+      : post.subreddit?.toLowerCase() === expectedCommunity;
     if (
       post.author?.toLowerCase() === expectedAuthor
-      && post.subreddit?.toLowerCase() === expectedCommunity
+      && targetMatches
       && post.title === input.expectedTitle
       && createdAt >= input.submittedAfterMs - 60_000
       && nativeImage

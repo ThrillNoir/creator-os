@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findPublishedImage, imageMimeType, parseMediaLease, parseRedditFlairChoices, parseRedditMediaReceipt, parseRedditPostRequirements, redditApiErrors, redditSubmissionWebsocketUrl } from "../../reddit-scheduler/src/reddit-api.ts";
+import { findPublishedImage, imageMimeType, parseMediaLease, parseRedditFlairChoices, parseRedditMediaReceipt, parseRedditPostRequirements, redditApiErrors, redditProfileCommunityName, redditSubmissionWebsocketUrl } from "../../reddit-scheduler/src/reddit-api.ts";
+
+test("derives the profile community only from the verified Reddit identity", () => {
+  assert.equal(redditProfileCommunityName("AdelaideSuede"), "u_AdelaideSuede");
+  assert.equal(redditProfileCommunityName("u/AdelaideSuede"), "u_AdelaideSuede");
+  assert.throws(() => redditProfileCommunityName("different account"), /invalid profile identity/);
+});
 
 test("parses Reddit's native media upload lease", () => {
   const lease = parseMediaLease({
@@ -31,6 +37,18 @@ test("requires a verified native Reddit image receipt", () => {
   assert.equal(findPublishedImage({ children: listing, expectedAuthor: "AdelaideSuede", expectedCommunity: "ExampleSub", expectedTitle: "changed", submittedAfterMs: created }), null);
   assert.equal(findPublishedImage({ children: listing, expectedAuthor: "AdelaideSuede", expectedCommunity: "ExampleSub", expectedTitle: "Approved title", submittedAfterMs: created, expectedFlairId: "flair-approved" })?.name, "t3_abc123");
   assert.equal(findPublishedImage({ children: listing, expectedAuthor: "AdelaideSuede", expectedCommunity: "ExampleSub", expectedTitle: "Approved title", submittedAfterMs: created, expectedFlairId: "different-flair" }), null);
+});
+
+test("verifies creator-profile receipts without accepting another subreddit", () => {
+  const created = Date.now();
+  const listing = { data: { children: [{ data: {
+    name: "t3_profile123", author: "AdelaideSuede", subreddit: "u_AdelaideSuede", title: "Profile post",
+    permalink: "/user/AdelaideSuede/comments/profile123/profile_post/", created_utc: created / 1000,
+    post_hint: "image", domain: "i.redd.it", url: "https://i.redd.it/profile.jpg",
+  } }] } };
+  assert.equal(findPublishedImage({ children: listing, expectedAuthor: "u/AdelaideSuede", expectedCommunity: "u_AdelaideSuede", expectedProfileUsername: "AdelaideSuede", expectedTitle: "Profile post", submittedAfterMs: created })?.name, "t3_profile123");
+  assert.equal(findPublishedImage({ children: listing, expectedAuthor: "u/OtherAccount", expectedCommunity: "u_OtherAccount", expectedProfileUsername: "OtherAccount", expectedTitle: "Profile post", submittedAfterMs: created }), null);
+  assert.equal(findPublishedImage({ children: { data: { children: [{ data: { ...listing.data.children[0].data, subreddit: "OtherCommunity", permalink: "/r/OtherCommunity/comments/profile123/profile_post/" } }] } }, expectedAuthor: "AdelaideSuede", expectedCommunity: "u_AdelaideSuede", expectedProfileUsername: "AdelaideSuede", expectedTitle: "Profile post", submittedAfterMs: created }), null);
 });
 
 test("normalizes image MIME types and Reddit API errors", () => {

@@ -494,7 +494,10 @@ export async function createRedditPostAction(formData: FormData) {
   const existingPostId = String(formData.get("postId") ?? "").trim();
   const requestedAccountId = String(formData.get("accountId") ?? "").trim();
   const assetId = String(formData.get("assetId") ?? "");
-  const communityId = Number(formData.get("communityId"));
+  const targetTypeValue = String(formData.get("targetType") ?? "");
+  const targetType = targetTypeValue === "profile" || targetTypeValue === "subreddit" ? targetTypeValue : null;
+  const communityValue = String(formData.get("communityId") ?? "").trim();
+  const communityId = communityValue === "" ? null : Number(communityValue);
   const flairId = String(formData.get("flairId") ?? "").trim();
   const title = String(formData.get("title") ?? "").trim();
   const caption = String(formData.get("caption") ?? "").trim().slice(0, 10000);
@@ -502,7 +505,9 @@ export async function createRedditPostAction(formData: FormData) {
   const intentValue = String(formData.get("intent") ?? "draft");
   const intent = intentValue === "publish_now" ? "publish_now" : intentValue === "schedule" ? "schedule" : "draft";
   const plannedValue = String(formData.get("scheduledAt") ?? "").trim();
-  if (!assetId || !Number.isInteger(communityId) || communityId < 1) throw new Error("Choose a Reddit-eligible asset and subreddit.");
+  if (!targetType) throw new Error("Choose a Reddit creator profile or saved subreddit.");
+  if (!assetId || (targetType === "subreddit" && (communityId === null || !Number.isInteger(communityId) || communityId < 1))) throw new Error("Choose a Reddit-eligible asset and target.");
+  if (targetType === "profile" && (communityId !== null || flairId)) throw new Error("Creator profile posts cannot include a subreddit or flair.");
   if (!title || title.length > 300) throw new Error("Reddit title must be between 1 and 300 characters.");
   if (contentRating !== "sfw" && contentRating !== "nsfw") throw new Error("Choose the Reddit content rating.");
 
@@ -520,23 +525,26 @@ export async function createRedditPostAction(formData: FormData) {
   const { DB } = env;
   const [asset, community, selectedFlair, account, existingPost] = await Promise.all([
     creatorPrepare(DB, creatorId, `SELECT a.id,a.extension,c.safety FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id LEFT JOIN asset_classifications c ON c.asset_id=a.id WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND d.destination='reddit'`).bind(assetId).first<{ id: string; extension: string; safety: "sfw" | "nsfw" | null }>(),
-    creatorPrepare(DB, creatorId, "SELECT id,name,allows_nsfw,status,last_verified_at,flair_required,flairs_checked_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; name: string; allows_nsfw: number; status: string; last_verified_at: string; flair_required: number; flairs_checked_at: string | null }>(),
-    flairId ? creatorPrepare(DB, creatorId, "SELECT flair_id,flair_text,fetched_at FROM reddit_community_flairs WHERE creator_id=@creator AND community_id=? AND flair_id=? AND active=1").bind(communityId, flairId).first<{ flair_id: string; flair_text: string; fetched_at: string }>() : Promise.resolve(null),
-    creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority,is_active FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(requestedAccountId).first<{ id: string; connection_status: string; publishing_authority: string; is_active: number }>(),
+    targetType === "subreddit" ? creatorPrepare(DB, creatorId, "SELECT id,name,allows_nsfw,status,last_verified_at,flair_required,flairs_checked_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; name: string; allows_nsfw: number; status: string; last_verified_at: string; flair_required: number; flairs_checked_at: string | null }>() : Promise.resolve(null),
+    targetType === "subreddit" && flairId ? creatorPrepare(DB, creatorId, "SELECT flair_id,flair_text,fetched_at FROM reddit_community_flairs WHERE creator_id=@creator AND community_id=? AND flair_id=? AND active=1").bind(communityId, flairId).first<{ flair_id: string; flair_text: string; fetched_at: string }>() : Promise.resolve(null),
+    creatorPrepare(DB, creatorId, "SELECT id,handle,external_identity_confirmed_at,connection_status,publishing_authority,is_active FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(requestedAccountId).first<{ id: string; handle: string; external_identity_confirmed_at: string | null; connection_status: string; publishing_authority: string; is_active: number }>(),
     existingPostId ? creatorPrepare(DB, creatorId, "SELECT id,status FROM social_posts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(existingPostId).first<{ id: string; status: string }>() : Promise.resolve(null),
   ]);
   if (!asset) throw new Error("That asset is no longer available for Reddit.");
   if (!asset.safety) throw new Error("Classify the asset as SFW or NSFW before creating a Reddit post.");
   if (!["jpg", "jpeg", "png", "webp", "gif"].includes(asset.extension.toLowerCase().replace(/^\./, ""))) throw new Error("Reddit API publishing currently supports image posts. Native video will be enabled after its separate media flow is verified.");
   if (asset.safety !== contentRating) throw new Error(`This asset is classified ${asset.safety.toUpperCase()}; use the matching Reddit content rating.`);
-  if (!community || community.status !== "active") throw new Error("That subreddit is not active.");
-  if (flairId && !selectedFlair) throw new Error("That Reddit flair is no longer available for the selected subreddit. Refresh its flairs and choose again.");
-  if (intent !== "draft" && community.flair_required && !selectedFlair) throw new Error(`r/${community.name} requires post flair. Refresh its flairs and choose one before publishing.`);
-  if (intent !== "draft" && community.flair_required && !community.flairs_checked_at) throw new Error(`Refresh r/${community.name} to load its current Reddit flair requirements before publishing.`);
-  if (contentRating === "nsfw" && !community.allows_nsfw) throw new Error("That subreddit is not recorded as allowing NSFW posts.");
-  const rulesCheckedAt = new Date(`${community.last_verified_at}T00:00:00Z`).getTime();
-  if (!Number.isFinite(rulesCheckedAt) || Date.now() - rulesCheckedAt > 30 * 24 * 60 * 60 * 1000) throw new Error("Recheck this subreddit’s rules before scheduling a post.");
+  if (targetType === "subreddit") {
+    if (!community || community.status !== "active") throw new Error("That subreddit is not active.");
+    if (flairId && !selectedFlair) throw new Error("That Reddit flair is no longer available for the selected subreddit. Refresh its flairs and choose again.");
+    if (intent !== "draft" && community.flair_required && !selectedFlair) throw new Error(`r/${community.name} requires post flair. Refresh its flairs and choose one before publishing.`);
+    if (intent !== "draft" && community.flair_required && !community.flairs_checked_at) throw new Error(`Refresh r/${community.name} to load its current Reddit flair requirements before publishing.`);
+    if (contentRating === "nsfw" && !community.allows_nsfw) throw new Error("That subreddit is not recorded as allowing NSFW posts.");
+    const rulesCheckedAt = new Date(`${community.last_verified_at}T00:00:00Z`).getTime();
+    if (!Number.isFinite(rulesCheckedAt) || Date.now() - rulesCheckedAt > 30 * 24 * 60 * 60 * 1000) throw new Error("Recheck this subreddit’s rules before scheduling a post.");
+  }
   if (!account || !account.is_active) throw new Error("Select an active Reddit account before creating a post.");
+  if (targetType === "profile" && (!account.handle || !account.external_identity_confirmed_at)) throw new Error("Verify the selected Reddit account before creating a creator-profile post.");
   if (intent !== "draft" && (account.connection_status !== "connected" || account.publishing_authority !== "confirmed")) throw new Error("Reconnect and verify Reddit before approving API delivery.");
   if (existingPostId && (!existingPost || !["draft", "scheduled"].includes(existingPost.status))) throw new Error("Only draft or scheduled Reddit posts can be edited.");
 
@@ -545,19 +553,19 @@ export async function createRedditPostAction(formData: FormData) {
   let postId = existingPostId || crypto.randomUUID();
   if (!existingPostId && status === "scheduled") {
     const intentWindow = intent === "publish_now" ? scheduledAt!.slice(0, 16) : scheduledAt;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([creatorId, account.id, asset.id, community.id, title, caption, contentRating, selectedFlair?.flair_id ?? "", intent, intentWindow].join("|")));
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode([creatorId, account.id, asset.id, targetType, community?.id ?? "profile", title, caption, contentRating, selectedFlair?.flair_id ?? "", intent, intentWindow].join("|")));
     postId = `reddit-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
   }
   const eventType = intent === "publish_now" ? "post_now_approved" : intent === "schedule" ? "post_scheduled" : existingPostId ? "draft_updated" : "draft_created";
   if (existingPostId) {
     const update = await creatorPrepare(DB, creatorId, `UPDATE social_posts SET account_id=?,asset_id=?,community_id=?,reddit_flair_id=?,reddit_flair_text=?,title=?,caption=?,content_rating=?,status=?,scheduled_at=?,approved_by=?,approved_at=CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END,error=NULL,claimed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='reddit' AND status IN ('draft','scheduled')`)
-      .bind(account.id, asset.id, community.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
+      .bind(account.id, asset.id, community?.id ?? null, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status, postId).run();
     if (!update.meta?.changes) throw new Error("This Reddit post changed before it could be saved. Refresh and try again.");
-    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })).run();
+    await creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, targetType, communityId: community?.id ?? null, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })).run();
   } else {
     await DB.batch([
-      creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,asset_id,community_id,reddit_flair_id,reddit_flair_text,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, asset.id, community.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
-      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, communityId, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })),
+      creatorPrepare(DB, creatorId, `INSERT INTO social_posts (id,creator_id,platform,account_id,community_id,asset_id,reddit_flair_id,reddit_flair_text,title,caption,content_rating,status,scheduled_at,approved_by,approved_at) VALUES (?,@creator,'reddit',?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='scheduled' THEN CURRENT_TIMESTAMP ELSE NULL END)`).bind(postId, account.id, community?.id ?? null, asset.id, selectedFlair?.flair_id ?? null, selectedFlair?.flair_text ?? null, title, caption, contentRating, status, scheduledAt, status === "scheduled" ? actor : null, status),
+      creatorPrepare(DB, creatorId, "INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,?,?)").bind(crypto.randomUUID(), postId, actor, identity.creator.role, eventType, JSON.stringify({ scheduledAt, targetType, communityId: community?.id ?? null, contentRating, flairId: selectedFlair?.flair_id ?? null, flairText: selectedFlair?.flair_text ?? null, deliveryMode: "reddit_api" })),
     ]);
   }
   revalidatePath("/operations");
