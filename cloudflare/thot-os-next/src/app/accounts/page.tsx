@@ -54,7 +54,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     FROM operational_accounts oa
     LEFT JOIN account_browser_profiles abp ON abp.creator_id=oa.creator_id AND abp.account_id=oa.id
     LEFT JOIN browser_profiles bp ON bp.creator_id=abp.creator_id AND bp.id=abp.profile_id
-    WHERE oa.creator_id=? AND oa.platform='fansly' ORDER BY oa.label LIMIT 1`).bind(creatorId).first<FanslySetup>(),
+    WHERE oa.creator_id=? AND oa.platform='fansly' AND oa.is_active=1 ORDER BY oa.label LIMIT 1`).bind(creatorId).first<FanslySetup>(),
     cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.publishing_authority,oa.external_identity_confirmed_at,oa.is_active,
       pc.status AS provider_status,pc.display_name,pc.last_error AS provider_error,state.last_analytics_sync_at
       FROM operational_accounts oa
@@ -62,7 +62,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       LEFT JOIN instagram_sync_state state ON state.creator_id=oa.creator_id
       WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label`).bind(creatorId).all<InstagramSetup>(),
   ]);
-  const instagram = instagramAccounts.results.find((account) => account.is_active) ?? instagramAccounts.results[0];
+  const instagram = instagramAccounts.results.find((account) => account.is_active);
   const hasAssignedProfile = Boolean(setup?.profile_label && setup.profile_status !== "revoked");
 
   return <AppShell active="Accounts & connections"><PageHeader title="Accounts & connections" subtitle={`Set up creator-scoped platform access for ${context.creator.creator_name}. Platform passwords and 2FA stay in the native platform.`} />

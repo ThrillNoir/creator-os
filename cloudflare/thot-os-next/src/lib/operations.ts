@@ -225,7 +225,7 @@ export async function getVaultOperations(creatorId: string) {
   const base = await getPlatformOperations(creatorId, "fansly");
   const { DB } = cloudflareEnv();
   const [accounts, jobs, pairing, assets] = await Promise.all([
-    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform='fansly' ORDER BY label").bind(creatorId).all<OperationalAccount>(),
+    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform='fansly' AND is_active=1 ORDER BY label").bind(creatorId).all<OperationalAccount>(),
     DB.prepare(`
       SELECT j.id,j.platform,j.status,j.asset_id,a.basename,a.bytes,j.error,j.receipt,j.approved_at,j.claimed_at,j.completed_at,j.created_at
       FROM vault_upload_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
