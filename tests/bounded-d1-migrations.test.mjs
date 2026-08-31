@@ -31,13 +31,13 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger preserves applied 0054 and pending 0055", () => {
+test("reviewed staging ledger preserves historical duplicate prefixes and records applied 0055", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 56);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0055_provider_connection_account_scope.sql"]);
+  assert.equal(ledger.migrations.length, 57);
+  assert.equal(ledger.pendingMigrations, undefined);
   assert.deepEqual(inventory.at(-2), {
     number: 54,
     name: "0054_native_video_intake.sql",

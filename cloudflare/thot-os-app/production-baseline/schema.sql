@@ -59,6 +59,7 @@
 -- 0052_creator_scoped_r2_readiness.sql 18f08784500f20f579af07bce92027fc6ef1553a15f707de1a5bacd3bcf49939
 -- 0053_native_asset_authority.sql 5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7
 -- 0054_native_video_intake.sql f2cde4f908b498e0c6ed6f0e34b0d4f70b3db8d5fe54b5608d86d930b176be27
+-- 0055_provider_connection_account_scope.sql 540847321a5478b2cebb8c200446bc5554c9908de125b3d546d5861e288d3152
 
 PRAGMA foreign_keys = ON;
 
@@ -119,6 +120,7 @@ INSERT INTO d1_migrations (id, name) VALUES (53, '0051_r2_source_media_hardening
 INSERT INTO d1_migrations (id, name) VALUES (54, '0052_creator_scoped_r2_readiness.sql');
 INSERT INTO d1_migrations (id, name) VALUES (55, '0053_native_asset_authority.sql');
 INSERT INTO d1_migrations (id, name) VALUES (56, '0054_native_video_intake.sql');
+INSERT INTO d1_migrations (id, name) VALUES (57, '0055_provider_connection_account_scope.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -1382,18 +1384,21 @@ CREATE TABLE provider_connection_attempts (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
   service TEXT NOT NULL,
+  account_id TEXT REFERENCES operational_accounts(id) ON DELETE CASCADE,
   state_hash TEXT NOT NULL UNIQUE,
   connected_account_id TEXT,
   status TEXT NOT NULL CHECK(status IN ('pending','completed','failed','expired')),
   expires_at TEXT NOT NULL,
   error TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(account_id, creator_id) REFERENCES operational_accounts(id, creator_id) ON DELETE CASCADE
 );
 
 CREATE TABLE provider_connections (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
   service TEXT NOT NULL,
+  account_id TEXT NOT NULL REFERENCES operational_accounts(id) ON DELETE CASCADE,
   connected_account_id TEXT NOT NULL,
   composio_user_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('active','expired','pending','failed')),
@@ -1402,7 +1407,8 @@ CREATE TABLE provider_connections (
   last_error TEXT,
   identity_confirmed_at TEXT,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(creator_id, service)
+  PRIMARY KEY(creator_id, service, account_id),
+  FOREIGN KEY(account_id, creator_id) REFERENCES operational_accounts(id, creator_id) ON DELETE CASCADE
 );
 
 CREATE TABLE public_link_conversion_receipts (
@@ -2017,7 +2023,10 @@ CREATE INDEX premium_message_drafts_creator_thread
   ON premium_message_drafts(creator_id,thread_id,created_at DESC);
 
 CREATE INDEX provider_connection_attempts_pending
-  ON provider_connection_attempts(creator_id, service, status, expires_at);
+  ON provider_connection_attempts(creator_id, service, account_id, status, expires_at);
+
+CREATE INDEX provider_connections_account_lookup
+  ON provider_connections(creator_id, service, account_id, status);
 
 CREATE INDEX reddit_bridge_tokens_lookup
   ON reddit_bridge_tokens(token_hash,status,expires_at);
@@ -2879,6 +2888,54 @@ BEFORE UPDATE OF creator_id,account_id,profile_id,platform ON onlyfans_upload_ta
 WHEN NOT EXISTS (SELECT 1 FROM operational_accounts WHERE id=NEW.account_id AND creator_id=NEW.creator_id AND platform='onlyfans')
   OR NOT EXISTS (SELECT 1 FROM account_browser_profiles WHERE creator_id=NEW.creator_id AND account_id=NEW.account_id AND profile_id=NEW.profile_id AND platform='onlyfans')
 BEGIN SELECT RAISE(ABORT, 'onlyfans_target_scope_mismatch'); END;
+
+CREATE TRIGGER provider_connection_attempts_account_scope_insert
+BEFORE INSERT ON provider_connection_attempts
+WHEN NEW.account_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM operational_accounts account
+  WHERE account.id=NEW.account_id
+    AND account.creator_id=NEW.creator_id
+    AND account.platform=NEW.service
+)
+BEGIN
+  SELECT RAISE(ABORT, 'provider_connection_attempt_account_scope_invalid');
+END;
+
+CREATE TRIGGER provider_connection_attempts_account_scope_update
+BEFORE UPDATE OF creator_id, service, account_id ON provider_connection_attempts
+WHEN NEW.account_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM operational_accounts account
+  WHERE account.id=NEW.account_id
+    AND account.creator_id=NEW.creator_id
+    AND account.platform=NEW.service
+)
+BEGIN
+  SELECT RAISE(ABORT, 'provider_connection_attempt_account_scope_invalid');
+END;
+
+CREATE TRIGGER provider_connections_account_scope_insert
+BEFORE INSERT ON provider_connections
+WHEN NOT EXISTS (
+  SELECT 1 FROM operational_accounts account
+  WHERE account.id=NEW.account_id
+    AND account.creator_id=NEW.creator_id
+    AND account.platform=NEW.service
+)
+BEGIN
+  SELECT RAISE(ABORT, 'provider_connection_account_scope_invalid');
+END;
+
+CREATE TRIGGER provider_connections_account_scope_update
+BEFORE UPDATE OF creator_id, service, account_id ON provider_connections
+WHEN NOT EXISTS (
+  SELECT 1 FROM operational_accounts account
+  WHERE account.id=NEW.account_id
+    AND account.creator_id=NEW.creator_id
+    AND account.platform=NEW.service
+)
+BEGIN
+  SELECT RAISE(ABORT, 'provider_connection_account_scope_invalid');
+END;
 
 CREATE TRIGGER public_profile_version_approval_transition
 BEFORE UPDATE OF status, approved_by, approved_at ON creator_public_profile_versions

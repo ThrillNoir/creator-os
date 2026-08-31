@@ -37,7 +37,8 @@
       "0051_r2_source_media_hardening.sql",
       "0052_creator_scoped_r2_readiness.sql",
       "0053_native_asset_authority.sql",
-      "0054_native_video_intake.sql"
+      "0054_native_video_intake.sql",
+      "0055_provider_connection_account_scope.sql"
     ]
   },
   "grants": [
