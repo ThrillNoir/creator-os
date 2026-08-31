@@ -31,25 +31,31 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger preserves historical duplicate prefixes and records applied 0054", () => {
+test("reviewed staging ledger preserves applied 0054 and pending 0055", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
   assert.equal(ledger.migrations.length, 56);
-  assert.equal(ledger.pendingMigrations, undefined);
-  assert.deepEqual(inventory.at(-1), {
+  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0055_provider_connection_account_scope.sql"]);
+  assert.deepEqual(inventory.at(-2), {
     number: 54,
     name: "0054_native_video_intake.sql",
     sha256: "f2cde4f908b498e0c6ed6f0e34b0d4f70b3db8d5fe54b5608d86d930b176be27",
     ledgerIndex: 56,
+  });
+  assert.deepEqual(inventory.at(-1), {
+    number: 55,
+    name: "0055_provider_connection_account_scope.sql",
+    sha256: "540847321a5478b2cebb8c200446bc5554c9908de125b3d546d5861e288d3152",
+    ledgerIndex: 57,
   });
   assert.deepEqual(inventory.slice(43, 50).map((entry) => entry.name), [
     "0044_onlyfans_upload_bridge.sql", "0045_onlyfans_authorized_delivery.sql", "0046_onlyfans_sequential_batches.sql", "0047_onlyfans_supervised_delivery.sql", "0048_onlyfans_grouped_message_delivery.sql", "0044_creator_r2_library.sql", "0045_finished_media_uploads.sql",
   ]);
   const plan = buildBoundedPlan({ environment: "staging", releaseId: "native-video-intake", from: "0054_native_video_intake.sql", through: "0054_native_video_intake.sql", inventory, remoteApplied: inventory.slice(0, 55).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git });
   assert.deepEqual(plan.execution.map((entry) => entry.name), ["0054_native_video_intake.sql"]);
-  assert.equal(plan.excludedPending.length, 0);
+  assert.deepEqual(plan.excludedPending.map(({ name }) => name), ["0055_provider_connection_account_scope.sql"]);
   assert.throws(() => buildBoundedPlan({ environment: "staging", releaseId: "ambiguous", from: "0044", through: "0049", inventory, remoteApplied: inventory.slice(0, 43).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git }), /ambiguous/);
 });
 

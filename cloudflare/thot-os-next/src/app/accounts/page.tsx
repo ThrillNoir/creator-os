@@ -27,6 +27,7 @@ type InstagramSetup = {
   display_name: string | null;
   provider_error: string | null;
   last_analytics_sync_at: string | null;
+  is_active: number;
 };
 
 function formatDate(value: string | null) {
@@ -47,20 +48,21 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const creatorId = context.creator.creator_id;
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
   const canConnectProviders = roleCan(context.creator.role, "mutate");
-  const [setup, instagram] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
+  const [setup, instagramAccounts] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
     bp.label AS profile_label,bp.status AS profile_status,abp.verified_at AS profile_verified_at,
     (SELECT MAX(bc.last_seen_at) FROM bridge_credentials bc WHERE bc.creator_id=oa.creator_id AND bc.account_id=oa.id AND bc.status='active') AS bridge_last_seen_at
     FROM operational_accounts oa
     LEFT JOIN account_browser_profiles abp ON abp.creator_id=oa.creator_id AND abp.account_id=oa.id
     LEFT JOIN browser_profiles bp ON bp.creator_id=abp.creator_id AND bp.id=abp.profile_id
     WHERE oa.creator_id=? AND oa.platform='fansly' ORDER BY oa.label LIMIT 1`).bind(creatorId).first<FanslySetup>(),
-    cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.publishing_authority,oa.external_identity_confirmed_at,
+    cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.publishing_authority,oa.external_identity_confirmed_at,oa.is_active,
       pc.status AS provider_status,pc.display_name,pc.last_error AS provider_error,state.last_analytics_sync_at
       FROM operational_accounts oa
-      LEFT JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram'
+      LEFT JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram' AND pc.account_id=oa.id
       LEFT JOIN instagram_sync_state state ON state.creator_id=oa.creator_id
-      WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label LIMIT 1`).bind(creatorId).first<InstagramSetup>(),
+      WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label`).bind(creatorId).all<InstagramSetup>(),
   ]);
+  const instagram = instagramAccounts.results.find((account) => account.is_active) ?? instagramAccounts.results[0];
   const hasAssignedProfile = Boolean(setup?.profile_label && setup.profile_status !== "revoked");
 
   return <AppShell active="Accounts & connections"><PageHeader title="Accounts & connections" subtitle={`Set up creator-scoped platform access for ${context.creator.creator_name}. Platform passwords and 2FA stay in the native platform.`} />
@@ -69,11 +71,12 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     {query.saved === "fansly_identity_confirmed" && <div className="success">Fansly identity confirmed. You can now pair the assigned bridge and open the vault.</div>}
     <section className="panel connection-setup">
       <div className="section-heading"><div><span className="eyebrow">INSTAGRAM</span><h2>Official Instagram connection</h2><p>Connect the creator&apos;s professional Instagram account through the approved provider. Connecting verifies the visible account identity; it does not create, schedule or publish content.</p></div><span>{instagramStatus(instagram)}</span></div>
-      {!instagram && <div className="empty"><b>Instagram account setup is required.</b><span>This creator does not yet have an Instagram account record. Add it during creator onboarding before starting OAuth.</span></div>}
+      {!instagramAccounts.results.length && <div className="empty"><b>Instagram account setup is required.</b><span>This creator does not yet have an Instagram account record. Add it during creator onboarding before starting OAuth.</span></div>}
+      {instagramAccounts.results.length > 1 && <div className="identity-list">{instagramAccounts.results.map((account) => <article className="identity-row" key={account.id}><div><strong>{account.label}</strong><small>{account.handle || "No handle"} · {instagramStatus(account)}{account.is_active ? "" : " · Retired"}</small></div>{canConnectProviders && account.is_active ? <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">{instagramStatus(account) === "Connected" ? "Reconnect" : "Connect"}</button></form> : null}</article>)}</div>}
       {instagram && <div className="fansly-workflow">
         <div className="connection-details"><div><small>Configured account</small><strong>{instagram.label}</strong><span>{instagram.handle || "Handle confirmed during connection"}</span></div><div><small>Provider identity</small><strong>{instagram.display_name || "Not verified"}</strong><span>{instagram.provider_status || "Connection not started"}</span></div><div><small>Latest analytics sync</small><strong>{formatDate(instagram.last_analytics_sync_at)}</strong><span>{instagram.publishing_authority === "confirmed" ? "Publishing authority confirmed" : "Publishing remains restricted"}</span></div></div>
         {instagram.provider_error && <div className="connection-banner attention"><div><strong>Connection needs attention</strong><span>{instagram.provider_error}</span></div></div>}
-        {canConnectProviders ? <div className="connection-steps"><section><span>1</span><div><h3>{instagramStatus(instagram) === "Connected" ? "Reconnect the official account" : "Connect the official account"}</h3><p>OAuth opens the provider&apos;s native sign-in page. Complete credentials and 2FA there only. THOT OS verifies that the returned Instagram identity belongs to this creator workspace before enabling data sync.</p><form action={startInstagramReconnectAction}><button className="primary" type="submit">{instagramStatus(instagram) === "Connected" ? "Reconnect Instagram" : "Connect Instagram"}</button></form></div></section></div> : <div className="empty"><b>Instagram is {instagramStatus(instagram).toLowerCase()}.</b><span>You have read-only access to this creator workspace.</span></div>}
+        {canConnectProviders && instagram.is_active ? <div className="connection-steps"><section><span>1</span><div><h3>{instagramStatus(instagram) === "Connected" ? "Reconnect the official account" : "Connect the official account"}</h3><p>OAuth opens the provider&apos;s native sign-in page. Complete credentials and 2FA there only. THOT OS verifies that the returned Instagram identity belongs to this creator workspace before enabling data sync.</p><form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={instagram.id} /><button className="primary" type="submit">{instagramStatus(instagram) === "Connected" ? "Reconnect Instagram" : "Connect Instagram"}</button></form></div></section></div> : <div className="empty"><b>Instagram is {instagramStatus(instagram).toLowerCase()}.</b><span>You have read-only access to this creator workspace.</span></div>}
         <div className="form-actions"><Link className="secondary-action" href="/operations?platform=instagram&section=analytics">Open read-only analytics</Link></div>
       </div>}
     </section>

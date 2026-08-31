@@ -14,10 +14,11 @@ export async function GET(request: Request) {
     const response = await fetchInternalService(env, "instagram", "instagram.connection.manage", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/complete", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, creatorId: context.creator.creator_id }),
     });
-    const result = await response.json() as { ok?: boolean; error?: string };
+    const result = await response.json() as { ok?: boolean; error?: string; accountId?: string };
     if (!response.ok || !result.ok) throw new Error(result.error || "Instagram identity could not be verified.");
     await identityAuditStatement(env.DB, humanAuditActor(context), "instagram_connection_verified", "instagram", { providerCallback: true }).run();
     destination.searchParams.set("connected", "instagram");
+    if (result.accountId) destination.searchParams.set("accountId", result.accountId);
   } catch (error) {
     destination.searchParams.set("connectionError", error instanceof Error ? error.message.slice(0, 300) : "Instagram connection failed.");
   }

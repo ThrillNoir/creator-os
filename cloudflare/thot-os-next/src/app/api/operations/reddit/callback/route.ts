@@ -16,10 +16,11 @@ export async function GET(request: Request) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ state, creatorId: context.creator.creator_id }),
     });
-    const result = await response.json() as { ok?: boolean; error?: string };
+    const result = await response.json() as { ok?: boolean; error?: string; accountId?: string };
     if (!response.ok || !result.ok) throw new Error(result.error || "Reddit identity could not be verified.");
     await identityAuditStatement(env.DB, humanAuditActor(context), "reddit_connection_verified", "reddit", { providerCallback: true }).run();
     destination.searchParams.set("connected", "reddit");
+    if (result.accountId) destination.searchParams.set("accountId", result.accountId);
   } catch (error) {
     destination.searchParams.set("connectionError", error instanceof Error ? error.message.slice(0, 300) : "Reddit connection failed.");
   }

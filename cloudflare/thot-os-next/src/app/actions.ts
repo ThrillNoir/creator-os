@@ -492,6 +492,7 @@ export async function createRedditPostAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const existingPostId = String(formData.get("postId") ?? "").trim();
+  const requestedAccountId = String(formData.get("accountId") ?? "").trim();
   const assetId = String(formData.get("assetId") ?? "");
   const communityId = Number(formData.get("communityId"));
   const flairId = String(formData.get("flairId") ?? "").trim();
@@ -521,7 +522,7 @@ export async function createRedditPostAction(formData: FormData) {
     creatorPrepare(DB, creatorId, `SELECT a.id,a.extension,c.safety FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id LEFT JOIN asset_classifications c ON c.asset_id=a.id WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND d.destination='reddit'`).bind(assetId).first<{ id: string; extension: string; safety: "sfw" | "nsfw" | null }>(),
     creatorPrepare(DB, creatorId, "SELECT id,name,allows_nsfw,status,last_verified_at,flair_required,flairs_checked_at FROM reddit_communities WHERE id=? AND creator_id=@creator").bind(communityId).first<{ id: number; name: string; allows_nsfw: number; status: string; last_verified_at: string; flair_required: number; flairs_checked_at: string | null }>(),
     flairId ? creatorPrepare(DB, creatorId, "SELECT flair_id,flair_text,fetched_at FROM reddit_community_flairs WHERE creator_id=@creator AND community_id=? AND flair_id=? AND active=1").bind(communityId, flairId).first<{ flair_id: string; flair_text: string; fetched_at: string }>() : Promise.resolve(null),
-    creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority FROM operational_accounts WHERE creator_id=@creator AND platform='reddit' ORDER BY label LIMIT 1").first<{ id: string; connection_status: string; publishing_authority: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority,is_active FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(requestedAccountId).first<{ id: string; connection_status: string; publishing_authority: string; is_active: number }>(),
     existingPostId ? creatorPrepare(DB, creatorId, "SELECT id,status FROM social_posts WHERE id=? AND creator_id=@creator AND platform='reddit'").bind(existingPostId).first<{ id: string; status: string }>() : Promise.resolve(null),
   ]);
   if (!asset) throw new Error("That asset is no longer available for Reddit.");
@@ -535,7 +536,7 @@ export async function createRedditPostAction(formData: FormData) {
   if (contentRating === "nsfw" && !community.allows_nsfw) throw new Error("That subreddit is not recorded as allowing NSFW posts.");
   const rulesCheckedAt = new Date(`${community.last_verified_at}T00:00:00Z`).getTime();
   if (!Number.isFinite(rulesCheckedAt) || Date.now() - rulesCheckedAt > 30 * 24 * 60 * 60 * 1000) throw new Error("Recheck this subreddit’s rules before scheduling a post.");
-  if (!account) throw new Error("Add the Reddit account before creating a post.");
+  if (!account || !account.is_active) throw new Error("Select an active Reddit account before creating a post.");
   if (intent !== "draft" && (account.connection_status !== "connected" || account.publishing_authority !== "confirmed")) throw new Error("Reconnect and verify Reddit before approving API delivery.");
   if (existingPostId && (!existingPost || !["draft", "scheduled"].includes(existingPost.status))) throw new Error("Only draft or scheduled Reddit posts can be edited.");
 
@@ -565,7 +566,7 @@ export async function createRedditPostAction(formData: FormData) {
       const response = await fetchInternalService(env, "reddit", "reddit.publish.execute", env.REDDIT_SCHEDULER, "https://reddit-scheduler/posts/reddit/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ postId, creatorId }),
+        body: JSON.stringify({ postId, creatorId, accountId: account.id }),
       });
       const result = await response.json() as { ok?: boolean; post?: { status?: string } };
       if (result.post?.status === "published") redirect("/operations?platform=reddit&section=past&published=now");
@@ -688,14 +689,17 @@ export async function reviewFailedRedditPostAction(formData: FormData) {
   redirect("/operations?platform=reddit&section=past&reviewed=1");
 }
 
-export async function startRedditReconnectAction() {
+export async function startRedditReconnectAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
+  const accountId = String(formData.get("accountId") ?? "").trim();
+  const account = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='reddit' AND is_active=1").bind(accountId).first<{ id: string }>();
+  if (!account) throw new Error("Select an active Reddit account to reconnect.");
   const callbackUrl = new URL("/api/operations/reddit/callback", env.APP_BASE_URL).toString();
   const response = await fetchInternalService(env, "reddit", "reddit.connection.manage", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id }),
+    body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id, accountId: account.id }),
   });
   const result = await response.json() as { ok?: boolean; redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Reddit reconnection could not be started.");
@@ -707,6 +711,7 @@ export async function createInstagramPostAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const existingPostId = String(formData.get("postId") ?? "").trim();
+  const requestedAccountId = String(formData.get("accountId") ?? "").trim();
   const assetId = String(formData.get("assetId") ?? "").trim();
   const caption = String(formData.get("caption") ?? "").trim().slice(0, 2200);
   const intentValue = String(formData.get("intent") ?? "draft");
@@ -729,14 +734,14 @@ export async function createInstagramPostAction(formData: FormData) {
   const { DB } = env;
   const [asset, account, existingPost] = await Promise.all([
     creatorPrepare(DB, creatorId, `SELECT a.id,a.extension,c.safety FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id LEFT JOIN asset_classifications c ON c.asset_id=a.id WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND d.destination='instagram'`).bind(assetId).first<{ id: string; extension: string; safety: "sfw" | "nsfw" | null }>(),
-    creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority FROM operational_accounts WHERE creator_id=@creator AND platform='instagram' ORDER BY label LIMIT 1").first<{ id: string; connection_status: string; publishing_authority: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT id,connection_status,publishing_authority,is_active FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='instagram'").bind(requestedAccountId).first<{ id: string; connection_status: string; publishing_authority: string; is_active: number }>(),
     existingPostId ? creatorPrepare(DB, creatorId, "SELECT id,status FROM social_posts WHERE id=? AND creator_id=@creator AND platform='instagram'").bind(existingPostId).first<{ id: string; status: string }>() : Promise.resolve(null),
   ]);
   if (!asset) throw new Error("That asset is no longer available for Instagram.");
   if (asset.safety !== "sfw") throw new Error("Instagram publishing requires an asset classified SFW.");
   const extension = asset.extension.toLowerCase().replace(/^\./, "");
   if (!["jpg", "jpeg", "mp4", "mov"].includes(extension)) throw new Error("Instagram supports JPEG, MP4 or MOV in this workflow.");
-  if (!account) throw new Error("Add the Instagram account before creating a post.");
+  if (!account || !account.is_active) throw new Error("Select an active Instagram account before creating a post.");
   if (intent !== "draft" && (account.connection_status !== "connected" || account.publishing_authority !== "confirmed")) throw new Error("Reconnect and verify Instagram before approving delivery.");
   if (existingPostId && (!existingPost || !["draft", "scheduled"].includes(existingPost.status))) throw new Error("Only draft or scheduled Instagram posts can be edited.");
 
@@ -763,7 +768,7 @@ export async function createInstagramPostAction(formData: FormData) {
   if (intent === "publish_now") {
     try {
       const response = await fetchInternalService(env, "instagram", "instagram.publish.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/posts/instagram/publish", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ postId, creatorId }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ postId, creatorId, accountId: account.id }),
       });
       const result = await response.json() as { post?: { status?: string } };
       if (result.post?.status === "published") redirect("/operations?platform=instagram&section=past&published=now");
@@ -801,12 +806,15 @@ export async function reviewFailedInstagramPostAction(formData: FormData) {
   redirect("/operations?platform=instagram&section=past&reviewed=1");
 }
 
-export async function startInstagramReconnectAction() {
+export async function startInstagramReconnectAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
+  const accountId = String(formData.get("accountId") ?? "").trim();
+  const account = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='instagram' AND is_active=1").bind(accountId).first<{ id: string }>();
+  if (!account) throw new Error("Select an active Instagram account to reconnect.");
   const callbackUrl = new URL("/api/operations/instagram/callback", env.APP_BASE_URL).toString();
   const response = await fetchInternalService(env, "instagram", "instagram.connection.manage", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/connections/instagram/start", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callbackUrl, creatorId: identity.creator.creator_id, accountId: account.id }),
   });
   const result = await response.json() as { redirectUrl?: string; error?: string };
   if (!response.ok || !result.redirectUrl) throw new Error(result.error || "Instagram reconnection could not be started.");

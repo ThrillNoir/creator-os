@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { humanAuditActor } from "@/lib/audit-identity";
 import { requireCreatorContext } from "@/lib/identity";
+import { redirect } from "next/navigation";
 
 const sections = new Set(["identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me"]);
 const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "telegram", "other"]);
@@ -63,6 +64,26 @@ export async function addOperationalProfileAction(form: FormData) {
   await DB.prepare(`INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,account_kind,login_email,profile_url,account_purpose,is_active,connection_method,creator_visible,administrator_notes,capabilities_json,private_upload_destination)
     VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, value(form, "username", 120), type, email(form, "loginEmail"), value(form, "profileUrl", 500), value(form, "purpose", 400), form.get("isActive") === "yes" ? 1 : 0, value(form, "connectionMethod", 80), form.get("creatorVisible") === "yes" ? 1 : 0, value(form, "administratorNotes", 3000), "[]", value(form, "privateUploadDestination", 500)).run();
   await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, false); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: form.get("creatorVisible") === "yes" }); revalidate();
+}
+
+export async function retireOperationalAccountAction(form: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  if (identity.creator.role !== "agency_admin") throw new Error("Only agency administrators can retire accounts.");
+  const creatorId = identity.creator.creator_id;
+  const accountId = value(form, "accountId", 160);
+  if (!accountId) throw new Error("Choose an account to retire.");
+  const DB = cloudflareEnv().DB;
+  const account = await DB.prepare("SELECT id,label FROM operational_accounts WHERE id=? AND creator_id=? AND is_active=1").bind(accountId, creatorId).first<{ id: string; label: string }>();
+  if (!account) throw new Error("That account is already inactive or outside this creator workspace.");
+  const pending = await DB.prepare("SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND account_id=? AND status IN ('draft','scheduled','publishing')").bind(creatorId, accountId).first<{ count: number }>();
+  if (Number(pending?.count ?? 0) > 0) throw new Error("Retire or cancel this account’s draft, scheduled, and publishing posts first.");
+  await DB.batch([
+    DB.prepare("UPDATE operational_accounts SET is_active=0,publishing_authority='blocked',connection_status='not_connected',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND is_active=1").bind(accountId, creatorId),
+    DB.prepare("UPDATE provider_connections SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_id=?").bind(creatorId, accountId),
+  ]);
+  await audit(creatorId, humanAuditActor(identity), "operational_account_retired", accountId, { label: account.label, reversible: true });
+  revalidate();
+  redirect("/onboarding?saved=account_retired");
 }
 
 export async function saveChromeAccessAction(form: FormData) {

@@ -12,6 +12,7 @@ export type OperationPlatform = (typeof operationPlatforms)[number]["id"];
 
 export interface OperationalAccount {
   id: string;
+  is_active: number;
   creator_id: string;
   platform: OperationPlatform;
   label: string;
@@ -28,6 +29,7 @@ export interface OperationalAccount {
 
 export interface SocialPost {
   id: string;
+  account_id: string | null;
   asset_id: string | null;
   community_id: number | null;
   reddit_flair_id: string | null;
@@ -96,7 +98,7 @@ export interface VaultUploadJob {
 
 export interface RedditSchedulerStatus {
   ok: boolean;
-  connection?: { status: string; display_name: string; identity_confirmed_at: string | null; last_error: string | null; updated_at: string } | null;
+  connections?: { account_id: string; status: string; display_name: string; identity_confirmed_at: string | null; last_error: string | null; updated_at: string }[];
   lastRun?: { status: string; started_at: string; completed_at: string | null; claimed_count: number; published_count: number; failed_count: number; error: string | null } | null;
   due?: number;
 }
@@ -158,7 +160,7 @@ export async function getOperationsOverview(creatorId: string) {
     DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? ORDER BY platform,label").bind(creatorId).all<OperationalAccount>(),
     DB.prepare(`SELECT destination,COUNT(*) AS assets FROM asset_destinations d JOIN assets a ON a.id=d.asset_id WHERE d.creator_id=? AND a.source_available=1 GROUP BY destination`).bind(creatorId).all<EligibleCount>(),
     DB.prepare(`SELECT platform,SUM(CASE WHEN status IN ('draft','scheduled','publishing') THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN status IN ('published','failed') THEN 1 ELSE 0 END) AS past FROM social_posts WHERE creator_id=? GROUP BY platform`).bind(creatorId).all<PostCount>(),
-    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? ORDER BY COALESCE(p.published_at,p.scheduled_at,p.created_at) DESC LIMIT 8`).bind(creatorId).all<SocialPost>(),
+    DB.prepare(`SELECT p.id,p.account_id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? ORDER BY COALESCE(p.published_at,p.scheduled_at,p.created_at) DESC LIMIT 8`).bind(creatorId).all<SocialPost>(),
   ]);
   const accounts = new Map(accountResult.results.map((account) => [account.platform, account]));
   const eligible = new Map(eligibleResult.results.map((row) => [row.destination, row.assets]));
@@ -170,10 +172,10 @@ export async function getOperationsOverview(creatorId: string) {
     upcoming: postCounts.get(platform.id)?.upcoming ?? 0,
     past: postCounts.get(platform.id)?.past ?? 0,
   }));
-  return { platforms, activity: activityResult.results, warnings: accountResult.results.filter((account) => account.warning_level !== "none") };
+  return { platforms, accounts: accountResult.results, activity: activityResult.results, warnings: accountResult.results.filter((account) => account.warning_level !== "none") };
 }
 
-export async function getPlatformOperations(creatorId: string, platform: OperationPlatform) {
+export async function getPlatformOperations(creatorId: string, platform: OperationPlatform, accountId?: string) {
   const definition = operationPlatforms.find((item) => item.id === platform)!;
   const { DB } = cloudflareEnv();
   const assetQuery = definition.destination ? DB.prepare(`
@@ -185,14 +187,16 @@ export async function getPlatformOperations(creatorId: string, platform: Operati
     WHERE a.creator_id=? AND a.source_available=1 AND d.destination=?
     ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120
   `).bind(creatorId, definition.destination).all<AssetRow>() : Promise.resolve({ results: [] as AssetRow[], success: true, meta: {} });
-  const [account, posts, assets, communities, flairs] = await Promise.all([
-    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform=? ORDER BY label LIMIT 1").bind(creatorId, platform).first<OperationalAccount>(),
-    DB.prepare(`SELECT p.id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? AND p.platform=? ORDER BY COALESCE(p.scheduled_at,p.published_at,p.created_at) DESC`).bind(creatorId, platform).all<SocialPost>(),
+  const [accountResult, posts, assets, communities, flairs] = await Promise.all([
+    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform=? ORDER BY label").bind(creatorId, platform).all<OperationalAccount>(),
+    DB.prepare(`SELECT p.id,p.account_id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? AND p.platform=? ORDER BY COALESCE(p.scheduled_at,p.published_at,p.created_at) DESC`).bind(creatorId, platform).all<SocialPost>(),
     assetQuery,
     platform === "reddit" ? DB.prepare("SELECT * FROM reddit_communities WHERE creator_id=? ORDER BY status,name").bind(creatorId).all<RedditCommunity>() : Promise.resolve({ results: [] as RedditCommunity[], success: true, meta: {} }),
     platform === "reddit" ? DB.prepare("SELECT creator_id,community_id,flair_id,flair_text,text_editable,fetched_at FROM reddit_community_flairs WHERE creator_id=? AND active=1 ORDER BY community_id,flair_text").bind(creatorId).all<RedditCommunityFlair>() : Promise.resolve({ results: [] as RedditCommunityFlair[], success: true, meta: {} }),
   ]);
-  return { definition, account, posts: posts.results, assets: assets.results, communities: communities.results, flairs: flairs.results };
+  const accounts = accountResult.results;
+  const account = (accountId ? accounts.find((item) => item.id === accountId) : accounts.find((item) => item.is_active === 1) ?? accounts[0]) ?? null;
+  return { definition, account, accounts, posts: posts.results, assets: assets.results, communities: communities.results, flairs: flairs.results };
 }
 
 export async function getInstagramSchedulerStatus(creatorId: string): Promise<PlatformSchedulerStatus | null> {

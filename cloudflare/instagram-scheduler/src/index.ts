@@ -342,11 +342,12 @@ async function approvedInstagramMedia(env: Env, post: DuePost) {
 }
 
 async function currentInstagramConnection(env: Env, creatorId: string) {
-  const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id,mc.id AS messaging_connection_id
-    FROM provider_connections pc JOIN operational_accounts oa ON oa.creator_id=pc.creator_id AND oa.platform='instagram'
-    JOIN messaging_connections mc ON mc.creator_id=pc.creator_id AND mc.platform='instagram'
-    WHERE pc.creator_id=? AND pc.service='instagram' ORDER BY oa.label LIMIT 1`)
-    .bind(creatorId).first<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string; messaging_connection_id: string }>();
+  const rows = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id,mc.id AS messaging_connection_id
+    FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.creator_id=pc.creator_id AND oa.platform='instagram' AND oa.is_active=1
+    JOIN messaging_connections mc ON mc.creator_id=pc.creator_id AND mc.platform='instagram' AND mc.account_id=oa.id
+    WHERE pc.creator_id=? AND pc.service='instagram'`).bind(creatorId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string; messaging_connection_id: string }>();
+  if (rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connected accounts; select an account before syncing messages." : "Instagram is not connected.");
+  const connection = rows.results[0];
   if (!connection || connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
   return connection;
 }
@@ -355,19 +356,19 @@ async function currentInstagramConnection(env: Env, creatorId: string) {
 // Keeping this lookup separate means a metric refresh cannot require or touch
 // a message subscription or message connection.
 async function currentInstagramAnalyticsConnection(env: Env, creatorId: string) {
-  const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
-    FROM provider_connections pc JOIN operational_accounts oa ON oa.creator_id=pc.creator_id AND oa.platform='instagram'
-    WHERE pc.creator_id=? AND pc.service='instagram' ORDER BY oa.label LIMIT 1`)
-    .bind(creatorId).first<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
-  if (!connection || connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
+  const rows = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
+    FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.creator_id=pc.creator_id AND oa.platform='instagram' AND oa.is_active=1
+    WHERE pc.creator_id=? AND pc.service='instagram'`).bind(creatorId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
+  if (rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connected accounts; select an account before collecting analytics." : "Instagram is not connected.");
+  const connection = rows.results[0];
+  if (connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
   return connection;
 }
 
 async function currentInstagramPublishConnection(env: Env, post: DuePost) {
   const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
-    FROM operational_accounts oa JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram'
-    WHERE oa.creator_id=? AND oa.id=? AND oa.id=(SELECT canonical.id FROM operational_accounts canonical WHERE canonical.creator_id=oa.creator_id AND canonical.platform='instagram' ORDER BY canonical.label LIMIT 1)
-      AND oa.platform='instagram' AND oa.connection_status='connected'
+    FROM operational_accounts oa JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram' AND pc.account_id=oa.id
+    WHERE oa.creator_id=? AND oa.id=? AND oa.platform='instagram' AND oa.is_active=1 AND oa.connection_status='connected'
       AND oa.external_identity_confirmed_at IS NOT NULL AND pc.status='active' AND pc.identity_confirmed_at IS NOT NULL`)
     .bind(post.creator_id, post.account_id).first<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
   if (!connection || !connection.external_account_id) throw new Error("Instagram is not connected and verified for this post account.");
@@ -895,9 +896,9 @@ async function storedHumanActorRole(env: Env, creatorId: string, actor: string) 
 }
 
 async function startConnection(request: Request, env: Env) {
-  const input = await request.json<{ callbackUrl?: string; creatorId?: string }>();
-  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
-  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1").bind(input.creatorId).first();
+  const input = await request.json<{ callbackUrl?: string; creatorId?: string; accountId?: string }>();
+  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.accountId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
+  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE id=? AND creator_id=? AND platform='instagram' AND is_active=1").bind(input.accountId, input.creatorId).first();
   if (!account) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   const state = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const callback = new URL(input.callbackUrl);
@@ -906,43 +907,46 @@ async function startConnection(request: Request, env: Env) {
     `${COMPOSIO_V3}/connected_accounts/link`, env.COMPOSIO_API_KEY,
     { method: "POST", body: JSON.stringify({ auth_config_id: env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID, user_id: `creator-os:${input.creatorId}:service:instagram`, alias: `${input.creatorId}-instagram-${Date.now().toString(36)}`, callback_url: callback.toString() }) },
   );
-  await env.DB.prepare("INSERT INTO provider_connection_attempts (id,creator_id,service,state_hash,connected_account_id,status,expires_at) VALUES (?,?,'instagram',?,?,'pending',?)")
-    .bind(crypto.randomUUID(), input.creatorId, await sha256(state), link.connected_account_id, link.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString()).run();
+  await env.DB.prepare("INSERT INTO provider_connection_attempts (id,creator_id,service,account_id,state_hash,connected_account_id,status,expires_at) VALUES (?,?,'instagram',?,?,?,'pending',?)")
+    .bind(crypto.randomUUID(), input.creatorId, input.accountId, await sha256(state), link.connected_account_id, link.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString()).run();
   return Response.json({ ok: true, redirectUrl: link.redirect_url });
 }
 
 async function completeConnection(request: Request, env: Env) {
   const input = await request.json<{ state?: string; creatorId?: string }>();
   if (!input.state || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
-  const attempt = await env.DB.prepare("SELECT id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='instagram' AND state_hash=? AND status='pending'")
-    .bind(input.creatorId, await sha256(input.state)).first<{ id: string; connected_account_id: string; expires_at: string }>();
+  const attempt = await env.DB.prepare("SELECT id,account_id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='instagram' AND state_hash=? AND status='pending'")
+    .bind(input.creatorId, await sha256(input.state)).first<{ id: string; account_id: string; connected_account_id: string; expires_at: string }>();
   if (!attempt || new Date(attempt.expires_at).getTime() < Date.now()) return Response.json({ ok: false, error: "invalid_or_expired_state" }, { status: 400 });
-  const canonical = await env.DB.prepare("SELECT id,handle FROM operational_accounts WHERE creator_id=? AND platform='instagram' ORDER BY label LIMIT 1")
-    .bind(input.creatorId).first<{ id: string; handle: string }>();
-  if (!canonical) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
+  const expectedAccount = await env.DB.prepare("SELECT id,label,handle FROM operational_accounts WHERE id=? AND creator_id=? AND platform='instagram' AND is_active=1")
+    .bind(attempt.account_id, input.creatorId).first<{ id: string; label: string; handle: string }>();
+  if (!expectedAccount) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   try {
     const account = await jsonRequest<{ status?: string }>(`${COMPOSIO_V3}/connected_accounts/${attempt.connected_account_id}`, env.COMPOSIO_API_KEY);
     if (account.status !== "ACTIVE") throw new Error(`Instagram authorization is ${account.status ?? "not active"}.`);
     const instagramUserId = `creator-os:${input.creatorId}:service:instagram`;
     const identity = await executeTool<{ id?: string; username?: string }>(env, "INSTAGRAM_GET_USER_INFO", attempt.connected_account_id, instagramUserId, {});
     if (!identity.id || !identity.username) throw new Error("Instagram identity could not be verified.");
-    await ensureInstagramMessageSubscriptions(env, attempt.connected_account_id, identity.id);
-    if (canonical.handle && canonical.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
-      throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${canonical.handle}.`);
+    if (!expectedAccount.handle || expectedAccount.handle.replace(/^@/, "").toLowerCase() !== identity.username.replace(/^@/, "").toLowerCase()) {
+      throw new Error(`Authorized @${identity.username.replace(/^@/, "")}, but the configured creator account is ${expectedAccount.handle || "not configured"}.`);
     }
+    await ensureInstagramMessageSubscriptions(env, attempt.connected_account_id, identity.id);
+    const messagingConnectionId = `instagram-${(await sha256(`${input.creatorId}:${attempt.account_id}`)).slice(0, 32)}`;
+    const verifiedHandle = `@${identity.username.replace(/^@/, "")}`;
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.connected_account_id, instagramUserId, identity.id, `@${identity.username.replace(/^@/, "")}`),
+      env.DB.prepare("INSERT INTO provider_connections (creator_id,service,account_id,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'instagram',?,?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service,account_id) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(input.creatorId, attempt.account_id, attempt.connected_account_id, instagramUserId, identity.id, `@${identity.username.replace(/^@/, "")}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, canonical.id, input.creatorId),
-      env.DB.prepare("UPDATE messaging_connections SET handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram'").bind(`@${identity.username.replace(/^@/, "")}`, input.creatorId),
+      env.DB.prepare("UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='instagram'").bind(verifiedHandle, expectedAccount.id, input.creatorId),
+      env.DB.prepare("UPDATE messaging_connections SET display_name=?,handle=?,status='connected',read_enabled=1,outbound_validated=0,last_error='Validate a conversation before the first Instagram reply.',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram' AND account_id=?").bind(expectedAccount.label, verifiedHandle, input.creatorId, attempt.account_id),
+      env.DB.prepare("INSERT INTO messaging_connections (id,creator_id,account_id,platform,display_name,handle,status,read_enabled,outbound_validated,last_error,updated_at) SELECT ?,?,?,'instagram',?,?,'connected',1,0,'Validate a conversation before the first Instagram reply.',CURRENT_TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM messaging_connections WHERE creator_id=? AND platform='instagram' AND account_id=?) ON CONFLICT(creator_id,platform,display_name) DO UPDATE SET account_id=excluded.account_id,handle=excluded.handle,status='connected',read_enabled=1,outbound_validated=0,last_error=excluded.last_error,updated_at=CURRENT_TIMESTAMP").bind(messagingConnectionId, input.creatorId, attempt.account_id, expectedAccount.label, verifiedHandle, input.creatorId, attempt.account_id),
       env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,'service','instagram_connection_verified','instagram',?)").bind(crypto.randomUUID(), input.creatorId, "service:thot-os-web-instagram", JSON.stringify({ username: identity.username })),
     ]);
-    return Response.json({ ok: true, displayName: `@${identity.username.replace(/^@/, "")}` });
+    return Response.json({ ok: true, accountId: attempt.account_id, displayName: `@${identity.username.replace(/^@/, "")}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instagram connection failed.";
     await env.DB.batch([
       env.DB.prepare("UPDATE provider_connection_attempts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(message.slice(0, 2000), attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='instagram'").bind(message.slice(0, 500), canonical.id, input.creatorId),
+      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='instagram'").bind(message.slice(0, 500), attempt.account_id, input.creatorId),
     ]);
     return Response.json({ ok: false, error: message }, { status: 400 });
   }
@@ -950,13 +954,13 @@ async function completeConnection(request: Request, env: Env) {
 
 async function status(env: Env, creatorId: string) {
   const [connection, lastRun, due, syncState, analytics] = await Promise.all([
-    env.DB.prepare("SELECT status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='instagram'").bind(creatorId).first(),
+    env.DB.prepare("SELECT account_id,status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='instagram'").bind(creatorId).all(),
     env.DB.prepare("SELECT status,started_at,completed_at,claimed_count,published_count,failed_count,error FROM scheduler_runs WHERE service='instagram' ORDER BY started_at DESC LIMIT 1").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='scheduled' AND unixepoch(scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)").bind(creatorId).first<{ count: number }>(),
     env.DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first(),
     env.DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first(),
   ]);
-  return Response.json({ ok: true, connection, lastRun, due: due?.count ?? 0, syncState, analytics });
+  return Response.json({ ok: true, connections: connection.results, lastRun, due: due?.count ?? 0, syncState, analytics });
 }
 
 async function requestedCreatorId(request: Request) {
@@ -1001,6 +1005,7 @@ async function syncNextCreator(env: Env) {
     WHERE status='running' AND unixepoch(started_at) <= unixepoch(CURRENT_TIMESTAMP)-900`).run();
   const creator = await env.DB.prepare(`SELECT pc.creator_id
     FROM provider_connections pc
+    JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.platform='instagram' AND oa.is_active=1
     LEFT JOIN instagram_sync_state state ON state.creator_id=pc.creator_id
     WHERE pc.service='instagram' AND pc.status='active'
       AND (state.last_analytics_sync_at IS NULL OR unixepoch(state.last_analytics_sync_at)<=unixepoch(CURRENT_TIMESTAMP)-21600)
@@ -1009,6 +1014,8 @@ async function syncNextCreator(env: Env) {
         WHERE failed.creator_id=pc.creator_id AND failed.status='failed'
           AND unixepoch(failed.started_at)>unixepoch(CURRENT_TIMESTAMP)-900
       )
+    GROUP BY pc.creator_id, state.last_analytics_sync_at
+    HAVING COUNT(*)=1
     ORDER BY COALESCE(state.last_analytics_sync_at,'1970-01-01') ASC, pc.creator_id ASC
     LIMIT 1`).first<{ creator_id: string }>();
   if (!creator) return { skipped: true, reason: "no_active_creator" };

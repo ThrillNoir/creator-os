@@ -4,7 +4,7 @@ type UnknownRecord = Record<string, unknown>;
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { immutableR2IdentityMatches } from "../../shared/source-media-integrity.ts";
 type DuePost = {
-  id: string; creator_id: string; asset_id: string; title: string; caption: string;
+  id: string; creator_id: string; account_id: string; asset_id: string; title: string; caption: string;
   content_rating: "sfw" | "nsfw"; relative_path: string; basename: string; extension: string; bytes: number;
   community_name: string; flair_required: number; allows_nsfw: number; reddit_flair_id: string | null; reddit_flair_text: string | null;
 };
@@ -144,11 +144,14 @@ async function publishPost(env: Env, post: DuePost) {
   if (post.flair_required && !post.reddit_flair_id) throw new Error(`r/${post.community_name} requires flair; refresh its requirements and choose a flair before scheduling.`);
   if (post.content_rating === "nsfw" && !post.allows_nsfw) throw new Error(`r/${post.community_name} is not recorded as allowing NSFW posts.`);
   if (post.bytes > MAX_REDDIT_IMAGE_BYTES) throw new Error("Reddit images must be 20 MB or smaller.");
-  const connection = await env.DB.prepare("SELECT connected_account_id,status FROM provider_connections WHERE creator_id=? AND service='reddit'")
-    .bind(post.creator_id).first<{ connected_account_id: string; status: string }>();
+  const connection = await env.DB.prepare(`SELECT pc.connected_account_id,pc.status
+    FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id
+    WHERE pc.creator_id=? AND pc.service='reddit' AND pc.account_id=? AND oa.platform='reddit' AND oa.is_active=1`)
+    .bind(post.creator_id, post.account_id).first<{ connected_account_id: string; status: string }>();
   if (!connection || connection.status !== "active") throw new Error("Reddit is not connected through Composio. Reconnect it in Operations.");
   const identity = await redditIdentity(env, connection.connected_account_id);
-  const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='reddit' ORDER BY label LIMIT 1").bind(post.creator_id).first<{ handle: string }>();
+  const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE id=? AND creator_id=? AND platform='reddit' AND is_active=1").bind(post.account_id, post.creator_id).first<{ handle: string }>();
+  if (!expected) throw new Error("Reddit post account is missing or inactive.");
   if (expected?.handle && expected.handle.replace(/^u\//i, "").toLowerCase() !== identity.name.toLowerCase()) {
     throw new Error(`Composio is authorized as u/${identity.name}, not ${expected.handle}. Reconnect the correct account.`);
   }
@@ -213,7 +216,7 @@ async function publishPost(env: Env, post: DuePost) {
     env.DB.prepare(`UPDATE social_posts SET status='published',external_post_id=?,external_url=?,published_at=CURRENT_TIMESTAMP,error=NULL,
       device_claimed_at=NULL,device_receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='publishing'`)
       .bind(externalPostId, externalUrl, JSON.stringify({ method: "composio_reddit_api", nativeMedia: true, author: identity.name, community: post.community_name, flairId: post.reddit_flair_id, flairText: post.reddit_flair_text, firstCommentRequested: Boolean(post.caption.trim()), firstCommentRecorded: Boolean(commentReceipt) }), post.id, post.creator_id),
-    env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='reddit'").bind(post.creator_id),
+    env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='reddit'").bind(post.account_id, post.creator_id),
     env.DB.prepare("INSERT INTO social_post_events (id,post_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:reddit-scheduler','service','api_publish_completed',?)").bind(crypto.randomUUID(), post.id, post.creator_id, JSON.stringify({ externalPostId, externalUrl, community: post.community_name })),
     env.DB.prepare("UPDATE external_operation_receipts SET status='confirmed',provider_operation_id=?,verification_detail=?,verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE operation_id=? AND creator_id=? AND provider='reddit'")
       .bind(externalPostId, JSON.stringify({ externalPostId, externalUrl, community: post.community_name }), operationId, post.creator_id),
@@ -230,7 +233,7 @@ async function publishPost(env: Env, post: DuePost) {
 
 async function loadPost(env: Env, creatorId: string, postId: string) {
   return env.DB.prepare(`
-    SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
+    SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
       rc.name AS community_name,rc.flair_required,rc.allows_nsfw
     FROM social_posts p
     JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
@@ -267,7 +270,7 @@ async function processDue(env: Env, triggerType: string) {
   let claimed = 0, published = 0, failed = 0;
   try {
     const due = await env.DB.prepare(`
-      SELECT p.id,p.creator_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
+      SELECT p.id,p.creator_id,p.account_id,p.asset_id,p.title,p.caption,p.content_rating,p.reddit_flair_id,p.reddit_flair_text,a.relative_path,a.basename,a.extension,a.bytes,
         rc.name AS community_name,rc.flair_required,rc.allows_nsfw
       FROM social_posts p
       JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
@@ -295,13 +298,13 @@ async function processDue(env: Env, triggerType: string) {
 }
 
 async function refreshCommunityFlairs(request: Request, env: Env) {
-  const input = await request.json<{ creatorId?: string; communityId?: number }>();
+  const input = await request.json<{ creatorId?: string; accountId?: string; communityId?: number }>();
   const creatorId = String(input.creatorId ?? "");
   const communityId = Number(input.communityId);
-  if (!creatorId || !Number.isInteger(communityId) || communityId < 1) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
+  if (!creatorId || !input.accountId || !Number.isInteger(communityId) || communityId < 1) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const [community, connection] = await Promise.all([
     env.DB.prepare("SELECT id,name FROM reddit_communities WHERE id=? AND creator_id=? AND status='active'").bind(communityId, creatorId).first<{ id: number; name: string }>(),
-    env.DB.prepare("SELECT connected_account_id,status FROM provider_connections WHERE creator_id=? AND service='reddit'").bind(creatorId).first<{ connected_account_id: string; status: string }>(),
+    env.DB.prepare("SELECT pc.connected_account_id,pc.status FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id WHERE pc.creator_id=? AND pc.service='reddit' AND pc.account_id=? AND oa.platform='reddit' AND oa.is_active=1").bind(creatorId, input.accountId).first<{ connected_account_id: string; status: string }>(),
   ]);
   if (!community) return Response.json({ ok: false, error: "community_not_found" }, { status: 404 });
   if (!connection || connection.status !== "active") return Response.json({ ok: false, error: "Reddit is not connected through Composio." }, { status: 409 });
@@ -336,9 +339,9 @@ async function sha256(value: string) {
 }
 
 async function startConnection(request: Request, env: Env) {
-  const input = await request.json<{ callbackUrl?: string; creatorId?: string }>();
-  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
-  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform='reddit'").bind(input.creatorId).first();
+  const input = await request.json<{ callbackUrl?: string; creatorId?: string; accountId?: string }>();
+  if (!input.callbackUrl?.startsWith("https://thot-os-staging.thot-os.workers.dev/") || !input.creatorId || !input.accountId) return Response.json({ ok: false, error: "invalid_connection_scope" }, { status: 400 });
+  const account = await env.DB.prepare("SELECT id FROM operational_accounts WHERE id=? AND creator_id=? AND platform='reddit' AND is_active=1").bind(input.accountId, input.creatorId).first();
   if (!account) return Response.json({ ok: false, error: "creator_account_not_found" }, { status: 404 });
   const state = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const callback = new URL(input.callbackUrl);
@@ -347,8 +350,8 @@ async function startConnection(request: Request, env: Env) {
     `${COMPOSIO_V3}/connected_accounts/link`, env.COMPOSIO_API_KEY,
     { method: "POST", body: JSON.stringify({ auth_config_id: env.COMPOSIO_REDDIT_AUTH_CONFIG_ID, user_id: `creator-os:${input.creatorId}:service:reddit`, alias: `${input.creatorId}-reddit-${Date.now().toString(36)}`, callback_url: callback.toString() }) },
   );
-  await env.DB.prepare("INSERT INTO provider_connection_attempts (id,creator_id,service,state_hash,connected_account_id,status,expires_at) VALUES (?,?,'reddit',?,?,'pending',?)")
-    .bind(crypto.randomUUID(), input.creatorId, await sha256(state), link.connected_account_id, link.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString()).run();
+  await env.DB.prepare("INSERT INTO provider_connection_attempts (id,creator_id,service,account_id,state_hash,connected_account_id,status,expires_at) VALUES (?,?,'reddit',?,?,?,'pending',?)")
+    .bind(crypto.randomUUID(), input.creatorId, input.accountId, await sha256(state), link.connected_account_id, link.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString()).run();
   return Response.json({ ok: true, redirectUrl: link.redirect_url });
 }
 
@@ -356,29 +359,30 @@ async function completeConnection(request: Request, env: Env) {
   const input = await request.json<{ state?: string; creatorId?: string }>();
   if (!input.state || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const stateHash = await sha256(input.state);
-  const attempt = await env.DB.prepare("SELECT id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='reddit' AND state_hash=? AND status='pending'").bind(input.creatorId, stateHash).first<{ id: string; connected_account_id: string; expires_at: string }>();
+  const attempt = await env.DB.prepare("SELECT id,account_id,connected_account_id,expires_at FROM provider_connection_attempts WHERE creator_id=? AND service='reddit' AND state_hash=? AND status='pending'").bind(input.creatorId, stateHash).first<{ id: string; account_id: string; connected_account_id: string; expires_at: string }>();
   if (!attempt || new Date(attempt.expires_at).getTime() < Date.now()) return Response.json({ ok: false, error: "invalid_or_expired_state" }, { status: 400 });
   try {
     const account = await jsonRequest<{ status?: string }>(`${COMPOSIO_V3}/connected_accounts/${attempt.connected_account_id}`, env.COMPOSIO_API_KEY);
     if (account.status !== "ACTIVE") throw new Error(`Reddit authorization is ${account.status ?? "not active"}.`);
     const identity = await redditIdentity(env, attempt.connected_account_id);
-    const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE creator_id=? AND platform='reddit' ORDER BY label LIMIT 1").bind(input.creatorId).first<{ handle: string }>();
-    if (expected?.handle && expected.handle.replace(/^u\//i, "").toLowerCase() !== identity.name.toLowerCase()) throw new Error(`Authorized u/${identity.name}, but the configured creator account is ${expected.handle}.`);
+    const expected = await env.DB.prepare("SELECT handle FROM operational_accounts WHERE id=? AND creator_id=? AND platform='reddit' AND is_active=1").bind(attempt.account_id, input.creatorId).first<{ handle: string }>();
+    if (!expected) throw new Error("Reddit account is missing or inactive.");
+    if (!expected.handle || expected.handle.replace(/^u\//i, "").toLowerCase() !== identity.name.toLowerCase()) throw new Error(`Authorized u/${identity.name}, but the configured creator account is ${expected.handle || "not configured"}.`);
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO provider_connections (creator_id,service,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'reddit',?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP")
-        .bind(input.creatorId, attempt.connected_account_id, `creator-os:${input.creatorId}:service:reddit`, identity.id, `u/${identity.name}`),
+      env.DB.prepare("INSERT INTO provider_connections (creator_id,service,account_id,connected_account_id,composio_user_id,status,external_account_id,display_name,identity_confirmed_at,last_error,updated_at) VALUES (?,'reddit',?,?,?,'active',?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id,service,account_id) DO UPDATE SET connected_account_id=excluded.connected_account_id,composio_user_id=excluded.composio_user_id,status='active',external_account_id=excluded.external_account_id,display_name=excluded.display_name,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP")
+        .bind(input.creatorId, attempt.account_id, attempt.connected_account_id, `creator-os:${input.creatorId}:service:reddit`, identity.id, `u/${identity.name}`),
       env.DB.prepare("UPDATE provider_connection_attempts SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(attempt.id),
       env.DB.prepare(`UPDATE operational_accounts SET handle=?,connection_status='connected',publishing_mode='scheduled_api',publishing_authority='confirmed',
         warning_level='none',warning_message='',external_identity_confirmed_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,
-        updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='reddit'`).bind(`u/${identity.name}`, input.creatorId),
+        updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='reddit'`).bind(`u/${identity.name}`, attempt.account_id, input.creatorId),
       env.DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,'service','reddit_connection_verified','reddit',?)").bind(crypto.randomUUID(), input.creatorId, "service:thot-os-web-reddit", JSON.stringify({ displayName: `u/${identity.name}` })),
     ]);
-    return Response.json({ ok: true, displayName: `u/${identity.name}` });
+    return Response.json({ ok: true, accountId: attempt.account_id, displayName: `u/${identity.name}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Reddit connection failed.";
     await env.DB.batch([
       env.DB.prepare("UPDATE provider_connection_attempts SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(message.slice(0, 2000), attempt.id),
-      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='reddit'").bind(message.slice(0, 500), input.creatorId),
+      env.DB.prepare("UPDATE operational_accounts SET connection_status='needs_reconnection',publishing_authority='blocked',warning_level='blocked',warning_message=?,last_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='reddit'").bind(message.slice(0, 500), attempt.account_id, input.creatorId),
     ]);
     return Response.json({ ok: false, error: message }, { status: 400 });
   }
@@ -386,11 +390,11 @@ async function completeConnection(request: Request, env: Env) {
 
 async function status(env: Env, creatorId: string) {
   const [connection, lastRun, due] = await Promise.all([
-    env.DB.prepare("SELECT status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='reddit'").bind(creatorId).first(),
+    env.DB.prepare("SELECT account_id,status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='reddit'").bind(creatorId).all(),
     env.DB.prepare("SELECT status,started_at,completed_at,claimed_count,published_count,failed_count,error FROM scheduler_runs WHERE service='reddit' ORDER BY started_at DESC LIMIT 1").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND platform='reddit' AND status='scheduled' AND unixepoch(scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)").bind(creatorId).first<{ count: number }>(),
   ]);
-  return Response.json({ ok: true, connection, lastRun, due: due?.count ?? 0 });
+  return Response.json({ ok: true, connections: connection.results, lastRun, due: due?.count ?? 0 });
 }
 
 const routeCapabilities: Record<string, string> = {
