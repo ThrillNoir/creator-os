@@ -9,6 +9,7 @@ interface __BaseEnv_CloudflareEnv {
 	EMAIL: SendEmail;
 	PREVIEW_QUEUE: Queue;
 	IMAGES: ImagesBinding;
+	AI: Ai;
 	STREAM: StreamBinding;
 	ASSETS: Fetcher;
 	ACCESS_AUD: "96650f7d7a89fb932d2941213c418198999c22ba3abbb9c3d7d566b4375cb930";
