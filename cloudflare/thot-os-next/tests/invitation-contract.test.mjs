@@ -23,5 +23,7 @@ test("invitation lifecycle is hash-only and Access-gated", async () => {
   assert.match(layout, /verifyAccessIdentity/);
   assert.match(config, /"send_email"/);
   assert.match(config, /"name": "EMAIL"/);
+  assert.match(config, /"allowed_sender_addresses": \["welcome@thathuboverthere\.com"\]/);
+  assert.doesNotMatch(config, /destination_address/);
   assert.doesNotMatch(actions, /console\.(log|info|debug).*token/);
 });

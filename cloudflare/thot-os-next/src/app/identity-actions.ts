@@ -46,7 +46,7 @@ async function sendInvitationEmail(email: string, creatorName: string, token: st
   if (!env.EMAIL) throw new Error("Email Sending is not configured.");
   const link = `${env.APP_BASE_URL ?? ""}/invite/${token}`;
   await env.EMAIL.send({
-    from: "THOT OS <connect@thrillnoir.com>", to: email,
+    from: "THOT OS <welcome@thathuboverthere.com>", to: email,
     subject: "Your THOT OS workspace is ready",
     text: `Your ${creatorName} THOT OS workspace is ready. Sign in with Cloudflare Access and claim it here: ${link}\n\nThis invitation expires in 7 days.`,
   });

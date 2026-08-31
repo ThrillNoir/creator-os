@@ -77,6 +77,6 @@
     ]
   },
   "send_email": [
-    { "name": "EMAIL" }
+    { "name": "EMAIL", "allowed_sender_addresses": ["welcome@thathuboverthere.com"] }
   ]
 }
