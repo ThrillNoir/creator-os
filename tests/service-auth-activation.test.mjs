@@ -139,11 +139,11 @@ test("activation accepts only the explicitly reviewed complete post-COMPATIBILIT
   assert.throws(() => buildActivationPlan({ activation, contract, registry, observedMigrations: observed.slice(0, -1), git: { sha: "a".repeat(40), branch: "audit/test" } }), /outside the approved/i);
 });
 
-test("activation accepts the authoritative staging ledger through 0055", async () => {
+test("activation accepts the authoritative staging ledger through 0056", async () => {
   const [activation, contract, registry, ledger] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json"), json("config/staging-d1-migration-ledger.json")]);
   const observed = ledger.migrations.map(({ name }) => name);
   const plan = buildActivationPlan({ activation, contract, registry, observedMigrations: observed, git: { sha: "a".repeat(40), branch: "audit/test" } });
-  assert.equal(observed.at(-1), "0055_provider_connection_account_scope.sql");
+  assert.equal(observed.at(-1), "0056_creator_invitations.sql");
   assert.equal(plan.compatibilityReady, true);
 });
 

@@ -60,6 +60,7 @@
 -- 0053_native_asset_authority.sql 5a7bbc6acafd4edf5d38b6e0dd7bb7ae91f56569fafcf2c87dc6dd32bdac4be7
 -- 0054_native_video_intake.sql f2cde4f908b498e0c6ed6f0e34b0d4f70b3db8d5fe54b5608d86d930b176be27
 -- 0055_provider_connection_account_scope.sql 540847321a5478b2cebb8c200446bc5554c9908de125b3d546d5861e288d3152
+-- 0056_creator_invitations.sql 5a465735e2e71d348650620165bc90476c528115f892fc63e57a86fa1ef566f5
 
 PRAGMA foreign_keys = ON;
 
@@ -121,6 +122,7 @@ INSERT INTO d1_migrations (id, name) VALUES (54, '0052_creator_scoped_r2_readine
 INSERT INTO d1_migrations (id, name) VALUES (55, '0053_native_asset_authority.sql');
 INSERT INTO d1_migrations (id, name) VALUES (56, '0054_native_video_intake.sql');
 INSERT INTO d1_migrations (id, name) VALUES (57, '0055_provider_connection_account_scope.sql');
+INSERT INTO d1_migrations (id, name) VALUES (58, '0056_creator_invitations.sql');
 
 CREATE TABLE account_browser_profiles (
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -567,6 +569,21 @@ CREATE TABLE creator_finance_settings (
   revenue_basis TEXT NOT NULL DEFAULT 'imported_net_earnings' CHECK(revenue_basis = 'imported_net_earnings'),
   updated_by TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE creator_invitations (
+  id TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  invited_email TEXT NOT NULL COLLATE NOCASE,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','revoked','expired')),
+  expires_at TEXT NOT NULL,
+  sent_at TEXT,
+  accepted_at TEXT,
+  accepted_by TEXT COLLATE NOCASE REFERENCES users(email),
+  revoked_at TEXT,
+  created_by TEXT NOT NULL COLLATE NOCASE REFERENCES users(email),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE creator_media_release_attestations (
@@ -1872,6 +1889,12 @@ CREATE INDEX creator_adult_profile_media_render
 
 CREATE INDEX creator_exceptions_open_scope
   ON creator_exceptions(creator_id, status, severity, last_observed_at DESC);
+
+CREATE INDEX creator_invitations_creator_status
+  ON creator_invitations(creator_id, status, created_at DESC);
+
+CREATE UNIQUE INDEX creator_invitations_pending_email
+  ON creator_invitations(creator_id, invited_email) WHERE status='pending';
 
 CREATE INDEX creator_media_source_cutover_receipts_creator_created
   ON creator_media_source_cutover_receipts(creator_id,created_at DESC);

@@ -323,13 +323,12 @@
       "name": "0055_provider_connection_account_scope.sql",
       "sha256": "540847321a5478b2cebb8c200446bc5554c9908de125b3d546d5861e288d3152",
       "purpose": "Applied bounded staging migration: bind provider connections and OAuth attempts to exact operational accounts."
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
+      "remoteId": 58,
       "name": "0056_creator_invitations.sql",
       "sha256": "5a465735e2e71d348650620165bc90476c528115f892fc63e57a86fa1ef566f5",
-      "purpose": "Reviewed pending staging migration: hash-only creator invitation lifecycle."
+      "purpose": "Applied bounded staging migration: hash-only creator invitation lifecycle."
     }
   ]
 }
