@@ -46,6 +46,14 @@ function writeOwnerOnlyJson(file, value) {
   chmodSync(file, 0o600);
 }
 
+export function deploymentWranglerEnvironment({ accountId, baseEnvironment = process.env } = {}) {
+  const environment = mutationWranglerEnvironment({ accountId, baseEnvironment });
+  for (const name of ["CLOUDFLARE_ACCESS_CLIENT_ID", "CLOUDFLARE_ACCESS_CLIENT_SECRET"]) {
+    if (typeof baseEnvironment[name] === "string" && baseEnvironment[name].trim()) environment[name] = baseEnvironment[name];
+  }
+  return environment;
+}
+
 function targetContext(options) {
   if (options.environment !== "staging" || !["web", "vault"].includes(options.component)) throw new Error("Controlled deployment requires explicit --environment staging --component web|vault.");
   if (!options.artifactManifest || !options.output) throw new Error(usage());
@@ -117,7 +125,10 @@ function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
       closeSync(snapshotDescriptor); snapshotDescriptor = undefined;
     }
     const args = metadata.component === "web" ? ["deploy", "--config", path.join(root, metadata.config)] : ["deploy", snapshotPath, "--no-bundle", "--config", path.join(root, metadata.config), "--strict", "--tag", plan.artifact.versionTag, "--message", `Creator OS reviewed artifact ${plan.artifact.sha256}`];
-    execFileSync(executable, args, { cwd: directory, env: { ...mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }), CI: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+    const environment = metadata.component === "web"
+      ? deploymentWranglerEnvironment({ accountId: registry.environments.staging.accountId })
+      : mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId });
+    execFileSync(executable, args, { cwd: directory, env: { ...environment, CI: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
     return { commandOutcome: "SUCCEEDED" };
   } catch {
     throw new Error("reviewed_deployment_command_failed");

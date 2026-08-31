@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { deploymentWranglerEnvironment } from "../scripts/deploy-component.mjs";
 import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest } from "../scripts/staging-web-deployment-lib.mjs";
 
 const metadata = { environment: "staging", component: "web", worker: "thot-os-staging", accountId: "account", config: "cloudflare/thot-os-next/wrangler.jsonc", databaseId: "database", gitSha: "abc", gitBranch: "codex/release" };
@@ -16,6 +17,22 @@ const workerState = {
   // version may predate a separately staged secret version.
   latestSecretVersion: { versionId: "before", trafficPercentage: 100, secretNames: [] },
 };
+
+test("web deploy keeps only the Access credentials needed to reach protected staging", () => {
+  const environment = deploymentWranglerEnvironment({
+    accountId: "account",
+    baseEnvironment: {
+      PATH: "/usr/bin",
+      CLOUDFLARE_API_TOKEN: "must-not-pass",
+      CLOUDFLARE_ACCESS_CLIENT_ID: "access-id",
+      CLOUDFLARE_ACCESS_CLIENT_SECRET: "access-secret",
+    },
+  });
+  assert.equal(environment.CLOUDFLARE_API_TOKEN, undefined);
+  assert.equal(environment.CLOUDFLARE_ACCESS_CLIENT_ID, "access-id");
+  assert.equal(environment.CLOUDFLARE_ACCESS_CLIENT_SECRET, "access-secret");
+  assert.equal(environment.CLOUDFLARE_AUTH_USE_KEYRING, "true");
+});
 
 test("Vault deploy gives Wrangler a verified owner-only named snapshot", () => {
   const deployer = readFileSync(new URL("../scripts/deploy-component.mjs", import.meta.url), "utf8");
