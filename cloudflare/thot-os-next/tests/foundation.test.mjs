@@ -138,6 +138,8 @@ test("all social platform workspaces are consolidated under Operations", async (
   assert.match(shell, /Operations/);
   assert.match(operations, /operationPlatforms/);
   assert.match(operations, /RedditWorkspace/);
+  assert.match(operations, /select name="accountId"/);
+  assert.doesNotMatch(operations, /onChange=/);
   assert.match(legacyReddit, /redirect\("\/operations\?platform=reddit"\)/);
   assert.doesNotMatch(shell, /\["[^\"]+", "Reddit", "\/reddit"\]/);
 });

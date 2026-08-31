@@ -71,9 +71,9 @@ function PlatformNavigation({ active }: { active?: string }) {
 
 function AccountPicker({ accounts, selectedId, platform, section }: { accounts: OperationalAccount[]; selectedId?: string; platform: string; section: string }) {
   if (accounts.length < 2) return null;
-  return <div className="inline-form"><label>Operational account<select defaultValue={selectedId ?? accounts[0]?.id} onChange={(event) => { window.location.href = `/operations?platform=${platform}&section=${section}&accountId=${encodeURIComponent(event.target.value)}`; }} aria-label={`${platform} operational account`}>
+  return <form className="inline-form" method="get"><input type="hidden" name="platform" value={platform} /><input type="hidden" name="section" value={section} /><label>Operational account<select name="accountId" defaultValue={selectedId ?? accounts[0]?.id} aria-label={`${platform} operational account`}>
     {accounts.map((account) => <option key={account.id} value={account.id}>{account.label}{account.handle ? ` · ${account.handle}` : ""} · {statusLabel(account)}</option>)}
-  </select></label></div>;
+  </select></label><button className="secondary-action" type="submit">Switch account</button></form>;
 }
 
 async function OperationsOverview({ creatorId }: { creatorId: string }) {
