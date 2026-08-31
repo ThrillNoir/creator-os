@@ -34,9 +34,10 @@ type ResolvedCreatorMedia = { object: R2ObjectBody; record: LibraryObject };
 async function resolveCreatorMedia(env: Env, creatorId: string, assetId: string): Promise<ResolvedCreatorMedia> {
   const record = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
     FROM asset_storage_objects o JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
-    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id
+      AND ma.authority_kind='r2_native' AND ma.canonical_storage_object_id=o.id
     WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
-      AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
+      AND o.bucket_role='library_media' AND o.ingest_status='verified'
       AND o.byte_count=a.bytes AND a.source_available=1 ORDER BY o.verified_at DESC LIMIT 1`)
     .bind(creatorId, assetId).first<LibraryObject>();
   if (!record || !record.r2_version || !record.r2_etag) throw new Error("r2_source_media_not_available");
