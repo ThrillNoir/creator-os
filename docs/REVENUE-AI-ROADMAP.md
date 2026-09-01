@@ -75,23 +75,23 @@ Status labels:
 
 | Capability | Status | Current evidence | Remaining gap |
 | --- | --- | --- | --- |
-| Cloud control plane | **Verified staging** | Canonical web, Instagram, Reddit, Telegram and Vault Workers are deployed. D1 has 57 recorded migrations through `0055_provider_connection_account_scope.sql`. | Production is not provisioned. Consolidate the deployed release branch into the primary development baseline. |
-| Creator identity and isolation | **Verified staging** | D1 has Adelaide, Bryshanagy and a staging authorization fixture. The Phase 0 candidate passes 92 repository tests and 155 canonical app tests, including creator isolation, role derivation and service/device scope. | Prove the complete journey with a real invited creator identity rather than an administrator-created fixture. |
+| Cloud control plane | **Verified staging** | Canonical web, Instagram, Reddit, Telegram and Vault Workers are deployed. D1 has 58 recorded migrations through `0056_creator_invitations.sql`; web Worker version `3153179f-7896-4d1c-9469-e723c5754577` serves commit `7e62286`. | Production is not provisioned. Consolidate the deployed release branch into the primary development baseline. |
+| Creator identity and isolation | **Verified staging** | Creator invitation, membership, onboarding and isolation contracts are deployed and the current canonical app passes 166 tests. | Complete one creator-role submit → agency review → activation journey and verify the creator cannot access another workspace. |
 | Cloudflare media library | **Verified staging** | New image and video intake creates private, creator-scoped R2-native authority. Adelaide and Bryshanagy both have verified R2-native assets. | Legacy catalogue rows remain historical and were deliberately not migrated. Remove misleading global Dropbox-state language where it appears in operator UI or reports. |
 | Accounts and connections | **Built, proof incomplete** | Multiple accounts per platform are schema-supported and migration `0055` is live. Adelaide has one active and one retired Reddit account; Operations hides retired accounts. | Adelaide's active Reddit provider connection is expired and needs reconnecting. Her second Instagram account has not been added or connected. Test multiple Reddit, Instagram and X accounts end to end. |
 | Instagram publishing | **Verified staging** | Four Adelaide Instagram publications are recorded as published, and the client confirmed live posting works. | Repeat against the second Instagram account after it is added. |
-| Reddit publishing | **Built, proof incomplete** | Five published and fourteen failed Adelaide Reddit records exist. The explicit account-derived **Creator profile** target is deployed in Reddit Worker version `f919744d-cbb4-4fb1-8cfb-5b0ba4297953` without a second publisher or migration. | Reconnect the selected Reddit identity, then prove one profile post and one subreddit post with account-scoped receipts. |
+| Reddit publishing | **Verified staging** | The explicit account-derived **Creator profile** target is deployed in Reddit Worker version `f919744d-cbb4-4fb1-8cfb-5b0ba4297953`. Live creator-profile and subreddit posts both passed with account-scoped receipts. | Repeat only for a new identity or materially different provider path. |
 | Fansly Vault | **Verified staging** | The R2-backed Chrome bridge delivered the approved Adelaide asset and recorded one verified vault upload. | Run a clean repeat and clear or review the historical staged/failed backlog before treating the queue as release-ready. |
 | OnlyFans bridge | **Built, proof incomplete** | Creator-scoped OnlyFans bridge, batch and receipt foundations exist in the deployed schema/source. | No current connected messaging authority is recorded. Keep it outside the first messaging release gate unless explicitly prioritised. |
-| Encrypted Access vault | **Verified staging** | PIN derivation, encryption, creator scope and audit coverage are deployed; Adelaide now has one active credential. Visible requirements and accessible validation feedback are live in web Worker version `399bd378-729a-42df-99e6-f830f69bfdbe`. | Confirm the corrected save feedback through the authenticated staging UI. |
-| Unified Messages | **Built, proof incomplete** | Telegram, Instagram and Fansly threads/messages exist with creator-scoped audit and receipt models. Telegram and Fansly authorities are provider/device validated. | Complete the live inbound → draft → approved send → receipt → read-state → failure-recovery matrix. Instagram reply validation remains unset; OnlyFans is unconnected. |
+| Encrypted Access vault | **Verified staging** | PIN derivation, encryption, creator scope and audit coverage are deployed. The creator-facing account editor requires the PIN for every save and supports password, Google and Apple login metadata. | Repeat the save/reveal flow with the next creator during the onboarding closeout gate. |
+| Unified Messages | **Built, proof incomplete** | Telegram, Instagram and Fansly threads/messages exist with creator-scoped audit and receipt models. Fansly live messaging passed; Instagram inbound sync works but Adelaide's provider has blocked outbound messaging. | Complete Telegram's live matrix and later prove Instagram with an independently authorised unrestricted account. Keep Adelaide sends locked and OnlyFans outside this gate. |
 | Public and 18+ profiles | **Verified staging** | Adelaide has four recorded public-profile and four age-gated-profile publications. | Treat future design additions as refinement, not a new foundation. |
 | Growth insights | **Verified staging, narrow scope** | Adelaide has 63 official Instagram analytics snapshots; the latest was collected on 2026-08-31. Recommendations remain read-only and evidence-labelled. | Add other accounts/platforms only after their official evidence paths exist. |
 | Money and health | **Built, no operating data** | Currency-safe finance imports, agency splits and delivery scorecards are implemented and tested. | No staging finance imports exist. Agree platform export definitions before importing earnings. |
-| Creator-facing email onboarding | **Planned** | Existing workspace, membership, onboarding, voice, positioning and boundary records can be reused. | No invitation table, email binding, creator welcome route or conversational interviewer exists. Cloudflare Email Sending is not configured. |
+| Creator-facing email onboarding | **Built, proof incomplete** | Hash-only invitations, native Email Sending, Access claim, guided/AI-assisted interview, encrypted account capture and explicit review handoff are deployed in commit `7e62286`. | Complete one real creator-role invitation → onboarding → review → activation journey and confirm isolation. |
 | Creator AI brain | **Planned** | Data inputs and human-approval rules exist; the architecture decision is one shared runtime with creator-scoped context. | No canonical deployed assistant workflows yet. Start with the deterministic daily operator brief, then add AI explanation and drafting. |
 
-The Phase 0 web and Reddit deployment source is `codex/phase0-integration` at `964fe0e`; the primary working directory remains on `codex/creator-onboarding-access` with substantial uncommitted changes. Preserve those changes and continue through the clean integration branch rather than the dirty checkout.
+The current web deployment source is `codex/onboarding-integration` at `7e62286`; the primary working directory remains on `codex/creator-onboarding-access` with substantial uncommitted changes. Preserve those changes and continue through clean integration branches rather than the dirty checkout.
 
 ## Delivery roadmap — workshop draft
 
@@ -152,7 +152,7 @@ Acceptance path:
 5. Activate the creator and confirm that Adelaide data, credentials, messages, media and private notes are inaccessible from the new workspace.
 6. Confirm the creator cannot see agency-only controls or another creator selector.
 
-Email delivery should use the native Cloudflare Worker Email Sending binding after a sending domain is onboarded. As of 2026-08-31, THOT OS has no `send_email` binding configured and the current Wrangler identity cannot inspect or enable Email Sending, so domain onboarding and Cloudflare Email Sending authorization remain prerequisites.
+The native Cloudflare Worker Email Sending binding and invitation flow are now deployed. Phase 1 closes after one real creator completes the full acceptance path above.
 
 ### 2. Prove unified messaging end to end
 
@@ -164,6 +164,13 @@ Current Adelaide staging baseline on 2026-08-31:
 - Instagram: connected in assist mode; two sent and two failed reply drafts, but outbound reply validation is not yet set.
 - Fansly: device bridge ready in assist mode; the premium reply queue has five sent and six failed records requiring a clean regression pass after the bridge fixes.
 - OnlyFans: not connected; decide whether to connect it before including it in the release gate.
+
+Release order:
+
+1. Close Phase 1 with one creator-role onboarding submission, agency review, activation and isolation check.
+2. Prove Telegram and re-run the already-working Fansly path without recording private message text.
+3. Keep Adelaide's Instagram send path locked; prove Instagram only when an independently authorised unrestricted account is available.
+4. Integrate only contract or failure-state fixes found by those proofs, then deploy only the Workers that changed.
 
 ### 3. Build the creator AI brain from existing data
 
