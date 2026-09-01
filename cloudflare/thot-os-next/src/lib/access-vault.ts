@@ -74,7 +74,7 @@ async function pinVerifier(pin: string, salt: ArrayBuffer | Uint8Array, iteratio
   return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: combinedSalt, iterations }, key, 256));
 }
 
-export async function encryptCredentialPassword(input: { creatorId: string; credentialId: string; accountId: string | null; password: string; notes?: string }): Promise<CredentialCipher> {
+export async function encryptCredentialPassword(input: { creatorId: string; credentialId: string; accountId: string | null; password: string }): Promise<CredentialCipher> {
   const keyVersion = 1;
   const master = await vaultMasterKey(keyVersion);
   const dek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
@@ -82,7 +82,7 @@ export async function encryptCredentialPassword(input: { creatorId: string; cred
   const wrappingNonce = random(12);
   const context = aad(input.creatorId, input.credentialId, input.accountId, keyVersion);
   const [ciphertext, rawDek] = await Promise.all([
-    crypto.subtle.encrypt({ name: "AES-GCM", iv: plaintextNonce, additionalData: context }, dek, encoder.encode(JSON.stringify({ password: input.password, notes: input.notes ?? "" }))),
+    crypto.subtle.encrypt({ name: "AES-GCM", iv: plaintextNonce, additionalData: context }, dek, encoder.encode(input.password)),
     crypto.subtle.exportKey("raw", dek),
   ]);
   const wrappedDek = await crypto.subtle.encrypt({ name: "AES-GCM", iv: wrappingNonce, additionalData: context }, master, rawDek);
@@ -96,8 +96,7 @@ export async function decryptCredentialPassword(row: CredentialCipherRow) {
     const rawDek = await crypto.subtle.decrypt({ name: "AES-GCM", iv: row.wrapped_dek_nonce, additionalData: context }, master, row.wrapped_dek);
     const dek = await crypto.subtle.importKey("raw", rawDek, { name: "AES-GCM" }, false, ["decrypt"]);
     const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: row.ciphertext_nonce, additionalData: context }, dek, row.ciphertext);
-    const value = new TextDecoder().decode(plaintext);
-    try { return (JSON.parse(value) as { password?: string }).password ?? value; } catch { return value; }
+    return new TextDecoder().decode(plaintext);
   } catch { throw new Error("Access vault is unavailable."); }
 }
 

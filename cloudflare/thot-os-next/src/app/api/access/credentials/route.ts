@@ -81,14 +81,15 @@ export async function POST(request: Request) {
       const label = text(body.label, 100);
       if (!label) throw new Error("Enter a credential label.");
       if (!groups.has(group)) throw new Error("Choose a credential group.");
+      if (context.creator.role === "creator" && !accountId) throw new Error("Choose an account in your workspace.");
       if (accountId) {
         const account = await DB.prepare("SELECT id FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, creatorId).first<{ id: string }>();
         if (!account) throw new Error("Choose an account in this creator workspace.");
       }
       const id = crypto.randomUUID();
-      const encrypted = await encryptCredentialPassword({ creatorId, credentialId: id, accountId, password: password(body.password), notes: text(body.notes, 2000) });
+      const encrypted = await encryptCredentialPassword({ creatorId, credentialId: id, accountId, password: password(body.password) });
       await DB.prepare(`INSERT INTO vault_credentials (id,creator_id,account_id,credential_group,label,username,login_email,wrapped_dek,wrapped_dek_nonce,ciphertext,ciphertext_nonce,key_version,created_by,shared_with_creator,notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, accountId, group, label, text(body.username, 254), text(body.loginEmail, 254).toLowerCase(), encrypted.wrappedDek, encrypted.wrappedDekNonce, encrypted.ciphertext, encrypted.ciphertextNonce, encrypted.keyVersion, context.email, context.creator.role === "creator" ? 1 : (body.sharedWithCreator ? 1 : 0), "").run();
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, accountId, group, label, text(body.username, 254), text(body.loginEmail, 254).toLowerCase(), encrypted.wrappedDek, encrypted.wrappedDekNonce, encrypted.ciphertext, encrypted.ciphertextNonce, encrypted.keyVersion, context.email, context.creator.role === "creator" ? 1 : (body.sharedWithCreator ? 1 : 0), context.creator.role === "creator" ? "" : text(body.notes, 2000)).run();
       await audit(creatorId, context.email, context.creator.role, "credential_created", id, { group, sharedWithCreator: context.creator.role === "creator" ? true : Boolean(body.sharedWithCreator), pinScope });
       return noStoreJson({ ok: true, id, notice: "Login details saved securely." });
     }

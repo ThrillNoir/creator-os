@@ -12,12 +12,37 @@ test("onboarding secure login uses the existing Access vault contract", async ()
     source("../src/lib/access-vault.ts"),
   ]);
   assert.match(component, /\/api\/access\/credentials/);
-  assert.match(component, /Recovery or MFA notes/);
-  assert.match(component, /setDraft\(\{ platform: "instagram", label: "", username: "", loginEmail: "", profileUrl: "", purpose: "", password: "", notes: "" \}\)/);
+  assert.match(component, /credentials: "same-origin"/);
+  assert.match(component, /Login details saved securely\./);
+  assert.match(component, /password: ""/);
+  assert.match(component, /setPin\(""\)/);
+  assert.doesNotMatch(component, /Recovery or MFA notes/);
+  assert.match(component, /onlyfans.*fansly.*manyvids.*patreon.*myroomz/);
   assert.match(route, /context\.creator\.role === "creator" \? 1/);
-  assert.match(route, /notes: text\(body\.notes, 2000\)/);
+  assert.match(route, /Choose an account in your workspace/);
+  assert.match(route, /context\.creator\.role === "creator" \? "" : text\(body\.notes, 2000\)/);
+  assert.match(route, /encryptCredentialPassword\(\{ creatorId, credentialId: id, accountId, password: password\(body\.password\) \}\)/);
   assert.match(route, /Only agency administrators can revoke credentials/);
-  assert.match(action, /return \{ ok: true, id \}/);
-  assert.match(vault, /JSON\.stringify\(\{ password: input\.password, notes: input\.notes/);
+  assert.match(action, /createCreatorOperationalProfileAction/);
+  assert.match(action, /createOperationalProfile\(form, true\)/);
+  assert.match(action, /return \{ ok: true, id: await createOperationalProfile\(form, true\) \}/);
+  assert.match(vault, /encoder\.encode\(input\.password\)/);
+  assert.doesNotMatch(vault, /JSON\.stringify\([^)]*password/);
   assert.doesNotMatch(route, /JSON\.stringify\([^)]*password/);
+});
+
+test("creator onboarding is a role-specific four-part flow", async () => {
+  const [page, creator] = await Promise.all([
+    source("../src/app/onboarding/page.tsx"),
+    source("../src/components/creator-onboarding.tsx"),
+  ]);
+  assert.match(page, /if \(!admin\) return <AppShell/);
+  assert.match(creator, /WHO IS THE REAL YOU\?/);
+  assert.match(creator, /WHO IS THE ONLINE YOU\?/);
+  assert.match(creator, /YOUR ACCOUNTS AND LOGINS/);
+  assert.match(creator, /REVIEW AND SUBMIT/);
+  assert.match(creator, /SecureLoginCapture/);
+  for (const adminOnly of ["retireOperationalAccountAction", "activateOnboardingAction", "saveComplianceAction", "administratorNotes", "connectionMethod"]) {
+    assert.doesNotMatch(creator, new RegExp(adminOnly));
+  }
 });

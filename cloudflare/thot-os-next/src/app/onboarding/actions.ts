@@ -8,8 +8,8 @@ import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
 import { redirect } from "next/navigation";
 
 const sections = new Set(["identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me"]);
-const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "youtube", "myroomz", "other"]);
-const paidPlatforms = new Set(["onlyfans", "fansly", "myroomz", "other"]);
+const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "telegram", "youtube", "other"]);
+const paidPlatforms = new Set(["onlyfans", "fansly", "manyvids", "patreon", "myroomz", "other"]);
 
 function value(form: FormData, key: string, maximum = 2000) { return String(form.get(key) ?? "").replace(/\r\n?/g, "\n").trim().slice(0, maximum); }
 function email(form: FormData, key: string) { const result = value(form, key, 254).toLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new Error("Enter a valid contact email."); return result; }
@@ -68,15 +68,20 @@ export async function saveComplianceAction(form: FormData) {
   await changedSection(creatorId, "identity", identity.email, false); await audit(creatorId, actor, "onboarding_compliance_updated", "identity", { adultStatus: adult, contractStatus: contract, consentStatus: consent }); revalidate();
 }
 
-export async function addOperationalProfileAction(form: FormData) {
+async function createOperationalProfile(form: FormData, creatorOnly = false) {
   const identity = await context(); const creatorId = identity.creator.creator_id; const creator = identity.creator.role === "creator"; const type = value(form, "accountKind", 10); const platform = value(form, "platform", 40).toLowerCase();
+  if (creatorOnly && !creator) throw new Error("Only the creator can add an account through onboarding.");
   if ((type !== "social" || !socialPlatforms.has(platform)) && (type !== "paid" || !paidPlatforms.has(platform))) throw new Error("Choose a supported social or paid platform.");
   const label = value(form, "label", 100); if (!label) throw new Error("Account label is required.");
   const id = crypto.randomUUID(); const DB = cloudflareEnv().DB; const actor = humanAuditActor(identity);
   await DB.prepare(`INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,account_kind,login_email,profile_url,account_purpose,is_active,connection_method,creator_visible,administrator_notes,capabilities_json,private_upload_destination)
   VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, value(form, "username", 120), type, email(form, "loginEmail"), value(form, "profileUrl", 500), value(form, "purpose", 400), form.has("isActive") ? (form.get("isActive") === "yes" ? 1 : 0) : 1, creator ? "descriptive only" : value(form, "connectionMethod", 80), 1, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
-  await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: true }); revalidate(); return { ok: true, id };
+  await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: true }); revalidate();
+  return id;
 }
+
+export async function addOperationalProfileAction(form: FormData) { await createOperationalProfile(form); }
+export async function createCreatorOperationalProfileAction(form: FormData) { return { ok: true, id: await createOperationalProfile(form, true) }; }
 
 export async function saveGuidedInterviewAction(_previous: { ok: boolean; message: string }, form: FormData) {
   try {
@@ -85,9 +90,9 @@ export async function saveGuidedInterviewAction(_previous: { ok: boolean; messag
     const field = value(form, "field", 80); const answer = value(form, "answer", 4000);
     if (!INTERVIEW_FIELDS.has(field)) return { ok: false, message: "That interview field is not available." };
     const creatorId = identity.creator.creator_id; const DB = cloudflareEnv().DB;
-    const target = field === "stage_name" ? "creator_onboarding_profiles" : field === "voice_summary" || field === "forbidden_topics_claims" ? "creator_brand_voice_profiles" : "creator_brand_positioning";
+    const target = field === "stage_name" ? "creator_onboarding_profiles" : field === "voice_summary" || field === "forbidden_topics_claims" ? "creator_brand_voice_profiles" : field === "short_bio" || field === "interests" ? "creator_about_profiles" : "creator_brand_positioning";
     await DB.prepare(`INSERT INTO ${target} (creator_id,${field}) VALUES (?,?) ON CONFLICT(creator_id) DO UPDATE SET ${field}=excluded.${field},updated_at=CURRENT_TIMESTAMP`).bind(creatorId, answer).run();
-    const section = target === "creator_onboarding_profiles" ? "identity" : target === "creator_brand_voice_profiles" ? "brand_voice" : "positioning";
+    const section = target === "creator_onboarding_profiles" ? "identity" : target === "creator_brand_voice_profiles" ? "brand_voice" : target === "creator_about_profiles" ? "about_me" : "positioning";
     await changedSection(creatorId, section, identity.email, true); await audit(creatorId, humanAuditActor(identity), "onboarding_guided_answer_confirmed", field, { length: answer.length }); revalidate();
     return { ok: true, message: "Saved. Nice work." };
   } catch (error) { return { ok: false, message: error instanceof Error ? error.message : "Could not save that answer." }; }
@@ -141,6 +146,17 @@ export async function reviewOnboardingSectionAction(form: FormData) {
   const status = admin ? "complete" : "creator_review"; await cloudflareEnv().DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status=excluded.status,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId,section,status,identity.email).run();
   await audit(creatorId,humanAuditActor(identity),admin ? "onboarding_section_approved" : "onboarding_creator_reviewed",section,{}); revalidate();
+}
+
+export async function submitCreatorOnboardingAction() {
+  const identity = await context();
+  if (identity.creator.role !== "creator") throw new Error("Only the creator can submit this onboarding interview.");
+  const creatorId = identity.creator.creator_id;
+  const keys = ["identity", "brand_voice", "positioning", "about_me", "social_profiles", "paid_platforms"];
+  await cloudflareEnv().DB.batch(keys.map((key) => cloudflareEnv().DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,'creator_review',?,CURRENT_TIMESTAMP)
+    ON CONFLICT(creator_id,section_key) DO UPDATE SET status='creator_review',updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId, key, identity.email)));
+  await audit(creatorId, humanAuditActor(identity), "onboarding_creator_submitted", "creator_review", { sections: keys.length });
+  revalidate();
 }
 
 export async function activateOnboardingAction() {
