@@ -3,6 +3,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { activateOnboardingAction, addOperationalProfileAction, retireOperationalAccountAction, reviewOnboardingSectionAction, saveBrandContextAction, saveChromeAccessAction, saveComplianceAction, saveGuidedInterviewAction, saveOnboardingIdentityAction, savePrivateIdentityAction } from "./actions";
 import { GuidedOnboardingInterview } from "@/components/guided-onboarding-interview";
+import { CreatorOnboarding } from "@/components/creator-onboarding";
 
 type Profile = { stage_name:string; preferred_name:string; contact_email:string; contact_phone:string; country:string; time_zone:string; uses_chrome:number; adult_verification_status:string; contract_status:string; consent_status:string; restricted_admin_notes:string; workflow_state:string };
 type Compliance = { legal_name:string; date_of_birth:string };
@@ -30,6 +31,7 @@ export default async function OnboardingPage() {
     DB.prepare("SELECT id,label,chrome_login_email,device_label,expected_platforms_json,status,last_seen_at,native_identity_verified_at FROM browser_profiles WHERE creator_id=? AND status<>'revoked' ORDER BY label").bind(creatorId).all<ChromeProfile>(),
   ]);
   const social = accounts.results.filter((account) => account.account_kind === "social"); const paid = accounts.results.filter((account) => account.account_kind === "paid");
+  if (!admin) return <AppShell active="Onboarding"><CreatorOnboarding profile={profile} compliance={compliance} sections={sections.results} accounts={accounts.results.filter((account) => account.creator_visible)} brand={{ ...voice, ...positioning, ...about }} saveAccount={addOperationalProfileAction} /></AppShell>;
   const guidedValues = { stage_name: profile?.stage_name ?? "", voice_summary: voice?.voice_summary ?? "", forbidden_topics_claims: voice?.forbidden_topics_claims ?? "", primary_audience: positioning?.primary_audience ?? "", content_pillars: positioning?.content_pillars ?? "" };
   const review = reviewOnboardingSectionAction;
   return <AppShell active="Onboarding">{admin && <section className="panel admin-section"><div className="section-heading"><div><span className="eyebrow">ACCOUNT LIFECYCLE</span><h2>Retire an operational account</h2><p>Retirement preserves history and blocks publishing. Resolve draft, scheduled, and publishing posts first.</p></div><span>Admin only</span></div>{accounts.results.filter((account) => account.is_active).map((account) => <form className="identity-row" action={retireOperationalAccountAction} key={account.id}><div><strong>{account.platform} · {account.label}</strong><small>{account.handle || "No handle"}</small></div><input name="accountId" type="hidden" value={account.id} /><button className="danger-action" type="submit">Retire account</button></form>)}</section>}<PageHeader eyebrow="CREATOR ONBOARDING" title="Creator onboarding" subtitle="Draft → Creator review → Admin review → Active. Changes to an active workspace return their affected section to review." />

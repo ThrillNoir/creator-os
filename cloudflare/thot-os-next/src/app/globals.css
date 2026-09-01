@@ -289,6 +289,24 @@ button, input, textarea, select { font: inherit; }
 .reserved-control button { width: 100%; min-height: 42px; margin: 16px 0 10px; border: 1px solid var(--line); border-radius: 9px; background: #15111c; color: var(--muted); }
 .reserved-control small { display: block; color: var(--muted); line-height: 1.5; }
 .admin-section { margin-top: 16px; }
+.creator-interview { max-width: 860px; margin: 0 auto; }
+.creator-interview-intro { margin: 8px 0 22px; }
+.creator-interview-intro h1 { margin: 8px 0; }
+.creator-interview-intro p, .creator-chapter-heading p { color: var(--muted); line-height: 1.5; }
+.creator-chapter { margin-top: 16px; }
+.creator-chapter-heading { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 12px; align-items: start; }
+.creator-chapter-heading h2 { margin: 4px 0; }
+.creator-chapter-heading > span:last-child { color: var(--muted); font-size: 11px; text-transform: capitalize; }
+.creator-form { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.creator-form label, .creator-form .privacy-note, .creator-form button { grid-column: span 1; }
+.creator-form label:nth-of-type(odd):last-of-type { grid-column: 1 / -1; }
+.creator-form textarea { min-height: 80px; resize: vertical; }
+.creator-form input, .creator-form select, .creator-form textarea { width: 100%; }
+.privacy-note { margin: 0; padding: 10px; border: 1px solid #5c478a; border-radius: 8px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.creator-chapter > form:not(.creator-form) { margin-top: 14px; }
+.creator-account-list { margin-top: 16px; }
+.creator-review { border-color: #5c478a; }
+@media (max-width: 680px) { .creator-form { grid-template-columns: 1fr; } .creator-form label, .creator-form .privacy-note, .creator-form button { grid-column: 1; } .creator-chapter-heading { grid-template-columns: auto minmax(0,1fr); } .creator-chapter-heading > span:last-child { grid-column: 2; } }
 .admin-identity-row,.pairing-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .admin-identity-row span,.pairing-row span,.identity-row > div > span { display: block; margin-top: 5px; color: var(--purple2); font-size: 10px; }
 .confirmed-action { display: grid; justify-items: end; gap: 8px; max-width: 310px; }

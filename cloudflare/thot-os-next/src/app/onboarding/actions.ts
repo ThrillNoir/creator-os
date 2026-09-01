@@ -8,8 +8,8 @@ import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
 import { redirect } from "next/navigation";
 
 const sections = new Set(["identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me"]);
-const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "telegram", "other"]);
-const paidPlatforms = new Set(["onlyfans", "fansly", "manyvids", "patreon", "other"]);
+const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "youtube", "myroomz", "other"]);
+const paidPlatforms = new Set(["onlyfans", "fansly", "myroomz", "other"]);
 
 function value(form: FormData, key: string, maximum = 2000) { return String(form.get(key) ?? "").replace(/\r\n?/g, "\n").trim().slice(0, maximum); }
 function email(form: FormData, key: string) { const result = value(form, key, 254).toLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new Error("Enter a valid contact email."); return result; }
@@ -31,7 +31,7 @@ async function changedSection(creatorId: string, section: string, email: string,
 
 export async function saveOnboardingIdentityAction(form: FormData) {
   const identity = await context(); const creatorId = identity.creator.creator_id; const admin = identity.creator.role === "agency_admin";
-  const stageName = value(form, "stageName", 100); if (!stageName) throw new Error("Stage name is required.");
+  const stageName = value(form, "stageName", 100); if (admin && !stageName) throw new Error("Stage name is required.");
   const DB = cloudflareEnv().DB;
   const actor = humanAuditActor(identity);
   const legalName = admin ? value(form, "legalName", 160) : "";
@@ -39,7 +39,7 @@ export async function saveOnboardingIdentityAction(form: FormData) {
   if (admin && (legalName || dob) && (!legalName || !dob)) throw new Error("Legal name and date of birth must be recorded together.");
   if (admin && dob) dateOfBirth(dob);
   await DB.prepare(`INSERT INTO creator_onboarding_profiles (creator_id,stage_name,preferred_name,contact_email,contact_phone,country,time_zone,restricted_admin_notes)
-    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(creator_id) DO UPDATE SET stage_name=excluded.stage_name,preferred_name=excluded.preferred_name,contact_email=excluded.contact_email,contact_phone=excluded.contact_phone,country=excluded.country,time_zone=excluded.time_zone,restricted_admin_notes=CASE WHEN ? THEN excluded.restricted_admin_notes ELSE creator_onboarding_profiles.restricted_admin_notes END,updated_at=CURRENT_TIMESTAMP`)
+    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(creator_id) DO UPDATE SET stage_name=CASE WHEN excluded.stage_name<>'' THEN excluded.stage_name ELSE creator_onboarding_profiles.stage_name END,preferred_name=CASE WHEN excluded.preferred_name<>'' THEN excluded.preferred_name ELSE creator_onboarding_profiles.preferred_name END,contact_email=CASE WHEN excluded.contact_email<>'' THEN excluded.contact_email ELSE creator_onboarding_profiles.contact_email END,contact_phone=CASE WHEN excluded.contact_phone<>'' THEN excluded.contact_phone ELSE creator_onboarding_profiles.contact_phone END,country=CASE WHEN excluded.country<>'' THEN excluded.country ELSE creator_onboarding_profiles.country END,time_zone=CASE WHEN excluded.time_zone<>'' THEN excluded.time_zone ELSE creator_onboarding_profiles.time_zone END,restricted_admin_notes=CASE WHEN ? THEN excluded.restricted_admin_notes ELSE creator_onboarding_profiles.restricted_admin_notes END,updated_at=CURRENT_TIMESTAMP`)
     .bind(creatorId, stageName, value(form, "preferredName", 100), email(form, "contactEmail"), value(form, "contactPhone", 40), value(form, "country", 80), value(form, "timeZone", 80), admin ? value(form, "restrictedAdminNotes", 4000) : "", admin ? 1 : 0).run();
   if (admin && legalName && dob) await DB.prepare(`INSERT INTO creator_compliance_records (creator_id,legal_name,date_of_birth,updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id) DO UPDATE SET legal_name=excluded.legal_name,date_of_birth=excluded.date_of_birth,updated_at=CURRENT_TIMESTAMP`).bind(creatorId, legalName, dob).run();
