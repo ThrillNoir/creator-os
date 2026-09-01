@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/onboarding": {
+      "targetKind": "existing-ui",
+      "projectId": "71959f23-b075-43a5-92ea-0a702d4d5359",
+      "baselineDraftId": "32587d02-5b37-438e-abe0-4766d1477d58",
+      "activeDraftId": "32587d02-5b37-438e-abe0-4766d1477d58",
+      "designSystemPath": ".superdesign/design-system.md",
+      "referenceIds": [
+        "26b98086-54dd-41ca-84ca-7d8fcc17736c",
+        "2793707a-45f0-4bb7-b7a2-b43e682cb497"
+      ],
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "cloudflare/thot-os-next/src/app/onboarding/page.tsx",
+        "cloudflare/thot-os-next/src/components/creator-onboarding.tsx",
+        "cloudflare/thot-os-next/src/app/onboarding/secure-login-capture.tsx",
+        "cloudflare/thot-os-next/src/components/guided-onboarding-interview.tsx",
+        "cloudflare/thot-os-next/src/app/onboarding/actions.ts",
+        "cloudflare/thot-os-next/src/components/app-shell.tsx",
+        "cloudflare/thot-os-next/src/components/app-navigation.tsx",
+        "cloudflare/thot-os-next/src/app/globals.css:1:50",
+        "cloudflare/thot-os-next/src/app/globals.css:255:330",
+        "cloudflare/thot-os-next/src/app/globals.css:445:446",
+        "cloudflare/thot-os-next/src/app/globals.css:661:734",
+        "cloudflare/thot-os-next/src/app/boldkit-cloud.css"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "c2e4031cb88994050d0fc1cd4345801be9cb5abd2431d676628676bfc2a789f6",
+        "cloudflare/thot-os-next/src/app/onboarding/page.tsx": "04ccca455c8095b43f3eadceb61b4b9fc6ffc56fbdb4d21a7f94bd8030d7ab7b",
+        "cloudflare/thot-os-next/src/components/creator-onboarding.tsx": "ed74b02350edabd262452e02d4ca63cc5412fdfcbe3de780a5962d3233cd0082",
+        "cloudflare/thot-os-next/src/app/onboarding/secure-login-capture.tsx": "b67ac8510f9250408bf6c4cfbd7c1a7a56fda92d9a373c0886953d58d60149c6",
+        "cloudflare/thot-os-next/src/components/guided-onboarding-interview.tsx": "325294f1111db2d4e8a87d9b1139b4e41b8118bca5f9614c6f5162632c63036d",
+        "cloudflare/thot-os-next/src/app/onboarding/actions.ts": "5766275e452e517f26dcb095e7cf0a472d278a7b7e24cf665fdc15e42c7daebb",
+        "cloudflare/thot-os-next/src/components/app-shell.tsx": "65a7238ebb31bb9840c501d549afc161a74e1f0812821ba7449d7d7fecfcdc57",
+        "cloudflare/thot-os-next/src/components/app-navigation.tsx": "bbcdd1491eb59cfc9d581d2cb09cb170eb3be81295510f862fc0835e8da502a4",
+        "cloudflare/thot-os-next/src/app/globals.css": "f139993d5aa323cd241752694543e0eafb704749d1489d0117ef2d90ec3ca9b6",
+        "cloudflare/thot-os-next/src/app/boldkit-cloud.css": "633172bd1f6cec7ae75991894c8c0f8050b2ca1670fe0d1fbdd06b42d4f9d4ca"
+      },
+      "components": [],
+      "drafts": {
+        "32587d02-5b37-438e-abe0-4766d1477d58": {
+          "title": "THOT OS — Creator onboarding controls updated",
+          "visualDirection": "simplified interview, progressive account entry, prominent PIN and explicit review handoff",
+          "currentVersion": 3
+        }
+      },
+      "updatedAt": "2026-09-01T06:27:14.265Z"
+    }
+  }
+}

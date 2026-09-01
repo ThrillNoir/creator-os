@@ -326,6 +326,9 @@ body {
 .os-cloud-shell .profile-inherit-toggle { border: 2px solid var(--foreground); background: var(--card); color: var(--foreground); }
 .os-cloud-shell .profile-theme.selected,
 .os-cloud-shell .profile-choice-grid label.selected { background: var(--accent); color: var(--accent-foreground); box-shadow: 4px 4px 0 var(--shadow-color); }
+.os-cloud-shell .creator-review { background: var(--accent); color: var(--accent-foreground); }
+.os-cloud-shell .creator-review-missing { background: var(--warning); color: var(--warning-foreground); }
+.os-cloud-shell .creator-review-sent { background: var(--card); color: var(--card-foreground); }
 
 /* Product previews intentionally retain creator-controlled geometry. */
 .os-cloud-shell .profile-phone { border-radius: 30px !important; }

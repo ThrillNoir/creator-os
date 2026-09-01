@@ -304,9 +304,46 @@ button, input, textarea, select { font: inherit; }
 .creator-form input, .creator-form select, .creator-form textarea { width: 100%; }
 .privacy-note { margin: 0; padding: 10px; border: 1px solid #5c478a; border-radius: 8px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .creator-chapter > form:not(.creator-form) { margin-top: 14px; }
-.creator-account-list { margin-top: 16px; }
 .creator-review { border-color: #5c478a; }
-@media (max-width: 680px) { .creator-form { grid-template-columns: 1fr; } .creator-form label, .creator-form .privacy-note, .creator-form button { grid-column: 1; } .creator-chapter-heading { grid-template-columns: auto minmax(0,1fr); } .creator-chapter-heading > span:last-child { grid-column: 2; } }
+.guided-interview { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.guided-interview-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--muted); font-size: 11px; }
+.guided-interview form > h3 { margin: 0 0 6px; }
+.guided-interview form > p { margin: 6px 0; line-height: 1.45; }
+.guided-interview form > label { display: grid; gap: 6px; margin-top: 14px; font-weight: 700; }
+.creator-interview-actions { align-items: center; }
+.creator-interview-actions .primary { margin: 0; }
+.creator-interview-links { display: flex; justify-content: flex-end; gap: 16px; margin-top: 8px; }
+.creator-interview-links button { min-height: 44px; padding: 8px 2px; border: 0; background: transparent; color: var(--muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.account-pin-callout { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 16px; align-items: start; margin: 18px 0 20px; padding: 16px; border: 3px solid var(--line); background: var(--secondary); box-shadow: 5px 5px 0 var(--shadow-color); }
+.account-pin-callout h3, .account-pin-callout p { margin: 5px 0 0; }
+.account-pin-callout p { line-height: 1.45; }
+.account-pin-callout > strong { font-size: 11px; text-transform: uppercase; }
+.creator-account-nav { display: flex; flex-wrap: wrap; gap: 9px; margin: 0 0 18px; }
+.creator-account-nav button { min-height: 44px; margin: 0; }
+.creator-account-tab { padding: 9px 12px; border: 2px solid var(--line); background: var(--card); color: var(--ink); box-shadow: 3px 3px 0 var(--shadow-color); cursor: pointer; font-weight: 800; }
+.creator-account-tab[aria-pressed="true"] { background: var(--accent); box-shadow: none; transform: translate(3px,3px); }
+.creator-add-account[aria-pressed="true"] { box-shadow: none; transform: translate(5px,5px); }
+.creator-account-editor { margin-top: 10px; padding-top: 2px; border-top: 1px solid var(--line); }
+.creator-account-editor select:disabled { color: var(--muted); cursor: not-allowed; opacity: .75; }
+.creator-password-field { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+.creator-reveal-password { min-width: 58px; min-height: 42px; border: 2px solid var(--line); background: var(--secondary); color: var(--ink); cursor: pointer; font-weight: 800; }
+.provider-password-note { display: grid; align-content: center; gap: 4px; min-height: 68px; padding: 10px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.provider-password-note strong { color: var(--ink); }
+.creator-purpose-field, .creator-purpose-suggestions, .creator-pin-field, .creator-account-actions { grid-column: 1 / -1 !important; }
+.creator-purpose-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.creator-purpose-suggestions button { min-height: 44px; padding: 8px 11px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font-weight: 750; }
+.creator-account-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.creator-account-actions button { min-height: 44px; margin: 0; }
+.creator-account-review-note, .creator-account-feedback { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+.creator-account-feedback { min-height: 1.5em; }
+.creator-review-safety { line-height: 1.55; }
+.creator-review-missing { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 14px 0; padding: 12px; border: 2px solid var(--line); background: var(--warning); }
+.creator-review-missing strong { width: 100%; }
+.creator-review-missing a { text-decoration: underline; text-underline-offset: 3px; }
+.creator-review-sent { display: grid; gap: 4px; margin-top: 16px; padding: 12px; border: 2px solid var(--line); background: var(--card); }
+.creator-review-sent span { font-size: 12px; line-height: 1.45; }
+.creator-review button:disabled { cursor: not-allowed; opacity: .5; }
+@media (max-width: 680px) { .creator-form { grid-template-columns: 1fr; } .creator-form label, .creator-form .privacy-note, .creator-form button, .provider-password-note { grid-column: 1; } .creator-chapter-heading { grid-template-columns: auto minmax(0,1fr); } .creator-chapter-heading > span:last-child { grid-column: 2; } .account-pin-callout { grid-template-columns: 1fr; } .creator-interview-actions { justify-content: stretch; } .creator-interview-actions button { flex: 1 1 100%; min-height: 44px; } .creator-interview-links { justify-content: space-between; } .creator-account-actions { display: grid; grid-template-columns: 1fr; } }
 .admin-identity-row,.pairing-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .admin-identity-row span,.pairing-row span,.identity-row > div > span { display: block; margin-top: 5px; color: var(--purple2); font-size: 10px; }
 .confirmed-action { display: grid; justify-items: end; gap: 8px; max-width: 310px; }

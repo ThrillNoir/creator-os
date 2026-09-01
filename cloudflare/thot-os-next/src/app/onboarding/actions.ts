@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { humanAuditActor } from "@/lib/audit-identity";
 import { requireCreatorContext } from "@/lib/identity";
 import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
+import { requireStepUpSession, STEP_UP_COOKIE } from "@/lib/access-vault";
 import { redirect } from "next/navigation";
 
 const sections = new Set(["identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me"]);
@@ -14,10 +16,16 @@ const creatorLoginMethods = new Set(["password", "google", "apple"]);
 
 function value(form: FormData, key: string, maximum = 2000) { return String(form.get(key) ?? "").replace(/\r\n?/g, "\n").trim().slice(0, maximum); }
 function email(form: FormData, key: string) { const result = value(form, key, 254).toLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new Error("Enter a valid contact email."); return result; }
+const platformHosts: Record<string, string[]> = { instagram: ["instagram.com"], reddit: ["reddit.com"], x: ["x.com", "twitter.com"], tiktok: ["tiktok.com"], threads: ["threads.net"], facebook: ["facebook.com"], telegram: ["t.me"], youtube: ["youtube.com", "youtu.be"], fansly: ["fansly.com"], onlyfans: ["onlyfans.com"], manyvids: ["manyvids.com"], patreon: ["patreon.com"], myroomz: ["myroomz.com"] };
+function profileUrl(form: FormData, platform: string) { const result = value(form, "profileUrl", 500); if (!result) return ""; let parsed: URL; try { parsed = new URL(result); } catch { throw new Error("Enter a valid profile URL."); } if (parsed.protocol !== "https:") throw new Error("Profile URLs must use https."); const hosts = platformHosts[platform]; if (hosts && !hosts.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) throw new Error(`Enter a ${platform} profile URL.`); return parsed.toString(); }
 function dateOfBirth(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Enter a valid date of birth."); const date = new Date(`${value}T00:00:00Z`); if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new Error("Enter a valid date of birth."); const now = new Date(); const adult = new Date(Date.UTC(now.getUTCFullYear() - 18, now.getUTCMonth(), now.getUTCDate())); if (date > adult || date < new Date("1900-01-01T00:00:00Z")) throw new Error("The supplied date does not meet adult verification requirements."); return value; }
 function revalidate() { revalidatePath("/onboarding"); revalidatePath("/creators"); }
 
 async function context() { return requireCreatorContext("mutate"); }
+async function requireCreatorPin(identity: Awaited<ReturnType<typeof context>>) {
+  const cookieStore = await cookies();
+  await requireStepUpSession({ sessionId: cookieStore.get(STEP_UP_COOKIE)?.value, email: identity.email, creatorId: identity.creator.creator_id, role: identity.creator.role });
+}
 async function audit(creatorId: string, actor: { identity: string; role: string }, event: string, subject: string, detail: Record<string, unknown> = {}) {
   await cloudflareEnv().DB.prepare("INSERT INTO creator_access_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,?,?,?)")
     .bind(crypto.randomUUID(), creatorId, actor.identity, actor.role, event, subject, JSON.stringify(detail)).run();
@@ -25,8 +33,8 @@ async function audit(creatorId: string, actor: { identity: string; role: string 
 async function changedSection(creatorId: string, section: string, email: string, isCreator: boolean) {
   const DB = cloudflareEnv().DB;
   await DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by) VALUES (?,?,?,?)
-    ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN (SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id=excluded.creator_id)='active' THEN 'admin_review' WHEN ? THEN 'creator_review' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
-    .bind(creatorId, section, isCreator ? "creator_review" : "admin_review", email, isCreator ? 1 : 0).run();
+    ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN (SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id=excluded.creator_id)='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
+    .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0).run();
   await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN workflow_state='active' THEN 'admin_review' ELSE workflow_state END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId).run();
 }
 
@@ -72,15 +80,17 @@ export async function saveComplianceAction(form: FormData) {
 async function createOperationalProfile(form: FormData, creatorOnly = false) {
   const identity = await context(); const creatorId = identity.creator.creator_id; const creator = identity.creator.role === "creator"; const type = value(form, "accountKind", 10); const platform = value(form, "platform", 40).toLowerCase();
   if (creatorOnly && !creator) throw new Error("Only the creator can add an account through onboarding.");
+  if (creatorOnly) await requireCreatorPin(identity);
   if ((type !== "social" || !socialPlatforms.has(platform)) && (type !== "paid" || !paidPlatforms.has(platform))) throw new Error("Choose a supported social or paid platform.");
-  const label = value(form, "label", 100); if (!label) throw new Error("Account label is required.");
+  const username = value(form, "username", 120); if (creator && !username) throw new Error("Username is required.");
+  const label = creator ? username : value(form, "label", 100); if (!label) throw new Error("Account label is required.");
   const loginMethod = creator ? value(form, "loginMethod", 20) : value(form, "connectionMethod", 80);
   if (creator && !creatorLoginMethods.has(loginMethod)) throw new Error("Choose password, Google or Apple sign-in.");
   const loginEmail = email(form, "loginEmail");
   if (creator && loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const id = crypto.randomUUID(); const DB = cloudflareEnv().DB; const actor = humanAuditActor(identity);
   await DB.prepare(`INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,account_kind,login_email,profile_url,account_purpose,is_active,connection_method,creator_visible,administrator_notes,capabilities_json,private_upload_destination)
-  VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, value(form, "username", 120), type, loginEmail, value(form, "profileUrl", 500), value(form, "purpose", 400), creator ? 0 : (form.has("isActive") ? (form.get("isActive") === "yes" ? 1 : 0) : 1), loginMethod, 1, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
+  VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, username, type, loginEmail, profileUrl(form, platform), value(form, "purpose", 400), creator ? 0 : (form.has("isActive") ? (form.get("isActive") === "yes" ? 1 : 0) : 1), loginMethod, 1, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
   await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: true, loginMethod }); revalidate();
   return id;
 }
@@ -91,13 +101,15 @@ export async function createCreatorOperationalProfileAction(form: FormData) { re
 export async function saveCreatorAccountLoginMethodAction(form: FormData) {
   const identity = await context();
   if (identity.creator.role !== "creator") throw new Error("Only the creator can save an account sign-in method here.");
+  await requireCreatorPin(identity);
   const accountId = value(form, "accountId", 160); const loginMethod = value(form, "loginMethod", 20); const loginEmail = email(form, "loginEmail");
   if (!accountId || !creatorLoginMethods.has(loginMethod)) throw new Error("Choose an account and sign-in method.");
   if (loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
+  const username = value(form, "username", 120); if (!username) throw new Error("Username is required.");
   const DB = cloudflareEnv().DB;
-  const account = await DB.prepare("SELECT account_kind FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string }>();
+  const account = await DB.prepare("SELECT account_kind,platform FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string }>();
   if (!account) throw new Error("Choose an account in your workspace.");
-  await DB.prepare("UPDATE operational_accounts SET connection_method=?,login_email=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(loginMethod, loginEmail, accountId, identity.creator.creator_id).run();
+  await DB.prepare("UPDATE operational_accounts SET label=?,handle=?,login_email=?,profile_url=?,account_purpose=?,connection_method=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(username, username, loginEmail, profileUrl(form, account.platform), value(form, "purpose", 400), loginMethod, accountId, identity.creator.creator_id).run();
   await changedSection(identity.creator.creator_id, account.account_kind === "paid" ? "paid_platforms" : "social_profiles", identity.email, true);
   await audit(identity.creator.creator_id, humanAuditActor(identity), "onboarding_account_login_method_saved", accountId, { loginMethod }); revalidate();
   return { ok: true };
@@ -172,11 +184,25 @@ export async function submitCreatorOnboardingAction() {
   const identity = await context();
   if (identity.creator.role !== "creator") throw new Error("Only the creator can submit this onboarding interview.");
   const creatorId = identity.creator.creator_id;
+  const DB = cloudflareEnv().DB;
+  const [profile, compliance, brand, account] = await Promise.all([
+    DB.prepare("SELECT stage_name,contact_email,contact_phone FROM creator_onboarding_profiles WHERE creator_id=?").bind(creatorId).first<{ stage_name: string; contact_email: string; contact_phone: string }>(),
+    DB.prepare("SELECT legal_name,date_of_birth FROM creator_compliance_records WHERE creator_id=?").bind(creatorId).first<{ legal_name: string; date_of_birth: string }>(),
+    DB.prepare(`SELECT bv.voice_summary,ba.short_bio,ba.interests,bp.niches_themes,bp.hard_boundaries,bp.growth_priorities FROM creator_brand_voice_profiles bv
+      LEFT JOIN creator_about_profiles ba ON ba.creator_id=bv.creator_id LEFT JOIN creator_brand_positioning bp ON bp.creator_id=bv.creator_id WHERE bv.creator_id=?`).bind(creatorId).first<Record<string, string>>(),
+    DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND creator_visible=1 AND account_kind IN ('social','paid') LIMIT 1").bind(creatorId).first<{ id: string }>(),
+  ]);
+  const missing = [
+    !compliance?.legal_name || !compliance.date_of_birth || !profile?.contact_email || !profile.contact_phone ? "Who is the real you" : "",
+    !profile?.stage_name || !brand || [brand.short_bio, brand.voice_summary, brand.interests, brand.niches_themes, brand.hard_boundaries, brand.growth_priorities].some((item) => !item?.trim()) ? "Who is the online you" : "",
+    !account ? "Accounts and logins" : "",
+  ].filter(Boolean);
+  if (missing.length) throw new Error(`Complete these chapters before sending: ${missing.join(", ")}.`);
   const keys = ["identity", "brand_voice", "positioning", "about_me", "social_profiles", "paid_platforms"];
-  await cloudflareEnv().DB.batch(keys.map((key) => cloudflareEnv().DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,'creator_review',?,CURRENT_TIMESTAMP)
+  await DB.batch(keys.map((key) => DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,'creator_review',?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status='creator_review',updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId, key, identity.email)));
   await audit(creatorId, humanAuditActor(identity), "onboarding_creator_submitted", "creator_review", { sections: keys.length });
-  revalidate();
+  revalidate(); redirect("/onboarding?submitted=1#onboarding-review");
 }
 
 export async function activateOnboardingAction() {

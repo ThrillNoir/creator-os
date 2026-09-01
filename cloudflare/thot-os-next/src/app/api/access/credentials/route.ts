@@ -57,6 +57,13 @@ export async function POST(request: Request) {
       return noStoreJson({ ok: true });
     }
 
+    if (action === "step_up") {
+      const stepUp = await verifyStepUp(context, body.pin);
+      const cookieStore = await cookies();
+      cookieStore.set(STEP_UP_COOKIE, stepUp.sessionId, { httpOnly: true, secure: process.env.NODE_ENV !== "development", sameSite: "strict", path: "/", maxAge: 5 * 60 });
+      return noStoreJson({ ok: true });
+    }
+
     if (action === "reveal" || action === "copy") {
       const credential = await availableCredential(context, text(body.credentialId, 80));
       const stepUp = await verifyStepUp(context, body.pin);
