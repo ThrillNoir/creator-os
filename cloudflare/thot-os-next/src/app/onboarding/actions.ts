@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 const sections = new Set(["identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me"]);
 const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "telegram", "youtube", "other"]);
 const paidPlatforms = new Set(["onlyfans", "fansly", "manyvids", "patreon", "myroomz", "other"]);
+const creatorLoginMethods = new Set(["password", "google", "apple"]);
 
 function value(form: FormData, key: string, maximum = 2000) { return String(form.get(key) ?? "").replace(/\r\n?/g, "\n").trim().slice(0, maximum); }
 function email(form: FormData, key: string) { const result = value(form, key, 254).toLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new Error("Enter a valid contact email."); return result; }
@@ -73,15 +74,34 @@ async function createOperationalProfile(form: FormData, creatorOnly = false) {
   if (creatorOnly && !creator) throw new Error("Only the creator can add an account through onboarding.");
   if ((type !== "social" || !socialPlatforms.has(platform)) && (type !== "paid" || !paidPlatforms.has(platform))) throw new Error("Choose a supported social or paid platform.");
   const label = value(form, "label", 100); if (!label) throw new Error("Account label is required.");
+  const loginMethod = creator ? value(form, "loginMethod", 20) : value(form, "connectionMethod", 80);
+  if (creator && !creatorLoginMethods.has(loginMethod)) throw new Error("Choose password, Google or Apple sign-in.");
+  const loginEmail = email(form, "loginEmail");
+  if (creator && loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const id = crypto.randomUUID(); const DB = cloudflareEnv().DB; const actor = humanAuditActor(identity);
   await DB.prepare(`INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,account_kind,login_email,profile_url,account_purpose,is_active,connection_method,creator_visible,administrator_notes,capabilities_json,private_upload_destination)
-  VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, value(form, "username", 120), type, email(form, "loginEmail"), value(form, "profileUrl", 500), value(form, "purpose", 400), creator ? 0 : (form.has("isActive") ? (form.get("isActive") === "yes" ? 1 : 0) : 1), creator ? "descriptive only" : value(form, "connectionMethod", 80), 1, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
-  await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: true }); revalidate();
+  VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, value(form, "username", 120), type, loginEmail, value(form, "profileUrl", 500), value(form, "purpose", 400), creator ? 0 : (form.has("isActive") ? (form.get("isActive") === "yes" ? 1 : 0) : 1), loginMethod, 1, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
+  await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: true, loginMethod }); revalidate();
   return id;
 }
 
 export async function addOperationalProfileAction(form: FormData) { await createOperationalProfile(form); }
 export async function createCreatorOperationalProfileAction(form: FormData) { return { ok: true, id: await createOperationalProfile(form, true) }; }
+
+export async function saveCreatorAccountLoginMethodAction(form: FormData) {
+  const identity = await context();
+  if (identity.creator.role !== "creator") throw new Error("Only the creator can save an account sign-in method here.");
+  const accountId = value(form, "accountId", 160); const loginMethod = value(form, "loginMethod", 20); const loginEmail = email(form, "loginEmail");
+  if (!accountId || !creatorLoginMethods.has(loginMethod)) throw new Error("Choose an account and sign-in method.");
+  if (loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
+  const DB = cloudflareEnv().DB;
+  const account = await DB.prepare("SELECT account_kind FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string }>();
+  if (!account) throw new Error("Choose an account in your workspace.");
+  await DB.prepare("UPDATE operational_accounts SET connection_method=?,login_email=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(loginMethod, loginEmail, accountId, identity.creator.creator_id).run();
+  await changedSection(identity.creator.creator_id, account.account_kind === "paid" ? "paid_platforms" : "social_profiles", identity.email, true);
+  await audit(identity.creator.creator_id, humanAuditActor(identity), "onboarding_account_login_method_saved", accountId, { loginMethod }); revalidate();
+  return { ok: true };
+}
 
 export async function saveGuidedInterviewAction(_previous: { ok: boolean; message: string }, form: FormData) {
   try {

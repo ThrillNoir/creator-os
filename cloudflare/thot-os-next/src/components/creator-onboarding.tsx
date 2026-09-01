@@ -2,16 +2,17 @@ import { saveGuidedInterviewAction, saveOnboardingIdentityAction, savePrivateIde
 import { SecureLoginCapture } from "@/app/onboarding/secure-login-capture";
 import { GuidedOnboardingInterview } from "@/components/guided-onboarding-interview";
 
-type Account = { id: string; platform: string; label: string; handle: string; login_email: string; account_purpose: string };
+type Account = { id: string; platform: string; label: string; handle: string; login_email: string; account_purpose: string; connection_method: string };
 type Profile = { stage_name: string; preferred_name: string; contact_email: string; contact_phone: string; country: string; time_zone: string };
 type Compliance = { legal_name: string; date_of_birth: string };
 type Sections = { section_key: string; status: string }[];
 type Brand = Record<string, string | null | undefined>;
 type CreateAccount = (form: FormData) => Promise<{ ok: boolean; id: string }>;
+type SaveLoginMethod = (form: FormData) => Promise<{ ok: boolean }>;
 
 const status = (sections: Sections, keys: string[]) => keys.every((key) => sections.find((item) => item.section_key === key)?.status === "complete") ? "complete" : keys.some((key) => sections.find((item) => item.section_key === key)?.status === "creator_review") ? "ready for review" : "in progress";
 
-export function CreatorOnboarding({ profile, compliance, sections, accounts, brand, hasPin, createAccount }: { profile?: Profile | null; compliance?: Compliance | null; sections: Sections; accounts: Account[]; brand: Brand; hasPin: boolean; createAccount: CreateAccount }) {
+export function CreatorOnboarding({ profile, compliance, sections, accounts, brand, hasPin, createAccount, saveLoginMethod }: { profile?: Profile | null; compliance?: Compliance | null; sections: Sections; accounts: Account[]; brand: Brand; hasPin: boolean; createAccount: CreateAccount; saveLoginMethod: SaveLoginMethod }) {
   const guidedValues = { stage_name: profile?.stage_name ?? "", short_bio: brand.short_bio ?? "", voice_summary: brand.voice_summary ?? "", interests: brand.interests ?? "", niches_themes: brand.niches_themes ?? "", hard_boundaries: brand.hard_boundaries ?? "", growth_priorities: brand.growth_priorities ?? "" };
   return <main className="creator-interview" aria-labelledby="creator-onboarding-title">
     <header className="creator-interview-intro"><span className="eyebrow">YOUR THOT OS SETUP</span><h1 id="creator-onboarding-title">Let’s make future-you’s life easier.</h1><p>Three short chapters and one final check. Save as you go, come back whenever you need, and let your assistant handle the boring wording bits.</p></header>
@@ -26,7 +27,7 @@ export function CreatorOnboarding({ profile, compliance, sections, accounts, bra
     </section>
 
     <section className="panel creator-chapter"><div className="creator-chapter-heading"><span className="step-number">3</span><div><span className="eyebrow">YOUR ACCOUNTS AND LOGINS</span><h2>Hand us the keys—safely</h2><p>Add every profile separately, including second Instagram, Reddit or X accounts. Passwords go into the encrypted vault, never the AI interview.</p></div><span>{status(sections, ["social_profiles", "paid_platforms"])}</span></div>
-      <SecureLoginCapture accounts={accounts} hasPin={hasPin} createAccount={createAccount} />
+      <SecureLoginCapture accounts={accounts} hasPin={hasPin} createAccount={createAccount} saveLoginMethod={saveLoginMethod} />
       {accounts.length ? <div className="creator-account-list">{accounts.map((account) => <article className="identity-row" key={account.id}><div><strong>{account.platform} · {account.label}</strong><small>{account.handle || "No handle yet"}{account.account_purpose ? ` · ${account.account_purpose}` : ""}</small></div></article>)}</div> : <p className="muted">No accounts yet. Add the first one above whenever you’re ready.</p>}
     </section>
 

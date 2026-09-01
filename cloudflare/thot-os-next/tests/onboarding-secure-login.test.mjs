@@ -14,6 +14,10 @@ test("onboarding secure login uses the existing Access vault contract", async ()
   assert.match(component, /\/api\/access\/credentials/);
   assert.match(component, /credentials: "same-origin"/);
   assert.match(component, /Login details saved securely\./);
+  assert.match(component, /Sign in with Google/);
+  assert.match(component, /Sign in with Apple/);
+  assert.match(component, /method === "password"/);
+  assert.match(component, /saveLoginMethod\(form\)/);
   assert.match(component, /password: ""/);
   assert.match(component, /setPin\(""\)/);
   assert.doesNotMatch(component, /Recovery or MFA notes/);
@@ -25,6 +29,9 @@ test("onboarding secure login uses the existing Access vault contract", async ()
   assert.match(route, /Only agency administrators can revoke credentials/);
   assert.match(action, /createCreatorOperationalProfileAction/);
   assert.match(action, /createOperationalProfile\(form, true\)/);
+  assert.match(action, /creatorLoginMethods = new Set\(\["password", "google", "apple"\]\)/);
+  assert.match(action, /saveCreatorAccountLoginMethodAction/);
+  assert.match(action, /WHERE id=\? AND creator_id=\? AND creator_visible=1/);
   assert.match(action, /creator \? 0 : \(form\.has\("isActive"\)/);
   assert.match(action, /return \{ ok: true, id: await createOperationalProfile\(form, true\) \}/);
   assert.match(vault, /encoder\.encode\(input\.password\)/);
