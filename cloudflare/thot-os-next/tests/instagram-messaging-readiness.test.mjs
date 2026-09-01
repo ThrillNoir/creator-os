@@ -7,7 +7,7 @@ test("Instagram restriction stays account-scoped and never becomes a sent receip
   assert.match(scheduler, /code\\s\*\[:=\]\?\\s\*368/);
   assert.match(scheduler, /subcode\\s\*\[:=\]\?\\s\*1404169/);
   assert.match(scheduler, /status=CASE WHEN \? THEN 'restricted'/);
-  assert.match(scheduler, /write_enabled=0,outbound_validated=0/);
+  assert.match(scheduler, /write_enabled=CASE WHEN \? THEN 0 ELSE write_enabled END,outbound_validated=0/);
   assert.match(scheduler, /Do not retry until independently authorised/);
   assert.match(scheduler, /thread\.connection_status === "restricted"/);
   assert.match(scheduler, /UPDATE instagram_reply_drafts SET status=\?,error=\?/);

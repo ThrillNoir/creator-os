@@ -327,7 +327,7 @@ function isDefinitiveInstagramRejection(message: string) {
 }
 
 function isInstagramAccountRestriction(message: string) {
-  return /(?:oauthexception|code\s*[:=]?\s*368|subcode\s*[:=]?\s*1404169)/i.test(message);
+  return /(?:code\s*[:=]?\s*368|subcode\s*[:=]?\s*1404169)/i.test(message);
 }
 
 function r2ObjectPath(key: string) { return key.split("/").map(encodeURIComponent).join("/"); }
@@ -775,8 +775,8 @@ async function sendInstagramReply(request: Request, env: Env) {
     await env.DB.batch([
       env.DB.prepare("UPDATE instagram_reply_drafts SET status=?,error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(status, safeMessage, draft.id, input.creatorId),
       ...(definitiveRejection ? [env.DB.prepare(`UPDATE messaging_connections SET status=CASE WHEN ? THEN 'restricted' ELSE status END,
-          write_enabled=0,outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?`)
-        .bind(accountRestricted ? 1 : 0, accountRestricted ? "Instagram messaging is restricted for this account (Meta OAuthException code 368/subcode 1404169). Do not retry until independently authorised." : "Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, input.creatorId)] : []),
+          write_enabled=CASE WHEN ? THEN 0 ELSE write_enabled END,outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?`)
+        .bind(accountRestricted ? 1 : 0, accountRestricted ? 1 : 0, accountRestricted ? "Instagram messaging is restricted for this account (Meta OAuthException code 368/subcode 1404169). Do not retry until independently authorised." : "Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, input.creatorId)] : []),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?,?,'service:instagram-scheduler','service',?)")
         .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, uncertain ? "instagram_reply_uncertain" : "instagram_reply_failed", JSON.stringify({ draftId: draft.id, error: safeMessage })),
     ]);

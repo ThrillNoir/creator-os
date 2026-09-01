@@ -34,7 +34,7 @@ async function changedSection(creatorId: string, section: string, email: string,
   const DB = cloudflareEnv().DB;
   await DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by) VALUES (?,?,?,?)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN (SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id=excluded.creator_id)='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
-    .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0, isCreator ? 1 : 0).run();
+    .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0).run();
   await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN workflow_state='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE workflow_state END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(isCreator ? 1 : 0, creatorId).run();
 }
 

@@ -20,7 +20,7 @@ export function CreatorOnboarding({ profile, compliance, sections, accounts, bra
     accounts.length === 0 ? ["Accounts and logins", "onboarding-accounts"] : null,
   ].filter(Boolean) as string[][];
   const reviewKeys = ["identity", "brand_voice", "positioning", "about_me", "social_profiles", "paid_platforms"];
-  const reviewReady = reviewKeys.every((key) => ["creator_review", "complete"].includes(sections.find((item) => item.section_key === key)?.status ?? "draft"));
+  const reviewReady = reviewKeys.every((key) => ["creator_review", "admin_review", "complete"].includes(sections.find((item) => item.section_key === key)?.status ?? "draft"));
   return <main className="creator-interview" aria-labelledby="creator-onboarding-title">
     <header className="creator-interview-intro"><span className="eyebrow">YOUR THOT OS SETUP</span><h1 id="creator-onboarding-title">Let’s make future-you’s life easier.</h1><p>Three short chapters and one final check. Save as you go, come back whenever you need, and let your assistant handle the boring wording bits.</p></header>
 
