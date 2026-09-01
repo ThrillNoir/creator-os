@@ -323,7 +323,11 @@ function d1TimestampMs(value: string | null) {
 }
 
 function isDefinitiveInstagramRejection(message: string) {
-  return /\bstatus 4\d\d\b/i.test(message) || /outside of allowed window/i.test(message);
+  return isInstagramAccountRestriction(message) || /\bstatus 4\d\d\b/i.test(message) || /outside of allowed window/i.test(message);
+}
+
+function isInstagramAccountRestriction(message: string) {
+  return /(?:oauthexception|code\s*[:=]?\s*368|subcode\s*[:=]?\s*1404169)/i.test(message);
 }
 
 function r2ObjectPath(key: string) { return key.split("/").map(encodeURIComponent).join("/"); }
@@ -657,11 +661,12 @@ async function syncInstagram(env: Env, creatorId: string, forceAnalytics = false
 async function validateInstagramReplyTarget(request: Request, env: Env) {
   const input = await request.json<{ threadId?: string; creatorId?: string }>();
   if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
-  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id
+  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id,c.status AS connection_status
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
     WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'`)
-    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string }>();
+    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string; connection_status: string }>();
   if (!thread) return Response.json({ ok: false, error: "instagram_thread_not_found" }, { status: 404 });
+  if (thread.connection_status === "restricted") return Response.json({ ok: false, error: "Instagram messaging is restricted for this account. Do not retry until the account is independently authorised again." }, { status: 409 });
   const { connection, recipient, messageCount } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id);
   await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
   if (thread.participant_external_id && thread.participant_external_id !== recipient.id) {
@@ -762,14 +767,16 @@ async function sendInstagramReply(request: Request, env: Env) {
     return Response.json({ ok: true, sent: true, providerMessageId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instagram reply failed.";
+    const accountRestricted = isInstagramAccountRestriction(message);
     const definitiveRejection = isDefinitiveInstagramRejection(message);
     const uncertain = sendAttempted && !definitiveRejection;
     const status = uncertain ? "uncertain" : "failed";
     const safeMessage = `${uncertain ? "Outcome uncertain; check Instagram before sending again. " : ""}${message}`.slice(0, 2000);
     await env.DB.batch([
       env.DB.prepare("UPDATE instagram_reply_drafts SET status=?,error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(status, safeMessage, draft.id, input.creatorId),
-      ...(definitiveRejection ? [env.DB.prepare("UPDATE messaging_connections SET outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
-        .bind("Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, input.creatorId)] : []),
+      ...(definitiveRejection ? [env.DB.prepare(`UPDATE messaging_connections SET status=CASE WHEN ? THEN 'restricted' ELSE status END,
+          write_enabled=0,outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?`)
+        .bind(accountRestricted ? 1 : 0, accountRestricted ? "Instagram messaging is restricted for this account (Meta OAuthException code 368/subcode 1404169). Do not retry until independently authorised." : "Instagram rejected the reply. Refresh messages and validate this conversation again after a new inbound DM.", draft.connection_id, input.creatorId)] : []),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?,?,'service:instagram-scheduler','service',?)")
         .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, uncertain ? "instagram_reply_uncertain" : "instagram_reply_failed", JSON.stringify({ draftId: draft.id, error: safeMessage })),
     ]);
