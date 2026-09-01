@@ -76,7 +76,6 @@ export async function POST(request: Request) {
     const pinScope = "scope" in existingSession ? existingSession.scope : existingSession.pin_scope;
 
     if (action === "create") {
-      if (context.creator.role !== "agency_admin") throw new Error("Only agency administrators can create credentials.");
       const accountId = text(body.accountId, 160) || null;
       const group = text(body.group, 20);
       const label = text(body.label, 100);
@@ -87,11 +86,11 @@ export async function POST(request: Request) {
         if (!account) throw new Error("Choose an account in this creator workspace.");
       }
       const id = crypto.randomUUID();
-      const encrypted = await encryptCredentialPassword({ creatorId, credentialId: id, accountId, password: password(body.password) });
+      const encrypted = await encryptCredentialPassword({ creatorId, credentialId: id, accountId, password: password(body.password), notes: text(body.notes, 2000) });
       await DB.prepare(`INSERT INTO vault_credentials (id,creator_id,account_id,credential_group,label,username,login_email,wrapped_dek,wrapped_dek_nonce,ciphertext,ciphertext_nonce,key_version,created_by,shared_with_creator,notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, accountId, group, label, text(body.username, 254), text(body.loginEmail, 254).toLowerCase(), encrypted.wrappedDek, encrypted.wrappedDekNonce, encrypted.ciphertext, encrypted.ciphertextNonce, encrypted.keyVersion, context.email, body.sharedWithCreator ? 1 : 0, text(body.notes, 2000)).run();
-      await audit(creatorId, context.email, context.creator.role, "credential_created", id, { group, sharedWithCreator: Boolean(body.sharedWithCreator), pinScope });
-      return noStoreJson({ ok: true, id });
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, accountId, group, label, text(body.username, 254), text(body.loginEmail, 254).toLowerCase(), encrypted.wrappedDek, encrypted.wrappedDekNonce, encrypted.ciphertext, encrypted.ciphertextNonce, encrypted.keyVersion, context.email, context.creator.role === "creator" ? 1 : (body.sharedWithCreator ? 1 : 0), "").run();
+      await audit(creatorId, context.email, context.creator.role, "credential_created", id, { group, sharedWithCreator: context.creator.role === "creator" ? true : Boolean(body.sharedWithCreator), pinScope });
+      return noStoreJson({ ok: true, id, notice: "Login details saved securely." });
     }
 
     const credential = await availableCredential(context, text(body.credentialId, 80));
