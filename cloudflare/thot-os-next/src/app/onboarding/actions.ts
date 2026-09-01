@@ -34,8 +34,8 @@ async function changedSection(creatorId: string, section: string, email: string,
   const DB = cloudflareEnv().DB;
   await DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by) VALUES (?,?,?,?)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN (SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id=excluded.creator_id)='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
-    .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0).run();
-  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN workflow_state='active' THEN 'admin_review' ELSE workflow_state END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId).run();
+    .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0, isCreator ? 1 : 0).run();
+  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN workflow_state='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE workflow_state END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(isCreator ? 1 : 0, creatorId).run();
 }
 
 export async function saveOnboardingIdentityAction(form: FormData) {
@@ -177,6 +177,7 @@ export async function reviewOnboardingSectionAction(form: FormData) {
   const admin = identity.creator.role === "agency_admin"; if (!admin && identity.creator.role !== "creator") throw new Error("This role cannot review onboarding.");
   const status = admin ? "complete" : "creator_review"; await cloudflareEnv().DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status=excluded.status,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId,section,status,identity.email).run();
+  if (admin) await cloudflareEnv().DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='admin_review',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId).run();
   await audit(creatorId,humanAuditActor(identity),admin ? "onboarding_section_approved" : "onboarding_creator_reviewed",section,{}); revalidate();
 }
 
@@ -201,6 +202,7 @@ export async function submitCreatorOnboardingAction() {
   const keys = ["identity", "brand_voice", "positioning", "about_me", "social_profiles", "paid_platforms"];
   await DB.batch(keys.map((key) => DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,'creator_review',?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status='creator_review',updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId, key, identity.email)));
+  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='creator_review',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND workflow_state<>'active'").bind(creatorId).run();
   await audit(creatorId, humanAuditActor(identity), "onboarding_creator_submitted", "creator_review", { sections: keys.length });
   revalidate(); redirect("/onboarding?submitted=1#onboarding-review");
 }
