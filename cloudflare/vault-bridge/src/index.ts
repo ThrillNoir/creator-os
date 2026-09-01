@@ -273,7 +273,7 @@ async function ingestFanslyMessages(request: Request, env: Env, identity: Bridge
       WHERE thread_id=? AND creator_id=? AND status='complete' AND last_completed_at<datetime('now','-10 minutes')`).bind(threadId, identity.creator_id).run();
     importedThreads++;
   }
-  if (importedThreads > 0) await env.DB.prepare(`UPDATE messaging_connections
+  await env.DB.prepare(`UPDATE messaging_connections
     SET status='connected',read_enabled=1,outbound_validated=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND creator_id=? AND (status<>'connected' OR read_enabled<>1 OR outbound_validated<>1 OR last_error IS NOT NULL OR last_synced_at IS NULL OR last_synced_at<datetime('now','-5 minutes'))`).bind(connection.id, identity.creator_id).run();
   if (importedMessages > 0 || changedThreads > 0) await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'fansly_messages_synced','service:vault-bridge','service',?)")
@@ -330,13 +330,17 @@ async function fanslyOutbox(request: Request, env: Env, identity: BridgeIdentity
     return json(request, { ok: true, job: claimed.meta.changes ? job : null });
   }
   const input = await request.json<{ jobId?: string; sent?: boolean; error?: string; receipt?: unknown }>();
+  const proof = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt)
+    ? input.receipt as Record<string, unknown> : null;
+  const receiptConfirmed = proof?.sent === true && proof?.composerCount === 1
+    && proof?.sendControlCount === 1 && proof?.composerCleared === true && proof?.outgoingBubbleAdded === true;
   const job = await env.DB.prepare(`SELECT d.id,d.thread_id,d.connection_id,d.body FROM premium_message_drafts d
     JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
     WHERE d.id=? AND d.creator_id=? AND c.account_id=? AND d.platform='fansly' AND d.status='claimed'`)
     .bind(String(input.jobId ?? ""), identity.creator_id, identity.account_id).first<{ id: string; thread_id: string; connection_id: string; body: string }>();
   if (!job) return json(request, { ok: false, error: "outbox_job_not_claimed" }, 409);
-  const sent = input.sent === true;
-  const error = sent ? null : String(input.error ?? "Fansly device send failed.").slice(0, 1000);
+  const sent = input.sent === true && receiptConfirmed;
+  const error = sent ? null : String(input.error ?? (input.sent === true ? "Fansly device receipt was incomplete; verify the live conversation before retrying." : "Fansly device send failed.")).slice(0, 1000);
   const statements = [
     env.DB.prepare("UPDATE premium_message_drafts SET status=?,completed_at=CURRENT_TIMESTAMP,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
       .bind(sent ? "sent" : "failed", error, JSON.stringify(input.receipt ?? {}).slice(0, 12_000), job.id, identity.creator_id),

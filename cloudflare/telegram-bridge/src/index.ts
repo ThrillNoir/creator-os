@@ -127,7 +127,11 @@ async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?:
     for (const state of configured) if (state.status !== "connected") await validateIdentity(env, state.creator_id).catch(() => undefined);
     states = (await activeConnectors(env)).results.filter((state) => state.status === "connected");
     if (requestedCreatorId && !states.some((state) => state.creator_id === requestedCreatorId)) throw new Error("This creator’s Telegram identity is not validated.");
-    const stateByChat = new Map(states.map((state) => [state.chat_id, state]));
+    const stateByChat = new Map<string, Connector>();
+    for (const state of states) {
+      if (stateByChat.has(state.chat_id)) throw new Error("Telegram chat identity is assigned to more than one creator.");
+      stateByChat.set(state.chat_id, state);
+    }
     for (const state of states) {
       const run = { id: crypto.randomUUID(), seen: 0, imported: 0 };
       runs.set(state.creator_id, run);
