@@ -25,6 +25,7 @@ test("onboarding secure login uses the existing Access vault contract", async ()
   assert.match(route, /Only agency administrators can revoke credentials/);
   assert.match(action, /createCreatorOperationalProfileAction/);
   assert.match(action, /createOperationalProfile\(form, true\)/);
+  assert.match(action, /creator \? 0 : \(form\.has\("isActive"\)/);
   assert.match(action, /return \{ ok: true, id: await createOperationalProfile\(form, true\) \}/);
   assert.match(vault, /encoder\.encode\(input\.password\)/);
   assert.doesNotMatch(vault, /JSON\.stringify\([^)]*password/);

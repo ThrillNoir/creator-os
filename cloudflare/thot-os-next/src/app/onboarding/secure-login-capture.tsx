@@ -43,7 +43,7 @@ export function SecureLoginCapture({ accounts, hasPin, createAccount }: { accoun
         const account = new FormData();
         account.set("accountKind", paidPlatforms.has(draft.platform) ? "paid" : "social");
         account.set("platform", draft.platform); account.set("label", draft.label); account.set("username", draft.username);
-        account.set("loginEmail", draft.loginEmail); account.set("profileUrl", draft.profileUrl); account.set("purpose", draft.purpose); account.set("isActive", "yes");
+        account.set("loginEmail", draft.loginEmail); account.set("profileUrl", draft.profileUrl); account.set("purpose", draft.purpose);
         selected = (await createAccount(account)).id;
       }
       if (!pinReady) { await request({ action: "setup_pin", pin }); setPinReady(true); }
