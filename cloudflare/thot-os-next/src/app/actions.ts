@@ -1068,6 +1068,18 @@ export async function validateTelegramConnectorAction() {
   redirect("/messages?platform=telegram&saved=telegram_validated");
 }
 
+const telegramServiceCapabilities = ["telegram.status.read", "telegram.connection.manage", "telegram.messages.sync", "telegram.messages.write"];
+async function ensureTelegramServiceGrants(DB: D1Database, identity: Awaited<ReturnType<typeof requireCreatorContext>>) {
+  const creatorId = identity.creator.creator_id;
+  const results = await DB.batch(telegramServiceCapabilities.map((capability) => DB.prepare(`INSERT OR IGNORE INTO service_principal_creator_grants (service_principal_id,creator_id,capability,status)
+    SELECT p.id,?,?, 'active' FROM service_principals p JOIN service_principal_credentials c ON c.service_principal_id=p.id AND c.status='active'
+    WHERE p.principal_name='thot-os-web-telegram' AND p.status='active'`).bind(creatorId, capability)));
+  const active = await DB.prepare(`SELECT COUNT(*) AS count FROM service_principal_creator_grants g JOIN service_principals p ON p.id=g.service_principal_id
+    WHERE p.principal_name='thot-os-web-telegram' AND g.creator_id=? AND g.status='active' AND g.capability IN (${telegramServiceCapabilities.map(() => "?").join(",")})`).bind(creatorId, ...telegramServiceCapabilities).first<{ count: number }>();
+  if (Number(active?.count ?? 0) !== telegramServiceCapabilities.length) throw new Error("Telegram’s creator-scoped service permissions are not active.");
+  if (results.some((result) => Number(result.meta?.changes ?? 0) > 0)) await DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(), creatorId, identity.email, identity.creator.role, "telegram_service_grants_provisioned", "thot-os-web-telegram", JSON.stringify({ capabilities: telegramServiceCapabilities })).run();
+}
+
 export async function startTelegramPairingAction(formData: FormData) {
   const identity = await requireCreatorContext("manage_identity");
   const creatorId = identity.creator.creator_id;
@@ -1080,6 +1092,7 @@ export async function startTelegramPairingAction(formData: FormData) {
   ]);
   if (existing) throw new Error("This creator already has a Telegram messaging connection.");
   if (!bot?.expected_bot_username) throw new Error("The agency Telegram bot is not configured.");
+  await ensureTelegramServiceGrants(DB, identity);
   const connectionId = crypto.randomUUID();
   await DB.batch([
     creatorPrepare(DB, creatorId, `INSERT INTO messaging_connections (id,creator_id,platform,display_name,handle,mode,read_enabled,write_enabled,outbound_validated,status,last_error)
@@ -1095,6 +1108,7 @@ export async function startTelegramPairingAction(formData: FormData) {
 export async function completeTelegramPairingAction() {
   const identity = await requireCreatorContext("manage_identity");
   const env = cloudflareEnv();
+  await ensureTelegramServiceGrants(env.DB, identity);
   const response = await fetchInternalService(env, "telegram", "telegram.connection.manage", env.TELEGRAM_BRIDGE, "https://telegram-bridge/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Telegram pairing could not be confirmed.");

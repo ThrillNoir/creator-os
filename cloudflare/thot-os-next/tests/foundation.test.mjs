@@ -235,6 +235,15 @@ test("Unified Messages is creator scoped, auditable and fail-closed for outbound
   assert.match(bridge, /telegram_reply_collected/);
 });
 
+test("Telegram pairing provisions only its creator-scoped service capabilities", async () => {
+  const actions = await source("src/app/actions.ts");
+  assert.match(actions, /const telegramServiceCapabilities = \["telegram\.status\.read", "telegram\.connection\.manage", "telegram\.messages\.sync", "telegram\.messages\.write"\]/);
+  assert.match(actions, /INSERT OR IGNORE INTO service_principal_creator_grants/);
+  assert.match(actions, /p\.principal_name='thot-os-web-telegram'/);
+  assert.match(actions, /telegram_service_grants_provisioned/);
+  assert.doesNotMatch(actions, /ensureTelegramServiceGrants[\s\S]{0,2000}(?:instagram|reddit|public\.profile)/);
+});
+
 test("Unified Messages accepts both D1 and ISO UTC timestamps", async () => {
   const page = await source("src/app/messages/page.tsx");
   assert.match(page, /\(\?:Z\|\[\+\-\]\\d\{2\}:\?\\d\{2\}\)\$/);
