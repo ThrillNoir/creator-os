@@ -299,7 +299,8 @@ test("Instagram replies use one-step Enter sending with subscriptions, validatio
   assert.match(scheduler, /graph_api_version: "v25\.0"/);
   assert.match(messages, /last_inbound_at/);
   assert.match(messages, /ORDER BY unixepoch\(replace\(substr\(COALESCE\(m\.sent_at,m\.created_at\),1,19\),'T',' '\)\),m\.id/);
-  assert.match(page, /reply window closed/);
+  assert.match(page, /instagramSendingBlocker/);
+  assert.match(await source("src/lib/instagram-readiness.ts"), /reply window is closed/);
   assert.match(page, /data\.selectedThread\?\.participant_name/);
   assert.match(migration, /CREATE TABLE instagram_reply_drafts/);
   assert.match(migration, /liveMessagesSent.*false/);
