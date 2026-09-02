@@ -46,7 +46,7 @@ async function connector(env: Env, creatorId: string) {
 }
 
 async function activeConnectors(env: Env) {
-  return env.DB.prepare("SELECT * FROM telegram_connector_state WHERE status IN ('connected','needs_check','failed')").all<Connector>();
+  return env.DB.prepare("SELECT * FROM telegram_connector_state WHERE status IN ('pending_validation','connected','failed')").all<Connector>();
 }
 
 async function validateIdentity(env: Env, creatorId: string) {
@@ -76,21 +76,18 @@ async function validateIdentity(env: Env, creatorId: string) {
   }
 }
 
-async function completePairing(env: Env, creatorId: string) {
-  const state = await connector(env, creatorId);
-  if (!state || !state.telegram_username || (state.chat_id && state.telegram_user_id)) throw new Error("Start this creator’s Telegram pairing first.");
-  await validateIdentity(env, creatorId);
-  await env.DB.prepare("INSERT OR IGNORE INTO telegram_bot_state (id) VALUES ('shared')").run();
-  const botState = await env.DB.prepare("SELECT next_update_id FROM telegram_bot_state WHERE id='shared'").first<{ next_update_id: number }>();
-  if (!botState) throw new Error("Telegram’s shared cursor is unavailable.");
-  const response = await executeTelegramTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, "TELEGRAM_GET_UPDATES", { offset: botState.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message"] });
-  if (!response.ok) throw new Error("Telegram did not confirm the pairing check.");
-  const command = `/start cos_${creatorId}`.toLowerCase();
+function pairingMessage(state: Connector, updates: TelegramUpdate[]) {
+  const command = `/start cos_${state.creator_id}`.toLowerCase();
   const expectedUsername = state.telegram_username.replace(/^@/, "").toLowerCase();
-  const message = (response.result ?? []).map((update) => update.message).find((candidate) => {
+  return updates.map((update) => update.message).find((candidate) => {
     const username = candidate?.from?.username?.replace(/^@/, "").toLowerCase();
     return candidate?.chat?.type === "private" && !candidate.from?.is_bot && candidate.text?.trim().toLowerCase() === command && username === expectedUsername;
   });
+}
+
+async function bindPairing(env: Env, state: Connector, message: TelegramMessage) {
+  const creatorId = state.creator_id;
+  const expectedUsername = state.telegram_username.replace(/^@/, "").toLowerCase();
   if (!message?.chat?.id || !message.from?.id || String(message.chat.id) !== String(message.from.id)) throw new Error(`Open @${state.expected_bot_username.replace(/^@/, "")} from @${expectedUsername}, tap Start, then confirm pairing again.`);
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
@@ -103,6 +100,21 @@ async function completePairing(env: Env, creatorId: string) {
     env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_creator_paired','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, JSON.stringify({ telegramUsername: `@${expectedUsername}` })),
   ]);
   return { ok: true, username: `@${expectedUsername}` };
+}
+
+async function completePairing(env: Env, creatorId: string) {
+  const state = await connector(env, creatorId);
+  if (!state || !state.telegram_username) throw new Error("Start this creator’s Telegram pairing first.");
+  if (state.chat_id && state.telegram_user_id) return { ok: true, username: `@${state.telegram_username.replace(/^@/, "").toLowerCase()}` };
+  await validateIdentity(env, creatorId);
+  await env.DB.prepare("INSERT OR IGNORE INTO telegram_bot_state (id) VALUES ('shared')").run();
+  const botState = await env.DB.prepare("SELECT next_update_id FROM telegram_bot_state WHERE id='shared'").first<{ next_update_id: number }>();
+  if (!botState) throw new Error("Telegram’s shared cursor is unavailable.");
+  const response = await executeTelegramTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, "TELEGRAM_GET_UPDATES", { offset: botState.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message"] });
+  if (!response.ok) throw new Error("Telegram did not confirm the pairing check.");
+  const message = pairingMessage(state, response.result ?? []);
+  if (!message) throw new Error(`Open @${state.expected_bot_username.replace(/^@/, "")} from @${state.telegram_username.replace(/^@/, "")}, tap Start, then confirm pairing again.`);
+  return bindPairing(env, state, message);
 }
 
 async function importUpdate(env: Env, state: Connector, update: TelegramUpdate) {
@@ -155,8 +167,9 @@ async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?:
     const configured = (await activeConnectors(env)).results;
     if (requestedCreatorId && !configured.some((state) => state.creator_id === requestedCreatorId)) throw new Error("This creator’s Telegram pairing has not been configured.");
     for (const state of configured) if (state.status !== "connected") await validateIdentity(env, state.creator_id).catch(() => undefined);
-    states = (await activeConnectors(env)).results.filter((state) => state.status === "connected");
-    if (requestedCreatorId && !states.some((state) => state.creator_id === requestedCreatorId)) throw new Error("This creator’s Telegram identity is not validated.");
+    const refreshed = (await activeConnectors(env)).results;
+    states = refreshed.filter((state) => state.status === "connected");
+    const pending = refreshed.filter((state) => state.status === "pending_validation");
     const stateByChat = new Map<string, Connector>();
     for (const state of states) {
       if (stateByChat.has(state.chat_id)) throw new Error("Telegram chat identity is assigned to more than one creator.");
@@ -179,6 +192,11 @@ async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?:
         if (updateId == null) continue;
         totalSeen++;
         const message = update.message ?? update.edited_message;
+        const pendingState = pending.find((state) => pairingMessage(state, [update]));
+        if (pendingState && message) {
+          await bindPairing(env, pendingState, message);
+          pending.splice(pending.indexOf(pendingState), 1);
+        }
         const state = message?.chat?.id ? stateByChat.get(String(message.chat.id)) : undefined;
         if (state) {
           const result = await importUpdate(env, state, update);
@@ -191,6 +209,10 @@ async function pollSharedUpdates(env: Env, trigger: string, requestedCreatorId?:
         botState = { next_update_id: Math.max(botState.next_update_id, nextOffset) };
       }
       if (updates.length < 100) break;
+    }
+    if (requestedCreatorId) {
+      const requestedState = await connector(env, requestedCreatorId);
+      if (requestedState?.status !== "connected") throw new Error("This creator’s Telegram identity is not validated.");
     }
     for (const state of states) {
       const run = runs.get(state.creator_id)!;

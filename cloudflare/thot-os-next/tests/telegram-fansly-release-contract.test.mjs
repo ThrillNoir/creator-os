@@ -17,3 +17,12 @@ test("Telegram refuses ambiguous creator chat routing", async () => {
   const bridge = await source("../telegram-bridge/src/index.ts");
   assert.match(bridge, /Telegram chat identity is assigned to more than one creator/);
 });
+
+test("Telegram collector binds pending starts before advancing the shared cursor", async () => {
+  const bridge = await source("../telegram-bridge/src/index.ts");
+  assert.match(bridge, /status IN \('pending_validation','connected','failed'\)/);
+  const bind = bridge.indexOf("await bindPairing(env, pendingState, message)");
+  const advance = bridge.indexOf("UPDATE telegram_bot_state SET next_update_id=?", bind);
+  assert.ok(bind > 0 && advance > bind);
+  assert.match(bridge, /if \(state\.chat_id && state\.telegram_user_id\) return \{ ok: true/);
+});
