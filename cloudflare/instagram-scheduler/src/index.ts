@@ -601,7 +601,8 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, accountId?: s
     const mediaStatements = [env.DB.prepare(`INSERT INTO instagram_media_metrics
       (creator_id,account_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(creator_id,media_id) DO UPDATE SET account_id=excluded.account_id,permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP`)
+      ON CONFLICT(creator_id,media_id) DO UPDATE SET account_id=excluded.account_id,permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP
+      WHERE instagram_media_metrics.account_id IS NULL OR instagram_media_metrics.account_id=excluded.account_id`)
       .bind(creatorId, connection.account_id, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount),
     env.DB.prepare(`INSERT INTO instagram_media_metric_observations
       (id,creator_id,account_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at,source)
@@ -655,7 +656,8 @@ async function collectInstagramAnalytics(env: Env, creatorId: string, triggerTyp
   // Resolve and validate the exact account before creating a run row. An
   // omitted account is only a compatibility shorthand for a sole account;
   // all new state and locks remain account-scoped.
-  const scopedAccountId = accountId ?? (await currentInstagramAnalyticsConnection(env, creatorId)).account_id;
+  const resolvedConnection = await currentInstagramAnalyticsConnection(env, creatorId, accountId);
+  const scopedAccountId = resolvedConnection.account_id;
   const runId = crypto.randomUUID();
   const claim = await env.DB.prepare(`INSERT OR IGNORE INTO instagram_analytics_collection_runs
     (id,creator_id,trigger_type,status,force_requested,account_id)
@@ -1056,7 +1058,7 @@ async function syncNextCreator(env: Env) {
     WHERE status='running' AND unixepoch(started_at) <= unixepoch(CURRENT_TIMESTAMP)-900`).run();
   const creator = await env.DB.prepare(`SELECT pc.creator_id,pc.account_id
     FROM provider_connections pc
-    JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.platform='instagram' AND oa.is_active=1
+    JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.creator_id=pc.creator_id AND oa.platform='instagram' AND oa.is_active=1
     LEFT JOIN instagram_account_sync_state state ON state.creator_id=pc.creator_id AND state.account_id=pc.account_id
     WHERE pc.service='instagram' AND pc.status='active'
       AND (state.last_analytics_sync_at IS NULL OR unixepoch(state.last_analytics_sync_at)<=unixepoch(CURRENT_TIMESTAMP)-21600)

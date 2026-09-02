@@ -8,22 +8,34 @@ export { buildGrowthInsights, type GrowthInsights, type GrowthRecommendation, ty
 
 export async function getGrowthInsights(creatorId: string, accountId?: string) {
   const { DB } = cloudflareEnv();
-  const scope = accountId ? " AND account_id=@account" : "";
-  const statement = creatorPrepare(DB, creatorId, `
-    WITH latest_media_observations AS (
-      SELECT account_id,media_id,MAX(collected_at) AS collected_at
-      FROM instagram_media_metric_observations
-      WHERE creator_id=@creator AND source='instagram_api'${scope}
-      GROUP BY account_id,media_id
-    )
-    SELECT o.account_id,o.media_id,o.permalink,o.media_type,o.media_product_type,o.published_at,
-      o.like_count,o.comments_count,o.view_count,o.saved_count,o.shares_count,o.collected_at,o.source
-    FROM instagram_media_metric_observations o
-    JOIN latest_media_observations latest ON latest.account_id IS o.account_id AND latest.media_id=o.media_id AND latest.collected_at=o.collected_at
-    WHERE o.creator_id=@creator AND o.source='instagram_api'${scope}
-    ORDER BY COALESCE(o.published_at,o.collected_at) DESC
-    LIMIT 250
-  `);
-  const observations = await (accountId ? statement.bind(accountId) : statement).all<InstagramOfficialObservation>();
+  const statement = accountId
+    ? creatorPrepare(DB, creatorId, `
+        WITH ranked_media_observations AS (
+          SELECT o.*,ROW_NUMBER() OVER (PARTITION BY o.account_id,o.media_id ORDER BY o.collected_at DESC,o.id DESC) AS observation_rank
+          FROM instagram_media_metric_observations o
+          WHERE o.creator_id=@creator AND o.account_id=@account AND o.source='instagram_api'
+        )
+        SELECT account_id,media_id,permalink,media_type,media_product_type,published_at,
+          like_count,comments_count,view_count,saved_count,shares_count,collected_at,source
+        FROM ranked_media_observations WHERE observation_rank=1
+        ORDER BY COALESCE(published_at,collected_at) DESC
+        LIMIT 250
+      `).bind(accountId)
+    : creatorPrepare(DB, creatorId, `
+        WITH ranked_media_observations AS (
+          SELECT o.*,ROW_NUMBER() OVER (
+            PARTITION BY o.media_id
+            ORDER BY o.collected_at DESC,(o.account_id IS NOT NULL) DESC,o.account_id DESC,o.id DESC
+          ) AS observation_rank
+          FROM instagram_media_metric_observations o
+          WHERE o.creator_id=@creator AND o.source='instagram_api'
+        )
+        SELECT account_id,media_id,permalink,media_type,media_product_type,published_at,
+          like_count,comments_count,view_count,saved_count,shares_count,collected_at,source
+        FROM ranked_media_observations WHERE observation_rank=1
+        ORDER BY COALESCE(published_at,collected_at) DESC
+        LIMIT 250
+      `);
+  const observations = await statement.all<InstagramOfficialObservation>();
   return buildGrowthInsights({ observations: observations.results });
 }

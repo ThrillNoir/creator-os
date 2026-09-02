@@ -50,7 +50,7 @@ export function isMessagePlatform(value: string | undefined): value is MessagePl
   return messagePlatforms.includes(value as MessagePlatform);
 }
 
-export async function getUnifiedMessages(creatorId: string, platform?: MessagePlatform, selectedThreadId?: string) {
+export async function getUnifiedMessages(creatorId: string, platform?: MessagePlatform, selectedThreadId?: string, accountId?: string) {
   const { DB } = cloudflareEnv();
   const [connectionsResult, threadsResult, telegramResult, instagramSentResult, premiumSentResult, auditResult] = await Promise.all([
     DB.prepare(`SELECT c.*,COUNT(DISTINCT t.id) AS thread_count,COALESCE(SUM(t.unread_count),0) AS unread_count
@@ -60,7 +60,7 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
       ? DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
           (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at
           FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
-          WHERE t.creator_id=? AND c.platform=? ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(creatorId, platform).all<MessageThread>()
+          WHERE t.creator_id=? AND c.platform=?${accountId ? " AND c.account_id=?" : ""} ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(...([creatorId, platform, ...(accountId ? [accountId] : [])])).all<MessageThread>()
       : DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
           (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at
           FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id

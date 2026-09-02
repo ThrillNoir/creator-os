@@ -65,6 +65,26 @@ test("0057 keeps legacy sync state and scopes new Instagram analytics by account
       { account_id: "adelaide-instagram-main", media_id: "same-media" },
     ]);
 
+    db.prepare("INSERT INTO messaging_connections (id,creator_id,account_id,platform,display_name,status) VALUES ('msg-main','adelaide','adelaide-instagram-main','instagram','Main inbox','connected')").run();
+    db.prepare("INSERT INTO messaging_connections (id,creator_id,account_id,platform,display_name,status) VALUES ('msg-alt','adelaide','adelaide-instagram-alt','instagram','Alt inbox','connected')").run();
+    db.prepare("INSERT INTO message_threads (id,creator_id,connection_id,external_thread_id) VALUES ('thread-main','adelaide','msg-main','main-thread')").run();
+    const selectedThread = db.prepare("SELECT c.account_id FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'").get("thread-main", "adelaide");
+    assert.equal(selectedThread.account_id, "adelaide-instagram-main");
+    assert.notEqual(selectedThread.account_id, "adelaide-instagram-alt", "a posted account selector cannot retarget another thread's connection");
+
+    db.prepare("INSERT INTO instagram_media_metrics (creator_id,account_id,media_id,like_count) VALUES ('adelaide','adelaide-instagram-main','same-media',1)").run();
+    db.prepare("INSERT INTO instagram_media_metrics (creator_id,account_id,media_id,like_count) VALUES ('adelaide','adelaide-instagram-alt','same-media',2) ON CONFLICT(creator_id,media_id) DO UPDATE SET account_id=excluded.account_id,like_count=excluded.like_count WHERE instagram_media_metrics.account_id IS NULL OR instagram_media_metrics.account_id=excluded.account_id").run();
+    assert.deepEqual(db.prepare("SELECT account_id,like_count FROM instagram_media_metrics WHERE creator_id='adelaide' AND media_id='same-media'").get(), { account_id: "adelaide-instagram-main", like_count: 1 });
+
+    db.prepare("INSERT INTO creators (id,name,slug,initials) VALUES ('other','Other','other','O')").run();
+    db.prepare("INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority) VALUES ('other-instagram','other','instagram','Other Instagram','@other','connected','scheduled_api','confirmed')").run();
+    db.prepare("INSERT INTO provider_connections (creator_id,service,account_id,connected_account_id,composio_user_id,status,external_account_id) VALUES ('other','instagram','other-instagram','other-connected','creator-os:other:service:instagram','active','other-external')").run();
+    const runCountBeforeWrongScope = db.prepare("SELECT COUNT(*) AS count FROM instagram_analytics_collection_runs WHERE creator_id='adelaide'").get().count;
+    const wrongCreatorConnection = db.prepare("SELECT pc.account_id FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.creator_id=pc.creator_id AND oa.platform='instagram' AND oa.is_active=1 WHERE pc.creator_id=? AND pc.service='instagram' AND oa.id=?").get("adelaide", "other-instagram");
+    assert.equal(wrongCreatorConnection, undefined);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM instagram_analytics_collection_runs WHERE creator_id='adelaide'").get().count, runCountBeforeWrongScope);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM instagram_account_sync_state WHERE creator_id='adelaide'").get().count, 2);
+
     const observationColumns = new Set(db.pragma("table_info(instagram_media_metric_observations)").map((column) => column.name));
     const metricColumns = new Set(db.pragma("table_info(instagram_media_metrics)").map((column) => column.name));
     assert.ok(observationColumns.has("account_id"));

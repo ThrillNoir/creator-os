@@ -849,12 +849,16 @@ export async function refreshInstagramDataAction(formData: FormData) {
 export async function refreshInstagramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();
+  const requestedAccountId = String(formData.get("accountId") ?? "").trim();
   const env = cloudflareEnv();
+  const requestedAccount = requestedAccountId ? await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='instagram' AND is_active=1").bind(requestedAccountId).first<{ id: string }>() : null;
+  if (requestedAccountId && !requestedAccount) throw new Error("That Instagram account is not active in this creator workspace.");
   const thread = threadId ? await creatorPrepare(env.DB, identity.creator.creator_id, `SELECT c.account_id
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
     WHERE t.id=? AND t.creator_id=@creator AND c.platform='instagram'`).bind(threadId).first<{ account_id: string | null }>() : null;
   if (threadId && !thread?.account_id) throw new Error("That Instagram conversation is outside this creator workspace.");
-  let accountId = thread?.account_id ?? "";
+  if (thread?.account_id && requestedAccountId && thread.account_id !== requestedAccountId) throw new Error("Choose the Instagram account assigned to this conversation before refreshing.");
+  let accountId = requestedAccountId || thread?.account_id || "";
   if (!accountId) {
     const accounts = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='instagram' AND is_active=1 ORDER BY id LIMIT 2").all<{ id: string }>();
     if (accounts.results.length !== 1) throw new Error("Select an Instagram conversation before refreshing messages.");
@@ -864,7 +868,7 @@ export async function refreshInstagramMessagesAction(formData: FormData) {
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Instagram messages could not be refreshed.");
   revalidatePath("/messages");
-  redirect(`/messages?platform=instagram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=instagram_messages_refreshed`);
+  redirect(`/messages?platform=instagram&accountId=${encodeURIComponent(accountId)}${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=instagram_messages_refreshed`);
 }
 
 export async function markInstagramThreadReadAction(formData: FormData) {
