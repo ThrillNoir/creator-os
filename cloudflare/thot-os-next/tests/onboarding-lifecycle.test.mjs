@@ -29,6 +29,7 @@ test("creator onboarding exposes the complete invitation-to-active lifecycle", a
   assert.match(page, /profile\?\.workflow_state === "active"/);
   assert.match(page, /missingRequired\.map/);
   assert.match(page, /role="status" aria-live="polite"/);
+  assert.match(page, /<\/section>\s*\{activationNotice/, "long notices must not size the status grid's auto column");
   assert.match(page, /Password needs to be entered again/);
   assert.match(creator, /sentForReview = \["creator_review", "admin_review"\]\.includes\(profile\?\.workflow_state/);
   assert.match(creator, /Send updated onboarding for review/);
