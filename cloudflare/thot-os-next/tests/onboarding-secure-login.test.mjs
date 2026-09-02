@@ -25,8 +25,11 @@ test("onboarding secure login uses the existing Access vault contract", async ()
   assert.match(component, /\+ Add account/);
   assert.doesNotMatch(component, /Account label/);
   assert.match(component, /saveLoginMethod\(account\)/);
+  assert.match(component, /password needed/);
+  assert.match(component, /has_credential/);
   assert.match(component, /password: ""/);
   assert.match(component, /setPin\(""\)/);
+  assert.doesNotMatch(component, /password of at least 12|draft\.password\.length < 12/);
   assert.doesNotMatch(component, /Recovery or MFA notes/);
   assert.match(component, /onlyfans.*fansly.*manyvids.*patreon.*myroomz/);
   assert.match(route, /context\.creator\.role === "creator" \? 1/);
@@ -35,6 +38,7 @@ test("onboarding secure login uses the existing Access vault contract", async ()
   assert.match(route, /action === "step_up"/);
   assert.match(route, /cookieStore\.set\(STEP_UP_COOKIE/);
   assert.match(route, /encryptCredentialPassword\(\{ creatorId, credentialId: id, accountId, password: password\(body\.password\) \}\)/);
+  assert.doesNotMatch(route, /result\.length < 12|between 12 and 512/);
   assert.match(route, /Only agency administrators can revoke credentials/);
   assert.match(action, /createCreatorOperationalProfileAction/);
   assert.match(action, /createOperationalProfile\(form, true\)/);

@@ -77,6 +77,8 @@ body {
 .os-cloud-nav-item:hover { background: var(--muted-surface); padding-left: 22px; }
 .os-cloud-nav-item.active { background: var(--secondary); color: var(--secondary-foreground); font-weight: 900; }
 .os-cloud-nav-icon { width: 18px; height: 18px; }
+.os-cloud-nav-text { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.os-cloud-nav-text b { min-width: 20px; border: 1px solid currentColor; background: var(--accent); padding: 2px 5px; color: var(--accent-foreground); font: 900 10px/1 var(--font-geist-mono), ui-monospace, monospace; text-align: center; }
 .os-cloud-nav-arrow { width: 14px; height: 14px; opacity: .45; }
 .os-cloud-nav-item.active .os-cloud-nav-arrow { opacity: 1; }
 

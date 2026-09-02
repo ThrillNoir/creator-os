@@ -8,7 +8,7 @@ type Credential = { id: string; creator_id: string; account_id: string | null; s
 const groups = new Set(["social", "paid", "chrome", "other"]);
 
 function text(value: unknown, maximum: number) { return String(value ?? "").replace(/\r\n?/g, "\n").trim().slice(0, maximum); }
-function password(value: unknown) { const result = String(value ?? ""); if (result.length < 12 || result.length > 512) throw new Error("Use a password between 12 and 512 characters."); return result; }
+function password(value: unknown) { const result = String(value ?? ""); if (!result || result.length > 512) throw new Error("Enter the platform password."); return result; }
 function responseError(error: unknown) { return noStoreJson({ error: error instanceof Error ? error.message : "Access vault request failed." }, 400); }
 
 async function accessContext() {

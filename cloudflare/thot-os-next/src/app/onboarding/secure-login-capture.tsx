@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type LoginMethod = "password" | "google" | "apple";
-type Account = { id: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string };
+type Account = { id: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string; has_credential: number };
 type CreateAccount = (form: FormData) => Promise<{ ok: boolean; id: string }>;
 type SaveLoginMethod = (form: FormData) => Promise<{ ok: boolean }>;
 type Draft = { platform: string; username: string; loginEmail: string; profileUrl: string; purpose: string; password: string };
@@ -16,7 +16,7 @@ const profilePlaceholders: Record<string, string> = { instagram: "https://instag
 const emptyDraft: Draft = { platform: "instagram", username: "", loginEmail: "", profileUrl: "", purpose: "", password: "" };
 
 function loginMethod(value?: string): LoginMethod { return value === "google" || value === "apple" ? value : "password"; }
-function accountName(account: Account) { return `${platformLabels[account.platform] ?? account.platform} – ${account.handle || account.label}`; }
+function accountName(account: Account) { return `${platformLabels[account.platform] ?? account.platform} – ${account.handle || account.label}${account.connection_method === "password" && !account.has_credential ? " · password needed" : ""}`; }
 
 export function SecureLoginCapture({ accounts, hasPin, createAccount, saveLoginMethod }: { accounts: Account[]; hasPin: boolean; createAccount: CreateAccount; saveLoginMethod: SaveLoginMethod }) {
   const router = useRouter();
@@ -54,7 +54,7 @@ export function SecureLoginCapture({ accounts, hasPin, createAccount, saveLoginM
       if (!draft.username.trim()) throw new Error("Enter the username for this account.");
       if (!/^\d{4}$/.test(pin)) throw new Error(pinReady ? "Enter your four-digit Account PIN." : "Create a four-digit Account PIN first.");
       if (method !== "password" && !draft.loginEmail.trim()) throw new Error("Enter the email used for Google or Apple sign-in.");
-      if (method === "password" && (!accountId || draft.password) && draft.password.length < 12) throw new Error("Enter a password of at least 12 characters.");
+      if (method === "password" && (!accountId || !accounts.find((account) => account.id === accountId)?.has_credential) && !draft.password) throw new Error("Enter the password used for this account.");
       if (!pinReady) { await request({ action: "setup_pin", pin }); setPinReady(true); }
       await request({ action: "step_up", pin });
 
@@ -91,7 +91,7 @@ export function SecureLoginCapture({ accounts, hasPin, createAccount, saveLoginM
       <label>Username<input autoComplete="username" value={draft.username} onChange={(event) => setDraft({ ...draft, username: event.target.value })} required /></label>
       <label>Profile URL<input autoComplete="url" placeholder={profilePlaceholders[draft.platform] ?? "https://example.com/username"} type="url" value={draft.profileUrl} onChange={(event) => setDraft({ ...draft, profileUrl: event.target.value })} /></label>
       <label>Email<input autoComplete="email" type="email" value={draft.loginEmail} onChange={(event) => setDraft({ ...draft, loginEmail: event.target.value })} required={method !== "password"} /></label>
-      {method === "password" ? <label>Password<div className="creator-password-field"><input autoComplete={accountId ? "current-password" : "new-password"} minLength={12} placeholder={accountId ? "Leave blank to keep the stored password" : "At least 12 characters"} type={showPassword ? "text" : "password"} value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} required={!accountId} /><button aria-label={showPassword ? "Hide password" : "Reveal password"} aria-pressed={showPassword} className="creator-reveal-password" onClick={() => setShowPassword((shown) => !shown)} type="button">{showPassword ? "Hide" : "Show"}</button></div></label> : <div className="provider-password-note"><strong>No password needed here.</strong><span>Your {method === "google" ? "Google" : "Apple"} password stays with that provider.</span></div>}
+      {method === "password" ? <label>Password<div className="creator-password-field"><input autoComplete={accountId ? "current-password" : "new-password"} maxLength={512} placeholder={accountId ? "Leave blank to keep the stored password" : "Current platform password"} type={showPassword ? "text" : "password"} value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} required={!accountId} /><button aria-label={showPassword ? "Hide password" : "Reveal password"} aria-pressed={showPassword} className="creator-reveal-password" onClick={() => setShowPassword((shown) => !shown)} type="button">{showPassword ? "Hide" : "Show"}</button></div></label> : <div className="provider-password-note"><strong>No password needed here.</strong><span>Your {method === "google" ? "Google" : "Apple"} password stays with that provider.</span></div>}
       <label className="creator-purpose-field">What is this account for?<input value={draft.purpose} onChange={(event) => setDraft({ ...draft, purpose: event.target.value })} /></label>
       <div className="creator-purpose-suggestions"><span>Suggestions:</span>{["Main", "Backup", "Reels"].map((purpose) => <button key={purpose} onClick={() => setDraft({ ...draft, purpose })} type="button">{purpose}</button>)}<span>No wrong answers</span></div>
       <label className="creator-pin-field">{pinReady ? "Enter PIN to unlock and save" : "Create your four-digit Account PIN"}<input autoComplete="off" inputMode="numeric" maxLength={4} pattern="[0-9]{4}" type="password" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))} required /></label>

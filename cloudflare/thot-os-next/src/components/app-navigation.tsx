@@ -61,6 +61,7 @@ type AppNavigationProps = {
   creatorOptions?: CreatorOption[];
   email: string;
   items: readonly NavigationItem[];
+  navigationNotices?: Record<string, number>;
   mode: "agency" | "creator" | "viewer";
   navigationLabel?: string;
   portalLabel?: string;
@@ -71,7 +72,7 @@ type AppNavigationProps = {
   switchCreatorAction?: (formData: FormData) => Promise<void>;
 };
 
-function NavigationLinks({ active, items, mobile = false }: { active: string; items: readonly NavigationItem[]; mobile?: boolean }) {
+function NavigationLinks({ active, items, mobile = false, notices = {} }: { active: string; items: readonly NavigationItem[]; mobile?: boolean; notices?: Record<string, number> }) {
   return (
     <nav aria-label="Workspace navigation" className="os-cloud-nav">
       {items.map(([icon, label, href]) => {
@@ -79,7 +80,7 @@ function NavigationLinks({ active, items, mobile = false }: { active: string; it
         const link = (
           <Link aria-current={active === label ? "page" : undefined} className={`os-cloud-nav-item ${active === label ? "active" : ""}`} href={href}>
             <Icon aria-hidden={true} className="os-cloud-nav-icon" />
-            <span>{label}</span>
+            <span className="os-cloud-nav-text">{label}{notices[label] ? <b aria-label={`${notices[label]} waiting`}>{notices[label]}</b> : null}</span>
             <ChevronRight aria-hidden="true" className="os-cloud-nav-arrow" />
           </Link>
         );
@@ -141,7 +142,7 @@ function NavigationBody({ mobile = false, props }: { mobile?: boolean; props: Ap
     <>
       <Brand mode={props.mode} portalLabel={props.portalLabel} />
       <p className="os-cloud-nav-label">{props.navigationLabel ?? (props.mode === "agency" ? "WORKSPACE" : "MY WORKSPACE")}</p>
-      <NavigationLinks active={props.active} items={props.items} mobile={mobile} />
+      <NavigationLinks active={props.active} items={props.items} mobile={mobile} notices={props.navigationNotices} />
       <Separator className="os-cloud-divider" />
       <CreatorContext idPrefix={mobile ? "mobile" : "desktop"} props={props} />
     </>

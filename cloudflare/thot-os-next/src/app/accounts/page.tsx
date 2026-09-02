@@ -29,6 +29,7 @@ type InstagramSetup = {
   last_analytics_sync_at: string | null;
   is_active: number;
 };
+type PlatformAccount = { id: string; platform: string; label: string; handle: string; connection_status: string; connection_method: string; account_kind: string; is_active: number };
 
 function formatDate(value: string | null) {
   if (!value) return "Not recorded";
@@ -48,7 +49,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const creatorId = context.creator.creator_id;
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
   const canConnectProviders = roleCan(context.creator.role, "mutate");
-  const [setup, instagramAccounts] = await Promise.all([cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
+  const [accounts, setup, instagramAccounts] = await Promise.all([
+    cloudflareEnv().DB.prepare("SELECT id,platform,label,handle,connection_status,connection_method,account_kind,is_active FROM operational_accounts WHERE creator_id=? AND account_kind IN ('social','paid') ORDER BY account_kind,platform,label").bind(creatorId).all<PlatformAccount>(),
+    cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
     bp.label AS profile_label,bp.status AS profile_status,abp.verified_at AS profile_verified_at,
     (SELECT MAX(bc.last_seen_at) FROM bridge_credentials bc WHERE bc.creator_id=oa.creator_id AND bc.account_id=oa.id AND bc.status='active') AS bridge_last_seen_at
     FROM operational_accounts oa
@@ -69,7 +72,10 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     {query.saved === "fansly_added" && <div className="success">Fansly account and the assigned Chrome profile were added. Sign in natively, then confirm the visible identity.</div>}
     {query.saved === "fansly_profile_assigned" && <div className="success">Fansly Chrome profile assigned. Sign in natively, then confirm the visible identity.</div>}
     {query.saved === "fansly_identity_confirmed" && <div className="success">Fansly identity confirmed. You can now pair the assigned bridge and open the vault.</div>}
-    <section className="panel connection-setup">
+    <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">YOUR ACCOUNTS</span><h2>Profiles received during onboarding</h2><p>Account details and platform connections are separate. Connect only the platforms THOT OS currently supports.</p></div><span>{accounts.results.length} received</span></div>
+      {accounts.results.length ? <div className="identity-list">{accounts.results.map((account) => { const pending = !account.is_active; const supported = account.platform === "instagram" || account.platform === "reddit" || account.platform === "fansly"; const href = account.platform === "instagram" ? "#instagram" : account.platform === "reddit" ? `/operations?platform=reddit&accountId=${encodeURIComponent(account.id)}` : account.platform === "fansly" ? "#fansly" : ""; return <article className="identity-row" key={account.id}><div><strong>{account.platform} · {account.label}</strong><small>{account.handle || "No username"} · {pending ? "Awaiting admin approval" : account.connection_status === "connected" ? "Connected" : supported ? "Connection required" : "Account recorded"}</small><span>{account.connection_method || "Login method not recorded"}{!supported ? " · No THOT OS connector available yet" : ""}</span></div>{canConnectProviders && !pending && href ? <Link className="secondary-action" href={href}>{account.platform === "fansly" ? "Configure bridge" : `Configure ${account.platform} API`}</Link> : pending ? <Link className="secondary-action" href="/onboarding">Review account</Link> : null}</article>; })}</div> : <div className="empty"><b>No accounts received</b><span>Add profiles during creator onboarding first.</span></div>}
+    </section>
+    <section className="panel connection-setup" id="instagram">
       <div className="section-heading"><div><span className="eyebrow">INSTAGRAM</span><h2>Official Instagram connection</h2><p>Connect the creator&apos;s professional Instagram account through the approved provider. Connecting verifies the visible account identity; it does not create, schedule or publish content.</p></div><span>{instagramStatus(instagram)}</span></div>
       {!instagramAccounts.results.length && <div className="empty"><b>Instagram account setup is required.</b><span>This creator does not yet have an Instagram account record. Add it during creator onboarding before starting OAuth.</span></div>}
       {instagramAccounts.results.length > 1 && <div className="identity-list">{instagramAccounts.results.map((account) => <article className="identity-row" key={account.id}><div><strong>{account.label}</strong><small>{account.handle || "No handle"} · {instagramStatus(account)}{account.is_active ? "" : " · Retired"}</small></div>{canConnectProviders && account.is_active ? <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">{instagramStatus(account) === "Connected" ? "Reconnect" : "Connect"}</button></form> : null}</article>)}</div>}
@@ -80,7 +86,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         <div className="form-actions"><Link className="secondary-action" href="/operations?platform=instagram&section=analytics">Open read-only analytics</Link></div>
       </div>}
     </section>
-    <section className="panel connection-setup">
+    <section className="panel connection-setup" id="fansly">
       <div className="section-heading"><div><span className="eyebrow">FANSLY</span><h2>Fansly vault bridge</h2><p>THOT OS records a creator-scoped account and Chrome bridge assignment; it never asks for or stores a Fansly password.</p></div><span>{setup?.external_identity_confirmed_at ? "Identity confirmed" : setup ? "Setup in progress" : "Not configured"}</span></div>
       {!setup && canManageIdentity && <form action={addFanslyAccountAction} className="inline-form fansly-setup-form">
         <div className="section-divider"><b>Add Fansly for {context.creator.creator_name}</b><span>Open the THOT OS extension popup in the Chrome profile that will sign in to Fansly, then copy its installation ID below. This binds the bridge to that profile only.</span></div>

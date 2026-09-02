@@ -33,9 +33,9 @@ async function audit(creatorId: string, actor: { identity: string; role: string 
 async function changedSection(creatorId: string, section: string, email: string, isCreator: boolean) {
   const DB = cloudflareEnv().DB;
   await DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by) VALUES (?,?,?,?)
-    ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN (SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id=excluded.creator_id)='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
+    ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
     .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0).run();
-  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN workflow_state='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE workflow_state END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(isCreator ? 1 : 0, creatorId).run();
+  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(isCreator ? 1 : 0, creatorId).run();
 }
 
 export async function saveOnboardingIdentityAction(form: FormData) {
@@ -202,7 +202,7 @@ export async function submitCreatorOnboardingAction() {
   const keys = ["identity", "brand_voice", "positioning", "about_me", "social_profiles", "paid_platforms"];
   await DB.batch(keys.map((key) => DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,'creator_review',?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status='creator_review',updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId, key, identity.email)));
-  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='creator_review',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND workflow_state<>'active'").bind(creatorId).run();
+  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='creator_review',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId).run();
   await audit(creatorId, humanAuditActor(identity), "onboarding_creator_submitted", "creator_review", { sections: keys.length });
   revalidate(); redirect("/onboarding?submitted=1#onboarding-review");
 }
@@ -216,6 +216,7 @@ export async function activateOnboardingAction() {
   if (!profile || profile.adult_verification_status !== "verified" || profile.contract_status !== "active" || profile.consent_status !== "recorded" || open.results.length) throw new Error("Complete every onboarding section and activate compliance before activating this creator.");
   await DB.batch([
     DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='active',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
+    DB.prepare("UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured'").bind(creatorId),
     DB.prepare("UPDATE creator_compliance_records SET activated_by=?,activated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(identity.email,creatorId),
   ]); await audit(creatorId,humanAuditActor(identity),"creator_onboarding_activated","onboarding",{}); revalidate();
 }
