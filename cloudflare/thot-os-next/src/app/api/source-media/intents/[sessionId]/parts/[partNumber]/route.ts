@@ -1,9 +1,10 @@
 import { isSameOriginRequest } from "@/lib/audit-identity";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
+import { buildNativeImageTerminalStatements } from "@/lib/native-image-lifecycle";
 import { expectedPartBytes, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
-type Session = { id: string; asset_id: string; object_key: string | null; multipart_upload_id: string | null; expected_bytes: number; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string; ingest_kind: "native_image" };
+type Session = { id: string; asset_id: string; storage_object_id: string | null; object_key: string | null; multipart_upload_id: string | null; expected_bytes: number; chunk_bytes: number | null; status: string; finalization_state: string; expires_at: string; ingest_kind: "native_image" };
 
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
@@ -15,7 +16,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ sess
   const context = await requireCreatorContext("mutate");
   const { DB, LIBRARY_MEDIA } = cloudflareEnv() as CloudflareEnv & { LIBRARY_MEDIA?: R2Bucket };
   if (!LIBRARY_MEDIA) return noStoreJson({ ok: false, error: "source_media_unavailable" }, 503);
-  const session = await DB.prepare(`SELECT id,asset_id,object_key,multipart_upload_id,expected_bytes,chunk_bytes,status,finalization_state,expires_at,ingest_kind
+  const session = await DB.prepare(`SELECT id,asset_id,storage_object_id,object_key,multipart_upload_id,expected_bytes,chunk_bytes,status,finalization_state,expires_at,ingest_kind
     FROM asset_ingest_sessions WHERE id=? AND creator_id=?`).bind(sessionId, context.creator.creator_id).first<Session>();
   if (!session) return noStoreJson({ ok: false, error: "session_not_found" }, 404);
   if (session.status === "finalized") return noStoreJson({ ok: false, error: "session_finalized" }, 409);
@@ -24,7 +25,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ sess
     if (!session.object_key || !session.multipart_upload_id) return noStoreJson({ ok: false, error: "session_upload_missing" }, 409);
     try {
       await LIBRARY_MEDIA.resumeMultipartUpload(session.object_key, session.multipart_upload_id).abort();
-      await DB.prepare("UPDATE asset_ingest_sessions SET status='expired',finalization_state='expired',failure_code='session_expired',multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, context.creator.creator_id).run();
+      await DB.batch(buildNativeImageTerminalStatements(session, context.creator.creator_id, "expired", "session_expired")
+        .map((statement) => DB.prepare(statement.sql).bind(...statement.params)));
       return noStoreJson({ ok: false, error: "session_expired" }, 410);
     } catch {
       await DB.prepare("UPDATE asset_ingest_sessions SET failure_code='expiry_abort_uncertain',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, context.creator.creator_id).run().catch(() => undefined);

@@ -16,7 +16,14 @@ const bridgeRequest=(config,path,init={})=>fetch(`${CLOUD_VAULT_BRIDGE}${path}`,
   ...init,
   headers:{authorization:`Bearer ${config.token}`,"x-thot-os-installation-id":config.installationId,...(init.headers||{})},
 });
-const messageBridgeRequest=(config,path,init={})=>bridgeRequest(config,`/messages${path}`,init);
+const messageBridgeRequest=(config,path,init={})=>bridgeRequest(config,`/messages${path}`,{...init,headers:{"x-thot-os-message-client":"explicit-v5",...(init.headers||{})}});
+const markBridgeUpdateRequired=async(response)=>{
+  if(response.status!==428)return false;
+  const detail=await response.json().catch(()=>({}));
+  await chrome.storage.local.set({creatorOsBridgeNotice:{kind:"update_required",message:detail?.error||"Update the THOT OS bridge extension to sync or send messages."}});
+  return true;
+};
+const clearBridgeNotice=()=>chrome.storage.local.remove("creatorOsBridgeNotice");
 const waitForTab=(tabId,timeoutMs=15000)=>new Promise((resolve,reject)=>{
   const timer=setTimeout(()=>{chrome.tabs.onUpdated.removeListener(listener);reject(new Error("Fansly page load timed out."));},timeoutMs);
   const listener=(changedTabId,changeInfo,tab)=>{
@@ -179,12 +186,14 @@ const sendPreparedMessage = async (body) => {
 const processOutbox = async (tabId,url,config) => {
   const activeThread=new URL(url).pathname.replace(/\/+$/,"/");
   const response=await messageBridgeRequest(config,`/outbox?thread=${encodeURIComponent(activeThread)}`);
+  if(await markBridgeUpdateRequired(response))return;
   if(!response.ok)return;
+  await clearBridgeNotice();
   const {job}=await response.json();
   if(!job)return;
   const executed=await chrome.scripting.executeScript({target:{tabId},func:sendPreparedMessage,args:[job.body]});
   const receipt=executed?.[0]?.result??{sent:false,error:"No browser execution receipt."};
-  await messageBridgeRequest(config,"/outbox",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jobId:job.id,sent:Boolean(receipt.sent),error:receipt.error,receipt})});
+  await messageBridgeRequest(config,"/outbox",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jobId:job.id,claimToken:job.claimToken,sent:Boolean(receipt.sent),error:receipt.error,receipt})});
 };
 
 const prepareFanslyVault = async () => {
@@ -343,7 +352,17 @@ const processVaultQueue=async(tabId,url)=>{
 
 chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   if(message?.type==="creator-os-vault-status"){
-    getStoredBridge().then((config)=>sendResponse({ok:true,paired:Boolean(config?.token),creatorId:config?.creatorId,accountId:config?.accountId})).catch(()=>sendResponse({ok:false,paired:false}));
+    getStoredBridge().then(async(config)=>{
+      if(!config?.token)return {ok:true,paired:false};
+      try{
+        const response=await bridgeRequest(config,"/status",{headers:{"x-thot-os-message-client":"explicit-v5"}});
+        const detail=await response.json().catch(()=>({}));
+        const storedNotice=await chrome.storage.local.get("creatorOsBridgeNotice");
+        if(response.status===401)return {ok:true,paired:false};
+        if(!response.ok)return {ok:true,paired:true,creatorId:config.creatorId,accountId:config.accountId,bridgeError:detail?.error||`THOT OS returned ${response.status}.`};
+        return {ok:true,paired:true,creatorId:config.creatorId,accountId:config.accountId,updateRequired:Boolean(detail?.messageClientUpdateRequired||storedNotice?.creatorOsBridgeNotice?.kind==="update_required"),legacyReconciliationCount:Number(detail?.legacyReconciliationCount||0)};
+      }catch(error){return {ok:true,paired:true,creatorId:config.creatorId,accountId:config.accountId,bridgeError:error instanceof Error?error.message:"THOT OS status is unavailable."};}
+    }).then(sendResponse).catch(()=>sendResponse({ok:false,paired:false}));
     return true;
   }
   if(message?.type!=="creator-os-process-fansly-vault")return;
@@ -353,7 +372,7 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
 });
 
 const backgroundTabIds=new Set();
-const syncTab=async(tabId,url,backgroundCollection=false)=>{
+const syncTab=async(tabId,url,backgroundCollection=false,claimToken="")=>{
   if(!url.includes("fansly.com/messages"))return false;
   try{
     const config=await claim();
@@ -370,9 +389,11 @@ const syncTab=async(tabId,url,backgroundCollection=false)=>{
     if(!readiness?.[0]?.result)return false;
     const result=await chrome.scripting.executeScript({target:{tabId},func:snapshotPage});
     const threads=result?.[0]?.result??[];
-    const response=await messageBridgeRequest(config,"/ingest",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({platform:"fansly",threads})});
+    const response=await messageBridgeRequest(config,"/ingest",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({platform:"fansly",threads,...(claimToken?{claimToken}:{})})});
     if(response.status===401){await removeStoredBridge();return false;}
+    if(await markBridgeUpdateRequired(response))return false;
     if(response.ok&&!backgroundCollection)await processOutbox(tabId,url,config);
+    if(response.ok)await clearBridgeNotice();
     return response.ok;
   }catch(error){console.error("THOT OS bridge: Fansly sync failed",error);return false;}
 };
@@ -384,6 +405,7 @@ const collectNextPendingThread=async()=>{
   try{
     const response=await messageBridgeRequest(config,"/pending-threads");
     if(response.status===401){await removeStoredBridge();return;}
+    if(await markBridgeUpdateRequired(response))return;
     if(!response.ok)return;
     pending=(await response.json()).thread;
     if(!pending)return;
@@ -392,9 +414,9 @@ const collectNextPendingThread=async()=>{
     backgroundTabIds.add(createdTab.id);
     const destination=await waitForTab(createdTab.id,30000);
     await new Promise((resolve)=>setTimeout(resolve,2200));
-    if(!await syncTab(createdTab.id,destination,true))throw new Error("The conversation did not synchronise.");
+    if(!await syncTab(createdTab.id,destination,true,pending.claimToken))throw new Error("The conversation did not synchronise.");
   }catch(error){
-    if(pending?.id)await messageBridgeRequest(config,"/pending-threads",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({threadId:pending.id,error:error instanceof Error?error.message:String(error)})}).catch(()=>{});
+    if(pending?.id)await messageBridgeRequest(config,"/pending-threads",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({threadId:pending.id,claimToken:pending.claimToken,error:error instanceof Error?error.message:String(error)})}).catch(()=>{});
   }finally{
     if(createdTab?.id){backgroundTabIds.delete(createdTab.id);await chrome.tabs.remove(createdTab.id).catch(()=>{});}
   }
@@ -410,6 +432,7 @@ const processFanslyMessageOutbox=async()=>{
     if(!config?.token)return {ok:false,state:"unpaired"};
     const response=await messageBridgeRequest(config,"/outbox/next");
     if(response.status===401){await removeStoredBridge();return {ok:false,state:"unpaired"};}
+    if(await markBridgeUpdateRequired(response))return {ok:false,state:"update_required",error:"Update the THOT OS bridge extension to sync or send messages."};
     if(!response.ok)return {ok:false,state:"bridge_error"};
     const job=(await response.json()).job;
     if(!job?.externalThreadId)return {ok:true,state:"empty"};

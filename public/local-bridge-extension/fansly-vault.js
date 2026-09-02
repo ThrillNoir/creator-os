@@ -30,18 +30,24 @@
     const setStatus=(text,kind="")=>{status.textContent=text;status.className=`status ${kind}`.trim();};
     let paired=false;
     let lastPaired;
+    let lastNotice="";
     let processing=false;
     const refreshPairing=async()=>{
       const bridge=await send({type:"creator-os-vault-status"});
       paired=Boolean(bridge?.ok&&bridge?.paired);
       if(paired){
         identity.textContent=`Paired workspace: ${bridge.creatorId||"creator"}`;
-        if(!processing&&lastPaired!==true)setStatus("Queue an asset in Creator OS, then press the button below.");
+        const legacyCount=Number(bridge?.legacyReconciliationCount||0);
+        const notice=bridge?.updateRequired?"Update the THOT OS bridge extension to sync or send messages.":legacyCount>0?`${legacyCount} older message claim${legacyCount===1?"":"s"} need human reconciliation; nothing will be retried automatically.`:"";
+        if(!processing&&notice&&notice!==lastNotice)setStatus(notice,"error");
+        if(!processing&&!notice&&lastPaired!==true)setStatus("Queue an asset in Creator OS, then press the button below.");
+        lastNotice=notice;
         if(!processing)button.textContent="Upload approved content";
       }else{
         identity.textContent="This profile is not paired.";
         if(!processing&&lastPaired!==false)setStatus("Open this creator's Fansly vault from Creator OS to pair it.","error");
         if(!processing)button.textContent="Pair profile in Creator OS";
+        lastNotice="";
       }
       lastPaired=paired;
       button.disabled=processing||!paired;

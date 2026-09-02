@@ -6,11 +6,12 @@ const root = new URL("..", import.meta.url);
 const source = (path) => readFile(new URL(path, root), "utf8");
 
 test("native image intake creates creator-scoped canonical R2 authority without Dropbox input", async () => {
-  const [migration, intent, finalize, parts, library, uploader, bridge] = await Promise.all([
+  const [migration, intent, finalize, parts, lifecycle, library, uploader, bridge] = await Promise.all([
     source("../thot-os-app/migrations/0053_native_asset_authority.sql"),
     source("src/app/api/source-media/native/intents/route.ts"),
     source("src/app/api/source-media/intents/[sessionId]/finalize/route.ts"),
     source("src/app/api/source-media/intents/[sessionId]/parts/[partNumber]/route.ts"),
+    source("src/lib/native-image-lifecycle.ts"),
     source("src/lib/library.ts"),
     source("src/components/native-media-uploader.tsx"),
     source("../vault-bridge/src/index.ts"),
@@ -24,6 +25,9 @@ test("native image intake creates creator-scoped canonical R2 authority without 
   assert.doesNotMatch(intent, /dropbox_revision|DROPBOX/i);
   assert.match(finalize, /ensureNativePreview/);
   assert.match(finalize, /state='canonical_verified'/);
+  assert.match(lifecycle, /finalization_state<>'verified'/);
+  assert.match(lifecycle, /state='archived'/);
+  assert.match(lifecycle, /source_available=0/);
   assert.match(parts, /session\.ingest_kind === "native_image"/);
   assert.match(library, /asset_media_authorities/);
   assert.match(library, /authority_kind='r2_native'/);

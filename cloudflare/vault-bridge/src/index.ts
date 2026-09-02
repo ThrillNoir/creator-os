@@ -13,7 +13,7 @@ function cors(request: Request) {
   return {
     "access-control-allow-origin": allowedOrigins.has(origin) ? origin : "https://fansly.com",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "authorization,content-type,x-thot-os-vault-client,x-thot-os-installation-id",
+    "access-control-allow-headers": "authorization,content-type,x-thot-os-vault-client,x-thot-os-message-client,x-thot-os-installation-id",
     "access-control-max-age": "86400",
     vary: "Origin",
   };
@@ -196,8 +196,108 @@ function canonicalFanslyThread(value: unknown) {
   } catch { return null; }
 }
 
+const MESSAGE_CLIENT = "explicit-v5";
+
+function messageClientReady(request: Request) {
+  return request.headers.get("x-thot-os-message-client") === MESSAGE_CLIENT;
+}
+
+const uncertainFanslyReceipt = JSON.stringify({ outcome: "uncertain", reconciliationRequired: true, reason: "claim_timeout" });
+
+function boundedReceipt(value: unknown, fallback: Record<string, unknown>) {
+  try {
+    const serialized = JSON.stringify(value ?? {});
+    return serialized.length <= 12_000 ? serialized : JSON.stringify({ ...fallback, receiptTruncated: true });
+  } catch {
+    return JSON.stringify({ ...fallback, receiptSerializationFailed: true });
+  }
+}
+
+type FanslyReceiptJob = { id: string; thread_id: string; connection_id: string; body: string };
+type FanslyReceiptStatement = { sql: string; params: unknown[] };
+type FanslySyncCompletionInput = { threadId: string; creatorId: string; claimToken: string; observedOpen: boolean };
+
+export function buildFanslySyncCompletionStatement(input: FanslySyncCompletionInput): FanslyReceiptStatement {
+  const ownership = input.claimToken ? " AND claim_token=?" : "";
+  const ownershipParams = input.claimToken ? [input.claimToken] : [];
+  if (input.observedOpen) {
+    return {
+      sql: `UPDATE premium_thread_sync_state
+        SET status='complete',attempts=0,last_completed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
+        WHERE thread_id=? AND creator_id=?${ownership}
+          AND (status<>'complete' OR last_completed_at IS NULL OR last_completed_at<datetime('now','-5 minutes'))`,
+      params: [input.threadId, input.creatorId, ...ownershipParams],
+    };
+  }
+  return {
+    sql: `UPDATE premium_thread_sync_state SET status='pending',updated_at=CURRENT_TIMESTAMP
+      WHERE thread_id=? AND creator_id=? AND status='complete' AND last_completed_at<datetime('now','-10 minutes')${ownership}`,
+    params: [input.threadId, input.creatorId, ...ownershipParams],
+  };
+}
+
+export function buildFanslyReceiptStatements(job: FanslyReceiptJob, creatorId: string, claimToken: string, sent: boolean, error: string | null, receipt: string): FanslyReceiptStatement[] {
+  const resultingStatus = sent ? "sent" : "failed";
+  const eventId = `fansly-device-receipt-${job.id}-${claimToken}-${resultingStatus}`;
+  const statements: FanslyReceiptStatement[] = [
+    {
+      sql: `UPDATE premium_message_drafts SET status=?,completed_at=CURRENT_TIMESTAMP,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP
+        WHERE id=? AND creator_id=? AND claim_token=? AND (status='claimed' OR (status='failed' AND json_valid(receipt) AND json_extract(receipt,'$.outcome')='uncertain'))`,
+      params: [resultingStatus, error, receipt, job.id, creatorId, claimToken],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail)
+        SELECT ?,?,?,?,?,'service:fansly-device','service',? WHERE EXISTS (
+          SELECT 1 FROM premium_message_drafts WHERE id=? AND creator_id=? AND claim_token=? AND status=?)`,
+      params: [eventId, creatorId, job.connection_id, job.thread_id, sent ? "fansly_device_send_submitted" : "fansly_device_send_failed", JSON.stringify({ draftId: job.id, error }), job.id, creatorId, claimToken, resultingStatus],
+    },
+  ];
+  if (sent) {
+    statements.push(
+      {
+        sql: `INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
+          SELECT ?,?,?,?,'outbound','agency',?,CURRENT_TIMESTAMP,'device_submitted' WHERE EXISTS (
+            SELECT 1 FROM premium_message_drafts WHERE id=? AND creator_id=? AND claim_token=? AND status='sent')`,
+        params: [`fansly-out-${job.id}`, creatorId, job.thread_id, `device-${job.id}`, job.body, job.id, creatorId, claimToken],
+      },
+      {
+        sql: `UPDATE message_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND changes()>0
+          AND EXISTS (SELECT 1 FROM premium_message_drafts WHERE id=? AND creator_id=? AND claim_token=? AND status='sent')`,
+        params: [job.thread_id, creatorId, job.id, creatorId, claimToken],
+      },
+    );
+  }
+  return statements;
+}
+
+async function recoverStaleFanslyOutbox(env: Env, identity: BridgeIdentity) {
+  await env.DB.prepare(`UPDATE premium_message_drafts SET status='failed',completed_at=CURRENT_TIMESTAMP,error='Fansly send outcome uncertain; verify the live conversation before any retry.',receipt=?,updated_at=CURRENT_TIMESTAMP
+    WHERE creator_id=? AND status='claimed' AND claim_token IS NOT NULL AND (claimed_at IS NULL OR claimed_at<datetime('now','-2 minutes'))
+      AND connection_id IN (SELECT id FROM messaging_connections WHERE creator_id=? AND account_id=? AND platform='fansly')`)
+    .bind(uncertainFanslyReceipt, identity.creator_id, identity.creator_id, identity.account_id).run();
+  const legacy = await env.DB.prepare(`SELECT COUNT(*) AS count FROM premium_message_drafts
+    WHERE creator_id=? AND status='claimed' AND claim_token IS NULL
+      AND (claimed_at IS NULL OR claimed_at<datetime('now','-2 minutes'))
+      AND connection_id IN (SELECT id FROM messaging_connections WHERE creator_id=? AND account_id=? AND platform='fansly')`)
+    .bind(identity.creator_id, identity.creator_id, identity.account_id).first<{ count: number }>();
+  return Number(legacy?.count ?? 0);
+}
+
+async function legacyFanslyReconciliationCount(env: Env, identity: BridgeIdentity) {
+  const count = await env.DB.prepare(`SELECT
+      (SELECT COUNT(*) FROM premium_thread_sync_state s JOIN message_threads t ON t.id=s.thread_id AND t.creator_id=s.creator_id
+        JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
+        WHERE s.creator_id=? AND c.account_id=? AND c.platform='fansly' AND s.status='claimed' AND s.claim_token IS NULL
+          AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-2 minutes')))
+      + (SELECT COUNT(*) FROM premium_message_drafts d JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
+        WHERE d.creator_id=? AND c.account_id=? AND c.platform='fansly' AND d.status='claimed' AND d.claim_token IS NULL
+          AND (d.claimed_at IS NULL OR d.claimed_at<datetime('now','-2 minutes'))) AS count`)
+    .bind(identity.creator_id, identity.account_id, identity.creator_id, identity.account_id).first<{ count: number }>();
+  return Number(count?.count ?? 0);
+}
+
 async function ingestFanslyMessages(request: Request, env: Env, identity: BridgeIdentity) {
-  const input = await request.json<{ platform?: string; threads?: BrowserThread[] }>();
+  const input = await request.json<{ platform?: string; claimToken?: string; threads?: BrowserThread[] }>();
   if (identity.platform !== "fansly" || input.platform !== "fansly" || !Array.isArray(input.threads)) return json(request, { ok: false, error: "invalid_fansly_snapshot" }, 400);
   const connection = await env.DB.prepare("SELECT id FROM messaging_connections WHERE creator_id=? AND account_id=? AND platform='fansly'").bind(identity.creator_id, identity.account_id).first<{ id: string }>();
   if (!connection) return json(request, { ok: false, error: "fansly_connection_not_configured" }, 409);
@@ -260,17 +360,18 @@ async function ingestFanslyMessages(request: Request, env: Env, identity: Bridge
       threadMessageChanges += changes;
     }
     if (threadMessageChanges > 0) await env.DB.prepare("UPDATE message_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(threadId, identity.creator_id).run();
-    const completed = Boolean(snapshot.observedOpen);
+    // A background collector must prove it still owns the claim in the UPDATE
+    // itself. Foreground observations deliberately remain unowned/manual.
+    const claimToken = String(input.claimToken ?? "");
+    const completed = Boolean(snapshot.observedOpen) && !claimToken;
     const insertedState = await env.DB.prepare(`INSERT OR IGNORE INTO premium_thread_sync_state
       (thread_id,creator_id,status,attempts,last_completed_at,last_error,updated_at)
       VALUES (?,?,?,0,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,NULL,CURRENT_TIMESTAMP)`)
       .bind(threadId, identity.creator_id, completed ? "complete" : "pending", completed ? 1 : 0).run();
-    if (!insertedState.meta.changes && completed) await env.DB.prepare(`UPDATE premium_thread_sync_state
-      SET status='complete',attempts=0,last_completed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
-      WHERE thread_id=? AND creator_id=? AND (status<>'complete' OR last_completed_at IS NULL OR last_completed_at<datetime('now','-5 minutes'))`).bind(threadId, identity.creator_id).run();
-    if (!insertedState.meta.changes && !completed) await env.DB.prepare(`UPDATE premium_thread_sync_state
-      SET status='pending',updated_at=CURRENT_TIMESTAMP
-      WHERE thread_id=? AND creator_id=? AND status='complete' AND last_completed_at<datetime('now','-10 minutes')`).bind(threadId, identity.creator_id).run();
+    if (!insertedState.meta.changes) {
+      const completion = buildFanslySyncCompletionStatement({ threadId, creatorId: identity.creator_id, claimToken, observedOpen: Boolean(snapshot.observedOpen) });
+      await env.DB.prepare(completion.sql).bind(...completion.params).run();
+    }
     importedThreads++;
   }
   await env.DB.prepare(`UPDATE messaging_connections
@@ -285,25 +386,44 @@ async function pendingFanslyThread(request: Request, env: Env, identity: BridgeI
   const connection = await env.DB.prepare("SELECT id FROM messaging_connections WHERE creator_id=? AND account_id=? AND platform='fansly'").bind(identity.creator_id, identity.account_id).first<{ id: string }>();
   if (!connection) return json(request, { ok: false, error: "fansly_connection_not_configured" }, 409);
   if (request.method === "POST") {
-    const input = await request.json<{ threadId?: string; error?: string }>();
+    const input = await request.json<{ threadId?: string; claimToken?: string; error?: string }>();
     const threadId = String(input.threadId ?? "");
-    await env.DB.prepare(`UPDATE premium_thread_sync_state SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP
-      WHERE thread_id=? AND creator_id=? AND thread_id IN (SELECT id FROM message_threads WHERE creator_id=? AND connection_id=?)`)
-      .bind(String(input.error ?? "Fansly conversation collection failed.").slice(0, 1000), threadId, identity.creator_id, identity.creator_id, connection.id).run();
-    return json(request, { ok: true });
+    const claimToken = String(input.claimToken ?? "");
+    if (!threadId || !claimToken) return json(request, { ok: false, error: "claim_token_required" }, 400);
+    const updated = await env.DB.prepare(`UPDATE premium_thread_sync_state SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP
+      WHERE thread_id=? AND creator_id=? AND claim_token=? AND status='claimed'
+        AND thread_id IN (SELECT id FROM message_threads WHERE creator_id=? AND connection_id=?)`)
+      .bind(String(input.error ?? "Fansly conversation collection failed.").slice(0, 1000), threadId, identity.creator_id, claimToken, identity.creator_id, connection.id).run();
+    // A stale browser may report after a newer claim or a successful snapshot.
+    // Ignore that owner rather than allowing it to roll back the newer state.
+    return json(request, { ok: true, ignored: !updated.meta.changes });
   }
+  await env.DB.prepare(`UPDATE premium_thread_sync_state SET status='failed',last_error='Fansly collection claim expired; open the conversation to reconcile.',updated_at=CURRENT_TIMESTAMP
+    WHERE creator_id=? AND status='claimed' AND claim_token IS NOT NULL AND attempts>=3 AND (last_requested_at IS NULL OR last_requested_at<datetime('now','-2 minutes'))
+      AND thread_id IN (SELECT t.id FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
+        WHERE t.creator_id=? AND c.account_id=? AND c.platform='fansly')`).bind(identity.creator_id, identity.creator_id, identity.account_id).run();
+  const legacy = await env.DB.prepare(`SELECT COUNT(*) AS count FROM premium_thread_sync_state s
+    JOIN message_threads t ON t.id=s.thread_id AND t.creator_id=s.creator_id
+    WHERE s.creator_id=? AND s.status='claimed' AND s.claim_token IS NULL
+      AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-2 minutes')) AND t.connection_id=?`)
+    .bind(identity.creator_id, connection.id).first<{ count: number }>();
+  const legacyReconciliationCount = Number(legacy?.count ?? 0);
   const pending = await env.DB.prepare(`SELECT s.thread_id AS id,t.external_thread_id FROM premium_thread_sync_state s
     JOIN message_threads t ON t.id=s.thread_id AND t.creator_id=s.creator_id
-    WHERE s.creator_id=? AND t.connection_id=? AND s.status IN ('pending','failed') AND s.attempts<3
-      AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-55 seconds')) ORDER BY s.updated_at LIMIT 1`)
+    WHERE s.creator_id=? AND t.connection_id=? AND s.attempts<3
+      AND ((s.status IN ('pending','failed') AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-55 seconds')))
+        OR (s.status='claimed' AND s.claim_token IS NOT NULL AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-2 minutes')))) ORDER BY s.updated_at LIMIT 1`)
     .bind(identity.creator_id, connection.id).first<{ id: string; external_thread_id: string }>();
-  if (!pending) return json(request, { ok: true, thread: null });
-  const claimed = await env.DB.prepare("UPDATE premium_thread_sync_state SET status='claimed',attempts=attempts+1,last_requested_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE thread_id=? AND creator_id=? AND status IN ('pending','failed')")
-    .bind(pending.id, identity.creator_id).run();
-  return json(request, { ok: true, thread: claimed.meta.changes ? pending : null });
+  if (!pending) return json(request, { ok: true, thread: null, legacyReconciliationCount });
+  const claimToken = crypto.randomUUID();
+  const claimed = await env.DB.prepare(`UPDATE premium_thread_sync_state SET status='claimed',attempts=attempts+1,last_requested_at=CURRENT_TIMESTAMP,claim_token=?,last_error=NULL,updated_at=CURRENT_TIMESTAMP
+    WHERE thread_id=? AND creator_id=? AND attempts<3 AND ((status IN ('pending','failed')) OR (status='claimed' AND (last_requested_at IS NULL OR last_requested_at<datetime('now','-2 minutes'))))`)
+    .bind(claimToken, pending.id, identity.creator_id).run();
+  return json(request, { ok: true, thread: claimed.meta.changes ? { ...pending, claimToken } : null, legacyReconciliationCount });
 }
 
 async function nextFanslyOutbox(request: Request, env: Env, identity: BridgeIdentity) {
+  const legacyReconciliationCount = await recoverStaleFanslyOutbox(env, identity);
   const job = await env.DB.prepare(`SELECT d.id,t.external_thread_id FROM premium_message_drafts d
     JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id
     JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
@@ -311,49 +431,47 @@ async function nextFanslyOutbox(request: Request, env: Env, identity: BridgeIden
       AND c.status='connected' AND c.write_enabled=1 AND c.outbound_validated=1 AND c.emergency_paused=0
     ORDER BY d.created_at LIMIT 1`)
     .bind(identity.creator_id, identity.account_id).first<{ id: string; external_thread_id: string }>();
-  return json(request, { ok: true, job: job ? { id: job.id, externalThreadId: job.external_thread_id } : null });
+  return json(request, { ok: true, job: job ? { id: job.id, externalThreadId: job.external_thread_id } : null, legacyReconciliationCount });
 }
 
 async function fanslyOutbox(request: Request, env: Env, identity: BridgeIdentity) {
   if (request.method === "GET") {
+    const legacyReconciliationCount = await recoverStaleFanslyOutbox(env, identity);
     const externalThreadId = canonicalFanslyThread(new URL(request.url).searchParams.get("thread"));
-    if (!externalThreadId) return json(request, { ok: true, job: null });
+    if (!externalThreadId) return json(request, { ok: true, job: null, legacyReconciliationCount });
     const job = await env.DB.prepare(`SELECT d.id,d.body,t.external_thread_id FROM premium_message_drafts d
       JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id
       JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
       WHERE d.creator_id=? AND c.account_id=? AND d.platform='fansly' AND d.status='approved' AND t.external_thread_id=?
         AND c.status='connected' AND c.write_enabled=1 AND c.outbound_validated=1 AND c.emergency_paused=0 ORDER BY d.created_at LIMIT 1`)
       .bind(identity.creator_id, identity.account_id, externalThreadId).first<{ id: string; body: string; external_thread_id: string }>();
-    if (!job) return json(request, { ok: true, job: null });
-    const claimed = await env.DB.prepare("UPDATE premium_message_drafts SET status='claimed',claimed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='approved'")
-      .bind(job.id, identity.creator_id).run();
-    return json(request, { ok: true, job: claimed.meta.changes ? job : null });
+    if (!job) return json(request, { ok: true, job: null, legacyReconciliationCount });
+    const claimToken = crypto.randomUUID();
+    const claimed = await env.DB.prepare("UPDATE premium_message_drafts SET status='claimed',claimed_at=CURRENT_TIMESTAMP,claim_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='approved'")
+      .bind(claimToken, job.id, identity.creator_id).run();
+    return json(request, { ok: true, job: claimed.meta.changes ? { ...job, claimToken } : null, legacyReconciliationCount });
   }
-  const input = await request.json<{ jobId?: string; sent?: boolean; error?: string; receipt?: unknown }>();
+  const input = await request.json<{ jobId?: string; claimToken?: string; sent?: boolean; error?: string; receipt?: unknown }>();
   const proof = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt)
     ? input.receipt as Record<string, unknown> : null;
   const receiptConfirmed = proof?.sent === true && proof?.composerCount === 1
     && proof?.sendControlCount === 1 && proof?.composerCleared === true && proof?.outgoingBubbleAdded === true;
-  const job = await env.DB.prepare(`SELECT d.id,d.thread_id,d.connection_id,d.body FROM premium_message_drafts d
+  const claimToken = String(input.claimToken ?? "");
+  if (!claimToken) return json(request, { ok: false, error: "claim_token_required" }, 400);
+  const job = await env.DB.prepare(`SELECT d.id,d.thread_id,d.connection_id,d.body,d.status,d.receipt FROM premium_message_drafts d
     JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
-    WHERE d.id=? AND d.creator_id=? AND c.account_id=? AND d.platform='fansly' AND d.status='claimed'`)
-    .bind(String(input.jobId ?? ""), identity.creator_id, identity.account_id).first<{ id: string; thread_id: string; connection_id: string; body: string }>();
+    WHERE d.id=? AND d.creator_id=? AND c.account_id=? AND d.platform='fansly' AND d.claim_token=?
+      AND (d.status='claimed' OR (d.status='failed' AND json_valid(d.receipt) AND json_extract(d.receipt,'$.outcome')='uncertain'))`)
+    .bind(String(input.jobId ?? ""), identity.creator_id, identity.account_id, claimToken).first<{ id: string; thread_id: string; connection_id: string; body: string; status: string; receipt: string }>();
   if (!job) return json(request, { ok: false, error: "outbox_job_not_claimed" }, 409);
   const sent = input.sent === true && receiptConfirmed;
   const error = sent ? null : String(input.error ?? (input.sent === true ? "Fansly device receipt was incomplete; verify the live conversation before retrying." : "Fansly device send failed.")).slice(0, 1000);
-  const statements = [
-    env.DB.prepare("UPDATE premium_message_drafts SET status=?,completed_at=CURRENT_TIMESTAMP,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?")
-      .bind(sent ? "sent" : "failed", error, JSON.stringify(input.receipt ?? {}).slice(0, 12_000), job.id, identity.creator_id),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?,?,'service:fansly-device','service',?)")
-      .bind(crypto.randomUUID(), identity.creator_id, job.connection_id, job.thread_id, sent ? "fansly_device_send_submitted" : "fansly_device_send_failed", JSON.stringify({ draftId: job.id, error })),
-  ];
-  if (sent) statements.push(
-    env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
-      VALUES (?,?,?,?, 'outbound','agency',?,CURRENT_TIMESTAMP,'device_submitted')`).bind(`fansly-out-${job.id}`, identity.creator_id, job.thread_id, `device-${job.id}`, job.body),
-    env.DB.prepare("UPDATE message_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(job.thread_id, identity.creator_id),
-  );
-  await env.DB.batch(statements);
-  return json(request, { ok: true, status: sent ? "sent" : "failed" });
+  const receipt = boundedReceipt(sent ? (input.receipt ?? {}) : { ...(proof ?? {}), outcome: "uncertain", reconciliationRequired: true }, sent ? { outcome: "sent" } : { outcome: "uncertain", reconciliationRequired: true });
+  const statements = buildFanslyReceiptStatements(job, identity.creator_id, claimToken, sent, error, receipt)
+    .map((statement) => env.DB.prepare(statement.sql).bind(...statement.params));
+  const results = await env.DB.batch(statements);
+  if (!results[0]?.meta?.changes) return json(request, { ok: true, ignored: true });
+  return json(request, { ok: true, status: sent ? "sent" : "failed", reconciliationRequired: !sent });
 }
 
 
@@ -365,7 +483,14 @@ export default {
       if (request.method === "GET" && url.pathname === "/pair") return pairingPage();
       const identity = await authenticate(request, env);
       if (!identity) return json(request, { ok: false, error: "unauthorized" }, 401);
-      if (request.method === "GET" && url.pathname === "/status") return json(request, { ok: true, paired: true, ...identity });
+      if (request.method === "GET" && url.pathname === "/status") return json(request, {
+        ok: true,
+        paired: true,
+        ...identity,
+        messageClientUpdateRequired: !messageClientReady(request),
+        legacyReconciliationCount: await legacyFanslyReconciliationCount(env, identity),
+      });
+      if (url.pathname.startsWith("/messages/") && !messageClientReady(request)) return json(request, { ok: false, error: "Update the THOT OS bridge extension before syncing or sending messages." }, 428);
       if (request.method === "POST" && url.pathname === "/messages/ingest") return ingestFanslyMessages(request, env, identity);
       if ((request.method === "GET" || request.method === "POST") && url.pathname === "/messages/pending-threads") return pendingFanslyThread(request, env, identity);
       if (request.method === "GET" && url.pathname === "/messages/outbox/next") return nextFanslyOutbox(request, env, identity);

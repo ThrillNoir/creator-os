@@ -2,6 +2,7 @@ import { humanAuditActor, identityAuditStatement, isSameOriginRequest } from "@/
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { createNativeImagePreview } from "@/lib/native-media";
+import { buildNativeImageTerminalStatements } from "@/lib/native-image-lifecycle";
 import { expectedPartBytes, hashAndValidateR2Object, noStoreJson, safeFailureCode } from "@/lib/source-media";
 
 type Context = Awaited<ReturnType<typeof requireCreatorContext>>;
@@ -11,10 +12,7 @@ type Part = { part_number: number; etag: string | null; byte_count: number; stat
 function validUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
 async function quarantine(DB: D1Database, session: Session, creatorId: string, failure: string) {
-  await DB.batch([
-    DB.prepare("UPDATE asset_ingest_sessions SET status='failed',finalization_state='quarantined',failure_code=?,multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(failure, session.id, creatorId),
-    DB.prepare("UPDATE asset_storage_objects SET ingest_status='failed',failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND ingest_status<>'verified'").bind(failure, session.storage_object_id, creatorId),
-  ]);
+  await DB.batch(buildNativeImageTerminalStatements(session, creatorId, "quarantined", failure).map((statement) => DB.prepare(statement.sql).bind(...statement.params)));
 }
 
 type NativePreviewState = "ready" | "failed" | "not_requested";
@@ -80,7 +78,7 @@ async function abortExpired(DB: D1Database, bucket: R2Bucket, session: Session, 
   if (!session.object_key || !session.multipart_upload_id) return false;
   try {
     await bucket.resumeMultipartUpload(session.object_key, session.multipart_upload_id).abort();
-    await DB.prepare("UPDATE asset_ingest_sessions SET status='expired',finalization_state='expired',failure_code='session_expired',multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, creatorId).run();
+    await DB.batch(buildNativeImageTerminalStatements(session, creatorId, "expired", "session_expired").map((statement) => DB.prepare(statement.sql).bind(...statement.params)));
     return true;
   } catch {
     await DB.prepare("UPDATE asset_ingest_sessions SET failure_code='expiry_abort_uncertain',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='incomplete'").bind(session.id, creatorId).run().catch(() => undefined);
@@ -139,10 +137,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ses
       let head: R2Object | null = null; let headRead = false;
       try { head = await LIBRARY_MEDIA.head(session.object_key); headRead = true; } catch { /* Preserve uncertain state when head cannot be proven. */ }
       if (headRead && !head) {
-        await DB.batch([
-          DB.prepare("UPDATE asset_ingest_sessions SET status='failed',finalization_state='failed',failure_code='multipart_upload_missing',multipart_upload_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state='completing'").bind(session.id, context.creator.creator_id),
-          DB.prepare("UPDATE asset_storage_objects SET ingest_status='failed',failure_code='multipart_upload_missing',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND ingest_status<>'verified'").bind(session.storage_object_id, context.creator.creator_id),
-        ]);
+        await quarantine(DB, session, context.creator.creator_id, "multipart_upload_missing");
         return noStoreJson({ ok: false, error: "multipart_upload_missing" }, 409);
       }
     }
