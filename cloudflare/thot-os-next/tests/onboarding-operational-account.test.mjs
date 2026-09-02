@@ -28,7 +28,8 @@ test("activation enables only creator-submitted pending accounts", async () => {
       CREATE TABLE creator_compliance_records (creator_id TEXT,adult_verified_at TEXT,activated_at TEXT);
       CREATE TABLE creator_onboarding_sections (creator_id TEXT,section_key TEXT,status TEXT);`);
     db.prepare("INSERT INTO creator_onboarding_profiles VALUES (?,?,?,?,?)").run("creator-1", "active", "verified", "active", "recorded");
-    db.prepare("INSERT INTO creator_compliance_records VALUES (?,?,?)").run("creator-1", "verified-at", null);
+    // A creator can add another account after their first activation.
+    db.prepare("INSERT INTO creator_compliance_records VALUES (?,?,?)").run("creator-1", "verified-at", "earlier-activation");
     db.prepare("INSERT INTO operational_accounts VALUES (?,?,?,?,?,?,?)").run("creator-account", "creator-1", "social", 1, 0, "not_configured", "old");
     db.prepare("INSERT INTO operational_accounts VALUES (?,?,?,?,?,?,?)").run("admin-account", "creator-1", "social", 1, 0, "not_configured", "old");
     db.prepare("INSERT INTO creator_access_audit_events VALUES (?,?,?,?)").run("creator-1", "creator-account", "creator", "onboarding_operational_account_created");
@@ -58,5 +59,6 @@ test("activation mutation rechecks required sections and current verification", 
     db.prepare("UPDATE creator_compliance_records SET adult_verified_at='verified-at' WHERE creator_id=?").run("creator-1");
     assert.equal(db.prepare(sql).run("creator-1").changes, 1);
     assert.equal(db.prepare("SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id='creator-1'").pluck().get(), "active");
+    assert.equal(db.prepare(sql).run("creator-1").changes, 1);
   } finally { db.close(); }
 });
