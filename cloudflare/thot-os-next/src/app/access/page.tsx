@@ -19,7 +19,7 @@ export default async function AccessPage() {
       WHERE vc.creator_id=? AND vc.status='active' ${context.creator.role === "creator" ? "AND vc.shared_with_creator=1" : ""}
       ORDER BY vc.credential_group,vc.updated_at DESC`).bind(context.creator.creator_id).all<CredentialListRow>(),
     DB.prepare("SELECT id,platform,label FROM operational_accounts WHERE creator_id=? AND is_active=1 ORDER BY account_kind,platform,label").bind(context.creator.creator_id).all<AccountOption>(),
-    DB.prepare(`SELECT id FROM vault_pin_verifiers WHERE lower(identity_email)=lower(?) AND ((pin_scope='administrator' AND creator_id IS NULL) OR (pin_scope='creator' AND creator_id=?)) LIMIT 1`).bind(context.email, context.creator.creator_id).first<{ id: string }>(),
+    DB.prepare(`SELECT id FROM vault_pin_verifiers WHERE lower(identity_email)=lower(?) AND ((pin_scope='administrator' AND creator_id IS NULL AND ?='agency_admin') OR (pin_scope='creator' AND creator_id=? AND ? IN ('agency_admin','creator'))) LIMIT 1`).bind(context.email, context.creator.role, context.creator.creator_id, context.creator.role).first<{ id: string }>(),
   ]);
   return <AppShell active="Access">
     <PageHeader eyebrow="STEP-UP PROTECTED" title="Access" subtitle="Passwords are encrypted at rest and are only revealed after a short, creator-scoped PIN confirmation." />

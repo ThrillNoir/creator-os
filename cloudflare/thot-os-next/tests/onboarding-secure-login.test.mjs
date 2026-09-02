@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import Database from "better-sqlite3";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -53,6 +54,53 @@ test("onboarding secure login uses the existing Access vault contract", async ()
   assert.match(vault, /encoder\.encode\(input\.password\)/);
   assert.doesNotMatch(vault, /JSON\.stringify\([^)]*password/);
   assert.doesNotMatch(route, /JSON\.stringify\([^)]*password/);
+});
+
+test("Access PIN lookup scopes the verifier to the authenticated role, email, and workspace", async () => {
+  const [vault, page] = await Promise.all([source("../src/lib/access-vault.ts"), source("../src/app/access/page.tsx")]);
+  const query = vault.match(/DB\.prepare\(`(SELECT id,pin_scope,salt,verifier,kdf_iterations,locked_until[\s\S]*?LIMIT 1)`\)\.bind\(input\.email, input\.role, input\.creatorId, input\.role\)/)?.[1];
+  const availabilityQuery = page.match(/DB\.prepare\(`(SELECT id FROM vault_pin_verifiers[\s\S]*?LIMIT 1)`\)\.bind\(context\.email, context\.creator\.role, context\.creator\.creator_id, context\.creator\.role\)/)?.[1];
+  assert.ok(query);
+  assert.ok(availabilityQuery);
+  assert.match(query, /pin_scope='administrator' AND creator_id IS NULL AND \?='agency_admin'/);
+  assert.match(query, /pin_scope='creator' AND creator_id=\? AND \? IN \('agency_admin','creator'\)/);
+
+  const db = new Database(":memory:");
+  try {
+    db.exec(`CREATE TABLE vault_pin_verifiers (
+      id TEXT PRIMARY KEY, identity_email TEXT, creator_id TEXT, pin_scope TEXT,
+      salt BLOB, verifier BLOB, kdf_iterations INTEGER, locked_until TEXT
+    )`);
+    const insert = db.prepare("INSERT INTO vault_pin_verifiers (id,identity_email,creator_id,pin_scope,salt,verifier,kdf_iterations,locked_until) VALUES (?,?,?,?,?,?,?,NULL)");
+    insert.run("primary-admin", "connect@example.com", null, "administrator", Buffer.from("a"), Buffer.from("a"), 100000);
+    insert.run("primary-creator", "connect@example.com", "thrill-noir", "creator", Buffer.from("c"), Buffer.from("c"), 100000);
+    insert.run("foreign-workspace", "connect@example.com", "other-workspace", "creator", Buffer.from("f"), Buffer.from("f"), 100000);
+    insert.run("creator-only", "creator-only@example.com", "thrill-noir", "creator", Buffer.from("c"), Buffer.from("c"), 100000);
+    insert.run("admin-only", "admin-only@example.com", null, "administrator", Buffer.from("a"), Buffer.from("a"), 100000);
+
+    const select = (email, role, creatorId) => db.prepare(query).get(email, role, creatorId, role);
+    const available = (email, role, creatorId) => Boolean(db.prepare(availabilityQuery).get(email, role, creatorId, role));
+    assert.equal(select("connect@example.com", "creator", "thrill-noir").id, "primary-creator");
+    assert.equal(select("connect@example.com", "agency_admin", "thrill-noir").id, "primary-admin");
+    assert.equal(select("connect@example.com", "creator", "missing-workspace"), undefined);
+    assert.equal(select("other@example.com", "creator", "thrill-noir"), undefined);
+    assert.equal(select("creator-only@example.com", "creator", "thrill-noir").id, "creator-only");
+    assert.equal(select("admin-only@example.com", "creator", "thrill-noir"), undefined);
+    assert.equal(select("admin-only@example.com", "agency_admin", "thrill-noir").id, "admin-only");
+    assert.equal(select("creator-only@example.com", "agency_admin", "thrill-noir").id, "creator-only");
+    assert.equal(select("connect@example.com", "operator", "thrill-noir"), undefined);
+    assert.equal(select("connect@example.com", "viewer", "thrill-noir"), undefined);
+    assert.equal(available("connect@example.com", "creator", "thrill-noir"), true);
+    assert.equal(available("connect@example.com", "agency_admin", "thrill-noir"), true);
+    assert.equal(available("connect@example.com", "creator", "missing-workspace"), false);
+    assert.equal(available("other@example.com", "creator", "thrill-noir"), false);
+    assert.equal(available("creator-only@example.com", "creator", "thrill-noir"), true);
+    assert.equal(available("admin-only@example.com", "creator", "thrill-noir"), false);
+    assert.equal(available("admin-only@example.com", "agency_admin", "thrill-noir"), true);
+    assert.equal(available("creator-only@example.com", "agency_admin", "thrill-noir"), true);
+    assert.equal(available("connect@example.com", "operator", "thrill-noir"), false);
+    assert.equal(available("connect@example.com", "viewer", "thrill-noir"), false);
+  } finally { db.close(); }
 });
 
 test("creator onboarding is a role-specific four-part flow", async () => {

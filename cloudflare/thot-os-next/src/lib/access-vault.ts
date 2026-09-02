@@ -127,8 +127,8 @@ export async function verifyPinAndCreateSession(input: { email: string; creatorI
   const DB = cloudflareEnv().DB;
   const scopes: Array<"administrator" | "creator"> = input.role === "agency_admin" ? ["administrator", "creator"] : ["creator"];
   const row = await DB.prepare(`SELECT id,pin_scope,salt,verifier,kdf_iterations,locked_until FROM vault_pin_verifiers
-    WHERE lower(identity_email)=lower(?) AND ((pin_scope='administrator' AND creator_id IS NULL) OR (pin_scope='creator' AND creator_id=?))
-    ORDER BY CASE pin_scope WHEN 'administrator' THEN 0 ELSE 1 END LIMIT 1`).bind(input.email, input.creatorId).first<PinRow>();
+    WHERE lower(identity_email)=lower(?) AND ((pin_scope='administrator' AND creator_id IS NULL AND ?='agency_admin') OR (pin_scope='creator' AND creator_id=? AND ? IN ('agency_admin','creator')))
+    ORDER BY CASE pin_scope WHEN 'administrator' THEN 0 ELSE 1 END LIMIT 1`).bind(input.email, input.role, input.creatorId, input.role).first<PinRow>();
   if (!row || !scopes.includes(row.pin_scope)) throw new Error("Set up your Access PIN before continuing.");
   if (row.locked_until && Date.parse(row.locked_until) > Date.now()) throw new Error("Access PIN is temporarily locked. Try again later.");
   const candidate = await pinVerifier(input.pin, row.salt, row.kdf_iterations);
