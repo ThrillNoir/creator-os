@@ -87,6 +87,7 @@ type PublicProfileVersionRow = {
 };
 
 const publicProfileId = /^[a-zA-Z0-9_-]{1,160}$/;
+const publicProfileSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function publicText(value: FormDataEntryValue | null, maximum: number, label: string, { required = false, collapseWhitespace = false }: { required?: boolean; collapseWhitespace?: boolean } = {}) {
   const text = String(value ?? "").replace(/\r\n?/g, "\n");
@@ -98,7 +99,7 @@ function publicText(value: FormDataEntryValue | null, maximum: number, label: st
 
 function publicProfileSlugValue(value: FormDataEntryValue | null) {
   const slug = String(value ?? "").trim().toLowerCase();
-  if (!isPublicCreatorSlug(slug)) throw new Error("Use a public URL slug that is not reserved by the public service.");
+  if (!publicProfileSlug.test(slug) || !isPublicCreatorSlug(slug)) throw new Error("Use a public URL slug with lowercase letters, numbers and single hyphens; reserved private URLs are unavailable.");
   return slug;
 }
 

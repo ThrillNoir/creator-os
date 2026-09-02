@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import test from "node:test";
+import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 const source = (file) => readFile(path.join(root, file), "utf8");
@@ -141,7 +143,7 @@ test("public-profile save validation returns structured field errors without lea
   ]);
   assert.match(actions, /type PublicProfileDraftState/);
   assert.match(actions, /isPublicCreatorSlug/);
-  assert.doesNotMatch(actions, /const publicProfileSlug =/);
+  assert.match(actions, /const publicProfileSlug = \/\^\[a-z0-9\]\+\(\?:-\[a-z0-9\]\+\)\*\$\//);
   assert.match(actions, /reasonCode: "profile_validation_failed"/);
   assert.match(actions, /fieldErrors\[`linkDestination\.\$\{index\}`\]/);
   assert.match(actions, /if \(Object\.keys\(fieldErrors\)\.length/);
@@ -155,4 +157,14 @@ test("public-profile save validation returns structured field errors without lea
   assert.match(actions, /fieldErrors\[`adultLinkDestination\.\$\{index\}`\]/);
   assert.match(adultEditor, /useActionState\(saveAdultProfileDraftAction/);
   assert.match(adultEditor, /aria-invalid/);
+});
+
+test("public profile writer keeps single-hyphen input while rejecting reserved URLs", async () => {
+  const actions = await source("src/app/actions.ts");
+  const body = actions.slice(actions.indexOf("const publicProfileSlug ="), actions.indexOf("function submittedPublicProfileDraftValues"));
+  const validate = new Function("isPublicCreatorSlug", `${stripTypeScriptTypes(body)}; return publicProfileSlugValue;`)(isPublicCreatorSlug);
+  assert.equal(validate("  Thrill-Noir  "), "thrill-noir");
+  assert.throws(() => validate("messages"), /reserved private URLs/);
+  assert.throws(() => validate("legacy--name"), /lowercase letters, numbers and single hyphens/);
+  assert.throws(() => validate("-creator"), /lowercase letters, numbers and single hyphens/);
 });
