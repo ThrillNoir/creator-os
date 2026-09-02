@@ -12,6 +12,8 @@ import { requireStepUpSession, STEP_UP_COOKIE } from "@/lib/access-vault";
 import { redirect } from "next/navigation";
 
 const sections = new Set<string>(ONBOARDING_SECTION_KEYS);
+const requiredSectionSql = REQUIRED_ONBOARDING_SECTION_KEYS.map((key) => `'${key}'`).join(",");
+function requiredSectionsCompleteSql(profileAlias: string) { return `(SELECT COUNT(*) FROM creator_onboarding_sections s WHERE s.creator_id=${profileAlias}.creator_id AND s.status='complete' AND s.section_key IN (${requiredSectionSql}))=${REQUIRED_ONBOARDING_SECTION_KEYS.length}`; }
 const socialPlatforms = new Set(["instagram", "reddit", "tiktok", "threads", "x", "facebook", "telegram", "youtube", "other"]);
 const paidPlatforms = new Set(["onlyfans", "fansly", "manyvids", "patreon", "myroomz", "other"]);
 const creatorLoginMethods = new Set(["password", "google", "apple"]);
@@ -229,9 +231,11 @@ export async function activateOnboardingAction() {
     DB.prepare("SELECT section_key,status FROM creator_onboarding_sections WHERE creator_id=?").bind(creatorId).all<{section_key:string;status:string}>(),
   ]);
   if (!profile || profile.adult_verification_status !== "verified" || !profile.adult_verified_at || profile.contract_status !== "active" || profile.consent_status !== "recorded" || missingRequiredOnboardingSections(open.results).length) throw new Error("Complete every required onboarding section and activate compliance before activating this creator.");
-  await DB.batch([
-    DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='active',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
-    DB.prepare("UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured' AND EXISTS (SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=operational_accounts.creator_id AND e.subject=operational_accounts.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created') AND EXISTS (SELECT 1 FROM creator_onboarding_profiles p LEFT JOIN creator_compliance_records c ON c.creator_id=p.creator_id WHERE p.creator_id=operational_accounts.creator_id AND p.workflow_state='active' AND p.adult_verification_status='verified' AND p.contract_status='active' AND p.consent_status='recorded' AND c.adult_verified_at IS NOT NULL)").bind(creatorId),
-    DB.prepare("UPDATE creator_compliance_records SET activated_by=?,activated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(identity.email,creatorId),
-  ]); await audit(creatorId,humanAuditActor(identity),"creator_onboarding_activated","onboarding",{}); revalidate();
+  const results = await DB.batch([
+    DB.prepare(`UPDATE creator_onboarding_profiles SET workflow_state='active',updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND workflow_state<>'active' AND adult_verification_status='verified' AND contract_status='active' AND consent_status='recorded' AND EXISTS (SELECT 1 FROM creator_compliance_records c WHERE c.creator_id=creator_onboarding_profiles.creator_id AND c.adult_verified_at IS NOT NULL) AND ${requiredSectionsCompleteSql("creator_onboarding_profiles")}`).bind(creatorId),
+    DB.prepare(`UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured' AND EXISTS (SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=operational_accounts.creator_id AND e.subject=operational_accounts.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created') AND EXISTS (SELECT 1 FROM creator_onboarding_profiles p LEFT JOIN creator_compliance_records c ON c.creator_id=p.creator_id WHERE p.creator_id=operational_accounts.creator_id AND p.workflow_state='active' AND p.adult_verification_status='verified' AND p.contract_status='active' AND p.consent_status='recorded' AND c.adult_verified_at IS NOT NULL AND c.activated_at IS NULL AND ${requiredSectionsCompleteSql("p")})`).bind(creatorId),
+    DB.prepare(`UPDATE creator_compliance_records SET activated_by=?,activated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND activated_at IS NULL AND EXISTS (SELECT 1 FROM creator_onboarding_profiles p WHERE p.creator_id=creator_compliance_records.creator_id AND p.workflow_state='active' AND p.adult_verification_status='verified' AND p.contract_status='active' AND p.consent_status='recorded' AND creator_compliance_records.adult_verified_at IS NOT NULL AND ${requiredSectionsCompleteSql("p")})`).bind(identity.email,creatorId),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) throw new Error("Activation could not be completed because onboarding changed. Review the required sections and try again.");
+  await audit(creatorId,humanAuditActor(identity),"creator_onboarding_activated","onboarding",{}); revalidate();
 }
