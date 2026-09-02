@@ -6,10 +6,11 @@ Scope: local synthetic acceptance only, run from `codex/onboarding-acceptance-cl
 
 | Case | Result | Evidence |
 | --- | --- | --- |
-| New creator invitation stores only a hash; wrong Access identity is rejected | PASS | `onboarding-acceptance.test.mjs`; production invitation lookup/claim SQL on a real in-memory SQLite database; raw token lookup returns zero rows |
-| Correct invited identity becomes creator membership and accepted invitation | PASS | Same test executes production claim inserts/updates and audit SQL; membership is `creator`, audit detail is metadata-only |
+| New creator invitation stores only a hash; wrong Access identity is rejected | PASS (local synthetic) | `onboarding-acceptance.test.mjs` executes the production invitation lookup/claim SQL and 0056 schema on in-memory SQLite; the test models the source guard `invited_email.toLowerCase() !== identity.email` and confirms no wrong-identity writes. The source-level guard itself is covered by `invitation-contract.test.mjs`; raw token lookup returns zero rows |
+| Expired, revoked, and already-accepted invitations cannot be claimed | PASS (local synthetic) | Same test executes the production claim lookup SQL; all three states return no claimable row |
+| Correct invited identity becomes creator membership and accepted invitation | PASS (local synthetic) | Same test executes production claim inserts/updates and audit SQL after the source-contract identity check; membership is `creator`, audit detail is metadata-only |
 | Required onboarding sections block activation until agency review completes them | PASS | Same test executes production section-review and guarded activation SQL; incomplete sections leave `draft`, reviewed sections reach `admin_review` |
-| Activation enables only the creator's pending visible account and records activation | PASS | Same test executes production profile/account/compliance activation SQL; foreign creator account remains inactive and authority remains `not_configured` |
+| Activation enables only the creator's pending visible account and records activation | PASS (local synthetic) | Same test executes production profile/account/compliance activation SQL; owned account becomes active while both owned and foreign publishing authority values remain `not_configured` |
 | A creator change reopens the affected section/workflow for review | PASS | Same test executes production `changedSection` SQL after activation; `paid_platforms` and the profile return to `draft` |
 | Creator/viewer permissions and creator isolation | PASS | Same test plus existing `creator-portal.test.mjs` and `identity-isolation.test.mjs`; viewer mutate and cross-creator scope return 404 |
 | Creator credential visibility | PASS | Same test executes production Access listing query; creator sees only own shared credential metadata, administrator sees own active credentials, foreign credential is excluded, ciphertext is not selected |
@@ -31,4 +32,4 @@ The existing creator-session own probe was accepted in staging at `2026-09-02 12
 
 `node --experimental-strip-types --test cloudflare/thot-os-next/tests/onboarding-acceptance.test.mjs` — PASS (1 test).
 
-The full web suite remains separately gated by the existing worktree dependency/tooling issue: this branch links the root `node_modules` to the integration checkout, which has `better-sqlite3` but not the optional Wrangler/Sharp packages used by unrelated migration/media tests. No dependency was added.
+The lead integration checkout has the complete web dependencies and is running the full tests/lint/build gates. This acceptance branch intentionally links root `node_modules` for `better-sqlite3` local SQLite coverage; it has no `tsc`/`next` binaries, and no dependency was added.

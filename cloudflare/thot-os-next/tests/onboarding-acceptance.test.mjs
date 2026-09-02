@@ -61,10 +61,21 @@ test("synthetic creator invitation claim reaches reviewed activation with produc
     const createMembership = match(identityActions, /DB\.prepare\("(INSERT INTO creator_memberships \(creator_id,user_email,role,status\) SELECT[^\"]+)"\)/, "creator membership insert");
     const claimAudit = match(identityActions, /DB\.prepare\("(INSERT INTO identity_audit_events[^\"]+)"\)\.bind\(crypto\.randomUUID\(\), invitation\.creator_id, identity\.email, "creator", "creator_invitation_accepted"/, "claim audit");
     const createProfile = match(identityActions, /DB\.prepare\("(INSERT INTO creator_onboarding_profiles \(creator_id,stage_name\) VALUES \(\?,\?\))"\)/, "onboarding profile insert");
+    const digest = async (token) => {
+      const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+      return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    };
     const token = "a".repeat(64);
-    const tokenHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-    const hash = [...new Uint8Array(tokenHash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    db.prepare("INSERT INTO creator_invitations (id,creator_id,invited_email,token_hash,expires_at,created_by) VALUES (?,?,?,?,?,?)").run("invite-1", "new-creator", "new.creator@example.test", hash, "2099-01-01", "admin@example.test");
+    const hash = await digest(token);
+    const expiredHash = await digest("b".repeat(64));
+    const revokedHash = await digest("c".repeat(64));
+    const insertInvitation = db.prepare("INSERT INTO creator_invitations (id,creator_id,invited_email,token_hash,expires_at,created_by) VALUES (?,?,?,?,?,?)");
+    insertInvitation.run("invite-1", "new-creator", "new.creator@example.test", hash, "2099-01-01", "admin@example.test");
+    insertInvitation.run("invite-expired", "new-creator", "expired@example.test", expiredHash, "2000-01-01", "admin@example.test");
+    insertInvitation.run("invite-revoked", "new-creator", "revoked@example.test", revokedHash, "2099-01-01", "admin@example.test");
+    db.prepare("UPDATE creator_invitations SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE id='invite-revoked'").run();
+    assert.equal(db.prepare(claimSelect).get(expiredHash), undefined);
+    assert.equal(db.prepare(claimSelect).get(revokedHash), undefined);
 
     const wrongIdentity = "different@example.test";
     const wrongInvite = db.prepare(claimSelect).get(hash);
@@ -82,6 +93,7 @@ test("synthetic creator invitation claim reaches reviewed activation with produc
       db.prepare(claimAudit).run("audit-claim", invitation.creator_id, identity, "creator", "creator_invitation_accepted", invitation.id, JSON.stringify({ metadataOnly: true }));
     })();
     assert.equal(db.prepare("SELECT status FROM creator_invitations WHERE id='invite-1'").pluck().get(), "accepted");
+    assert.equal(db.prepare(claimSelect).get(hash), undefined, "accepted invitations cannot be claimed again");
     assert.equal(db.prepare("SELECT role FROM creator_memberships WHERE creator_id='new-creator' AND lower(user_email)=lower(?)").pluck().get(identity), "creator");
     assert.equal(db.prepare("SELECT detail FROM identity_audit_events WHERE id='audit-claim'").pluck().get(), JSON.stringify({ metadataOnly: true }));
     assert.equal(db.prepare("SELECT COUNT(*) FROM creator_invitations WHERE token_hash=?").pluck().get(token), 0);
@@ -114,8 +126,8 @@ test("synthetic creator invitation claim reaches reviewed activation with produc
       db.prepare(activateCompliance).run("admin@example.test", "new-creator");
     })();
     assert.equal(db.prepare("SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id='new-creator'").pluck().get(), "active");
-    assert.equal(db.prepare("SELECT is_active FROM operational_accounts WHERE id='new-paid'").pluck().get(), 1);
-    assert.equal(db.prepare("SELECT is_active FROM operational_accounts WHERE id='other-paid'").pluck().get(), 0);
+    assert.deepEqual(db.prepare("SELECT is_active,publishing_authority FROM operational_accounts WHERE id='new-paid'").get(), { is_active: 1, publishing_authority: "not_configured" });
+    assert.deepEqual(db.prepare("SELECT is_active,publishing_authority FROM operational_accounts WHERE id='other-paid'").get(), { is_active: 0, publishing_authority: "not_configured" });
     assert.equal(db.prepare("SELECT activated_by FROM creator_compliance_records WHERE creator_id='new-creator'").pluck().get(), "admin@example.test");
 
     const changedSection = match(onboardingActions, /DB\.prepare\(`(INSERT INTO creator_onboarding_sections[^`]*)`\)\n    \.bind\(creatorId, section, isCreator \? "draft" : "admin_review", email, isCreator \? 1 : 0\)/, "section change SQL");
