@@ -19,14 +19,34 @@ test("creator onboarding exposes the complete invitation-to-active lifecycle", a
   assert.match(actions, /status = admin \? "complete" : "creator_review"/);
   assert.match(actions, /workflow_state='admin_review'/);
   assert.match(actions, /workflow_state='active'/);
+  assert.match(actions, /redirect\("\/onboarding\?activation=prerequisites"\)/);
+  assert.match(actions, /redirect\("\/onboarding\?activation=race"\)/);
+  assert.match(actions, /redirect\("\/onboarding\?activation=success"\)/);
   assert.match(actions, /UPDATE operational_accounts SET is_active=1[\s\S]*publishing_authority='not_configured'/);
   assert.match(page, /workflow_state/);
+  assert.match(page, /activationMessages/);
+  assert.match(page, /requestedActivation = query\.activation === "prerequisites"/);
+  assert.match(page, /profile\?\.workflow_state === "active"/);
+  assert.match(page, /missingRequired\.map/);
+  assert.match(page, /role="status" aria-live="polite"/);
   assert.match(page, /Password needs to be entered again/);
   assert.match(creator, /sentForReview = \["creator_review", "admin_review"\]\.includes\(profile\?\.workflow_state/);
   assert.match(creator, /Send updated onboarding for review/);
   assert.doesNotMatch(creator, /reviewKeys\.every/);
   assert.match(authorization, /agency_admin: new Set\(\["view", "mutate", "approve", "manage_identity"\]\)/);
   assert.doesNotMatch(authorization, /operator: new Set\([^\n]*manage_identity/);
+});
+
+test("activation notice selection is allowlisted and state-aware", async () => {
+  const page = await source("../src/app/onboarding/page.tsx");
+  const requested = page.match(/const requestedActivation = ([^;]+);/)?.[1];
+  const status = page.match(/const activationStatus = ([^;]+);/)?.[1];
+  assert.ok(requested && status);
+  const resolve = new Function("query", "profile", `const requestedActivation = ${requested}; const activationStatus = ${status}; return activationStatus;`);
+  assert.equal(resolve({ activation: "toString" }, { workflow_state: "active" }), undefined);
+  assert.equal(resolve({ activation: "__proto__" }, { workflow_state: "active" }), undefined);
+  assert.equal(resolve({ activation: "success" }, { workflow_state: "draft" }), undefined);
+  assert.equal(resolve({ activation: "success" }, { workflow_state: "active" }), "success");
 });
 
 test("agency administrators receive a direct onboarding review queue and navigation notice", async () => {
