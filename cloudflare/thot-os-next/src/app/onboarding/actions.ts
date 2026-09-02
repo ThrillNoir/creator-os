@@ -123,11 +123,15 @@ export async function saveCreatorAccountLoginMethodAction(form: FormData) {
   if (loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const username = value(form, "username", 120); if (!username) throw new Error("Username is required.");
   const DB = cloudflareEnv().DB;
-  const account = await DB.prepare("SELECT account_kind,platform FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string }>();
+  const account = await DB.prepare("SELECT account_kind,platform,label,handle,login_email,profile_url,account_purpose,connection_method FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string }>();
   if (!account) throw new Error("Choose an account in your workspace.");
-  await DB.prepare("UPDATE operational_accounts SET label=?,handle=?,login_email=?,profile_url=?,account_purpose=?,connection_method=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(username, username, loginEmail, profileUrl(form, account.platform), value(form, "purpose", 400), loginMethod, accountId, identity.creator.creator_id).run();
-  await changedSection(identity.creator.creator_id, account.account_kind === "paid" ? "paid_platforms" : "social_profiles", identity.email, true);
-  await audit(identity.creator.creator_id, humanAuditActor(identity), "onboarding_account_login_method_saved", accountId, { loginMethod }); revalidate();
+  const nextProfileUrl = profileUrl(form, account.platform); const purpose = value(form, "purpose", 400);
+  const metadataChanged = (account.handle || account.label).trim() !== username || account.login_email.trim().toLowerCase() !== loginEmail || account.profile_url.trim() !== nextProfileUrl || account.account_purpose.trim() !== purpose || account.connection_method.trim() !== loginMethod;
+  if (metadataChanged) {
+    await DB.prepare("UPDATE operational_accounts SET label=?,handle=?,login_email=?,profile_url=?,account_purpose=?,connection_method=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(username, username, loginEmail, nextProfileUrl, purpose, loginMethod, accountId, identity.creator.creator_id).run();
+    await changedSection(identity.creator.creator_id, account.account_kind === "paid" ? "paid_platforms" : "social_profiles", identity.email, true);
+  }
+  await audit(identity.creator.creator_id, humanAuditActor(identity), "onboarding_account_login_method_saved", accountId, { loginMethod, metadataChanged }); revalidate();
   return { ok: true };
 }
 

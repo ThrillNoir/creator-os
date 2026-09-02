@@ -62,3 +62,25 @@ test("activation mutation rechecks required sections and current verification", 
     assert.equal(db.prepare(sql).run("creator-1").changes, 1);
   } finally { db.close(); }
 });
+
+test("password-only account saves preserve review state while metadata changes reopen it", async () => {
+  const source = await readFile(new URL("../src/app/onboarding/actions.ts", import.meta.url), "utf8");
+  const expression = source.match(/const metadataChanged = ([^;]+);/)?.[1];
+  assert.ok(expression);
+  const metadataChanged = new Function("account", "username", "loginEmail", "nextProfileUrl", "purpose", "loginMethod", `return ${expression};`);
+  const account = { handle: "creator", label: "Legacy display label", login_email: "creator@example.com", profile_url: "https://onlyfans.com/creator", account_purpose: "Main", connection_method: "password" };
+  assert.equal(metadataChanged(account, "creator", "creator@example.com", account.profile_url, "Main", "password"), false);
+  assert.equal(metadataChanged({ ...account, handle: "" }, "Legacy display label", "creator@example.com", account.profile_url, "Main", "password"), false);
+  for (const changed of [
+    ["new-creator", "creator@example.com", account.profile_url, "Main", "password"],
+    ["creator", "other@example.com", account.profile_url, "Main", "password"],
+    ["creator", "creator@example.com", "https://onlyfans.com/other", "Main", "password"],
+    ["creator", "creator@example.com", account.profile_url, "Backup", "password"],
+    ["creator", "creator@example.com", account.profile_url, "Main", "google"],
+  ]) assert.equal(metadataChanged(account, ...changed), true);
+
+  const action = source.slice(source.indexOf("export async function saveCreatorAccountLoginMethodAction"));
+  assert.match(action, /identity\.creator\.role !== "creator"/);
+  assert.match(action, /WHERE id=\? AND creator_id=\? AND creator_visible=1/);
+  assert.match(action, /if \(metadataChanged\) \{[\s\S]*UPDATE operational_accounts SET[\s\S]*changedSection/);
+});
