@@ -4,6 +4,18 @@
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
   "observedAt": "2026-08-31",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
+  "pendingMigrations": [
+    {
+      "name": "0057_instagram_account_scoped_analytics.sql",
+      "sha256": "3cc22c1f67884a65a6b3c039fa0d18e6581e5588dd251342f35bd03d13fbc66e",
+      "purpose": "Reviewed checkpoint B candidate; account-scoped Instagram sync, runs and observations. Not applied remotely."
+    },
+    {
+      "name": "0058_fansly_claim_recovery.sql",
+      "sha256": "7292bd2dc1a85c8ae35772153e85e4656e8a50830fe4e4a1f060c75812c57cc7",
+      "purpose": "Reviewed checkpoint B candidate; nullable Fansly owner tokens, preserving legacy claims. Not applied remotely."
+    }
+  ],
   "migrations": [
     {
       "remoteId": 1,

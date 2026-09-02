@@ -39,7 +39,7 @@ export interface InstagramReplyDraft {
 export interface PremiumReplyDraft {
   id: string; body: string; status: "draft" | "approved" | "claimed" | "sent" | "failed" | "cancelled";
   requested_by: string; approved_by: string | null; error: string | null; receipt: string;
-  completed_at: string | null; created_at: string;
+  completed_at: string | null; created_at: string; stale_claim: number;
 }
 
 export interface MessagingAuditRow {
@@ -52,7 +52,7 @@ export function isMessagePlatform(value: string | undefined): value is MessagePl
 
 export async function getUnifiedMessages(creatorId: string, platform?: MessagePlatform, selectedThreadId?: string, accountId?: string) {
   const { DB } = cloudflareEnv();
-  const [connectionsResult, threadsResult, telegramResult, instagramSentResult, premiumSentResult, auditResult] = await Promise.all([
+  const [connectionsResult, threadsResult, telegramResult, instagramSentResult, premiumSentResult, auditResult, fanslyCollectionReview] = await Promise.all([
     DB.prepare(`SELECT c.*,COUNT(DISTINCT t.id) AS thread_count,COALESCE(SUM(t.unread_count),0) AS unread_count
       FROM messaging_connections c LEFT JOIN message_threads t ON t.connection_id=c.id AND t.creator_id=c.creator_id
       WHERE c.creator_id=? GROUP BY c.id ORDER BY c.platform,c.display_name`).bind(creatorId).all<MessagingConnection>(),
@@ -71,6 +71,13 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
     DB.prepare(`SELECT e.id,e.event_type,e.actor,e.detail,e.created_at,c.display_name FROM messaging_audit_events e
       LEFT JOIN messaging_connections c ON c.id=e.connection_id AND c.creator_id=e.creator_id
       WHERE e.creator_id=? ORDER BY e.created_at DESC LIMIT 30`).bind(creatorId).all<MessagingAuditRow>(),
+    DB.prepare(`SELECT COUNT(*) AS count FROM premium_thread_sync_state s
+      JOIN message_threads t ON t.id=s.thread_id AND t.creator_id=s.creator_id
+      JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
+      WHERE s.creator_id=? AND c.platform='fansly' AND (
+        (s.status='failed' AND s.attempts>=3) OR
+        (s.status='claimed' AND s.claim_token IS NULL AND (s.last_requested_at IS NULL OR s.last_requested_at<datetime('now','-2 minutes'))))`)
+      .bind(creatorId).first<{ count: number }>(),
   ]);
   const threads = threadsResult.results;
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? threads[0] ?? null;
@@ -85,7 +92,8 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
               WHERE d.creator_id=? AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(creatorId, selectedThread.id).all<InstagramReplyDraft>()
           : Promise.resolve({ results: [], success: true } as D1Result<InstagramReplyDraft>),
         selectedThread.platform === "fansly" || selectedThread.platform === "onlyfans"
-          ? DB.prepare(`SELECT d.id,d.body,d.status,d.requested_by,d.approved_by,d.error,d.receipt,d.completed_at,d.created_at
+          ? DB.prepare(`SELECT d.id,d.body,d.status,d.requested_by,d.approved_by,d.error,d.receipt,d.completed_at,d.created_at,
+              CASE WHEN d.status='claimed' AND (d.claimed_at IS NULL OR d.claimed_at<datetime('now','-2 minutes')) THEN 1 ELSE 0 END AS stale_claim
               FROM premium_message_drafts d JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id
               WHERE d.creator_id=? AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(creatorId, selectedThread.id).all<PremiumReplyDraft>()
           : Promise.resolve({ results: [], success: true } as D1Result<PremiumReplyDraft>),
@@ -111,6 +119,7 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
     connections, threads, selectedThread, messages,
     instagramDrafts: instagramDraftRows.results,
     premiumDrafts: premiumDraftRows.results,
+    fanslyCollectionNeedsReview: Number(fanslyCollectionReview?.count ?? 0),
     telegramLog: telegramResult.results, audit: auditResult.results,
     paused: connections.some((connection) => connection.emergency_paused === 1),
     metrics: {
