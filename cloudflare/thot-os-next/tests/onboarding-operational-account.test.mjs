@@ -22,7 +22,11 @@ test("activation enables only creator-submitted pending accounts", async () => {
   const db = new Database(":memory:");
   try {
     db.exec(`CREATE TABLE operational_accounts (id TEXT,creator_id TEXT,account_kind TEXT,creator_visible INTEGER,is_active INTEGER,publishing_authority TEXT,updated_at TEXT);
-      CREATE TABLE creator_access_audit_events (creator_id TEXT,subject TEXT,actor_role TEXT,event_type TEXT);`);
+      CREATE TABLE creator_access_audit_events (creator_id TEXT,subject TEXT,actor_role TEXT,event_type TEXT);
+      CREATE TABLE creator_onboarding_profiles (creator_id TEXT,workflow_state TEXT,adult_verification_status TEXT,contract_status TEXT,consent_status TEXT);
+      CREATE TABLE creator_compliance_records (creator_id TEXT,adult_verified_at TEXT);`);
+    db.prepare("INSERT INTO creator_onboarding_profiles VALUES (?,?,?,?,?)").run("creator-1", "active", "verified", "active", "recorded");
+    db.prepare("INSERT INTO creator_compliance_records VALUES (?,?)").run("creator-1", "verified-at");
     db.prepare("INSERT INTO operational_accounts VALUES (?,?,?,?,?,?,?)").run("creator-account", "creator-1", "social", 1, 0, "not_configured", "old");
     db.prepare("INSERT INTO operational_accounts VALUES (?,?,?,?,?,?,?)").run("admin-account", "creator-1", "social", 1, 0, "not_configured", "old");
     db.prepare("INSERT INTO creator_access_audit_events VALUES (?,?,?,?)").run("creator-1", "creator-account", "creator", "onboarding_operational_account_created");

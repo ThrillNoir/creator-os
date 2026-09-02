@@ -3,7 +3,6 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import Database from "better-sqlite3";
 import {
-  complianceIdentityChanged,
   INVALIDATE_COMPLIANCE_IDENTITY_SQL,
   RESET_IDENTITY_VERIFICATION_SQL,
   SAVE_COMPLIANCE_IDENTITY_SQL,
@@ -32,17 +31,18 @@ test("private identity changes invalidate only the changed creator and reopen id
     const invalidate = db.prepare(INVALIDATE_COMPLIANCE_IDENTITY_SQL);
     const reset = db.prepare(RESET_IDENTITY_VERIFICATION_SQL);
     const writeIdentity = (creatorId, legalName, dateOfBirth) => {
-      const previous = db.prepare("SELECT legal_name AS legalName,date_of_birth AS dateOfBirth FROM creator_compliance_records WHERE creator_id=?").get(creatorId);
-      const changed = complianceIdentityChanged(previous, { legalName, dateOfBirth });
-      db.transaction(() => {
+      const changed = db.transaction(() => {
+        const invalidated = invalidate.run(creatorId, legalName, dateOfBirth).changes > 0;
+        reset.run(creatorId, creatorId, legalName, dateOfBirth);
         save.run(creatorId, legalName, dateOfBirth);
-        if (changed) { invalidate.run(creatorId); reset.run(creatorId); }
+        return invalidated;
       })();
       return changed;
     };
 
     assert.equal(writeIdentity("creator-1", "Ada Lovelace", "1815-12-10"), false);
     assert.deepEqual(db.prepare("SELECT legal_name,date_of_birth,adult_verified_at FROM creator_compliance_records WHERE creator_id='creator-1'").get(), { legal_name: "Ada Lovelace", date_of_birth: "1815-12-10", adult_verified_at: "verified-at" });
+    assert.equal(db.prepare("SELECT adult_verification_status FROM creator_onboarding_profiles WHERE creator_id='creator-1'").pluck().get(), "verified");
     assert.equal(writeIdentity("creator-1", "Ada Byron Lovelace", "1815-12-10"), true);
     db.prepare(sectionSql).run("creator-1", "identity", "draft", "creator@example.com", 1);
     db.prepare(profileSql).run(1, "creator-1");

@@ -7,7 +7,7 @@ import { humanAuditActor } from "@/lib/audit-identity";
 import { requireCreatorContext } from "@/lib/identity";
 import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
 import { missingRequiredOnboardingSections, ONBOARDING_SECTION_KEYS, REQUIRED_ONBOARDING_SECTION_KEYS } from "@/lib/onboarding-sections";
-import { complianceIdentityChanged, INVALIDATE_COMPLIANCE_IDENTITY_SQL, RESET_IDENTITY_VERIFICATION_SQL, SAVE_COMPLIANCE_IDENTITY_SQL } from "@/lib/onboarding-identity";
+import { INVALIDATE_COMPLIANCE_IDENTITY_SQL, RESET_IDENTITY_VERIFICATION_SQL, SAVE_COMPLIANCE_IDENTITY_SQL } from "@/lib/onboarding-identity";
 import { requireStepUpSession, STEP_UP_COOKIE } from "@/lib/access-vault";
 import { redirect } from "next/navigation";
 
@@ -41,16 +41,12 @@ async function changedSection(creatorId: string, section: string, email: string,
 }
 
 async function saveComplianceIdentity(DB: D1Database, creatorId: string, legalName: string, dob: string) {
-  const previousRow = await DB.prepare("SELECT legal_name,date_of_birth FROM creator_compliance_records WHERE creator_id=?").bind(creatorId).first<{ legal_name: string; date_of_birth: string }>();
-  const previous = previousRow && { legalName: previousRow.legal_name, dateOfBirth: previousRow.date_of_birth };
-  const changed = complianceIdentityChanged(previous, { legalName, dateOfBirth: dob });
-  await DB.batch([
+  const results = await DB.batch([
+    DB.prepare(INVALIDATE_COMPLIANCE_IDENTITY_SQL).bind(creatorId, legalName, dob),
+    DB.prepare(RESET_IDENTITY_VERIFICATION_SQL).bind(creatorId, creatorId, legalName, dob),
     DB.prepare(SAVE_COMPLIANCE_IDENTITY_SQL).bind(creatorId, legalName, dob),
-    ...(changed ? [
-      DB.prepare(INVALIDATE_COMPLIANCE_IDENTITY_SQL).bind(creatorId),
-      DB.prepare(RESET_IDENTITY_VERIFICATION_SQL).bind(creatorId),
-    ] : []),
   ]);
+  const changed = Number(results[0]?.meta?.changes ?? 0) > 0;
   return changed;
 }
 
@@ -235,7 +231,7 @@ export async function activateOnboardingAction() {
   if (!profile || profile.adult_verification_status !== "verified" || !profile.adult_verified_at || profile.contract_status !== "active" || profile.consent_status !== "recorded" || missingRequiredOnboardingSections(open.results).length) throw new Error("Complete every required onboarding section and activate compliance before activating this creator.");
   await DB.batch([
     DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='active',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
-    DB.prepare("UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured' AND EXISTS (SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=operational_accounts.creator_id AND e.subject=operational_accounts.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created')").bind(creatorId),
+    DB.prepare("UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured' AND EXISTS (SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=operational_accounts.creator_id AND e.subject=operational_accounts.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created') AND EXISTS (SELECT 1 FROM creator_onboarding_profiles p LEFT JOIN creator_compliance_records c ON c.creator_id=p.creator_id WHERE p.creator_id=operational_accounts.creator_id AND p.workflow_state='active' AND p.adult_verification_status='verified' AND p.contract_status='active' AND p.consent_status='recorded' AND c.adult_verified_at IS NOT NULL)").bind(creatorId),
     DB.prepare("UPDATE creator_compliance_records SET activated_by=?,activated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(identity.email,creatorId),
   ]); await audit(creatorId,humanAuditActor(identity),"creator_onboarding_activated","onboarding",{}); revalidate();
 }
