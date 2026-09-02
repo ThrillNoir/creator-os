@@ -20,7 +20,8 @@ test("creator onboarding exposes the complete invitation-to-active lifecycle", a
   assert.match(actions, /workflow_state='admin_review'/);
   assert.match(actions, /workflow_state='active'/);
   assert.match(page, /workflow_state/);
-  assert.match(creator, /"creator_review", "admin_review", "complete"/);
+  assert.match(creator, /sentForReview = \["creator_review", "admin_review", "active"\]\.includes\(profile\?\.workflow_state/);
+  assert.doesNotMatch(creator, /reviewKeys\.every/);
   assert.match(authorization, /agency_admin: new Set\(\["view", "mutate", "approve", "manage_identity"\]\)/);
   assert.doesNotMatch(authorization, /operator: new Set\([^\n]*manage_identity/);
 });
