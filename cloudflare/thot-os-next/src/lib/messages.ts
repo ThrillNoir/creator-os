@@ -11,7 +11,7 @@ export interface MessagingConnection {
 }
 
 export interface MessageThread {
-  id: string; connection_id: string; external_thread_id: string; platform: MessagePlatform; connection_name: string; participant_name: string;
+  id: string; connection_id: string; account_id: string | null; external_thread_id: string; platform: MessagePlatform; connection_name: string; participant_name: string;
   participant_handle: string; participant_external_id: string; subject: string; unread_count: number; last_message_at: string | null;
   last_inbound_at: string | null; status: string;
 }
@@ -57,11 +57,11 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
       FROM messaging_connections c LEFT JOIN message_threads t ON t.connection_id=c.id AND t.creator_id=c.creator_id
       WHERE c.creator_id=? GROUP BY c.id ORDER BY c.platform,c.display_name`).bind(creatorId).all<MessagingConnection>(),
     platform
-      ? DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
+      ? DB.prepare(`SELECT t.id,t.connection_id,c.account_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
           (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at
           FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
           WHERE t.creator_id=? AND c.platform=?${accountId ? " AND c.account_id=?" : ""} ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(...([creatorId, platform, ...(accountId ? [accountId] : [])])).all<MessageThread>()
-      : DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
+      : DB.prepare(`SELECT t.id,t.connection_id,c.account_id,t.external_thread_id,c.platform,c.display_name AS connection_name,t.participant_name,t.participant_handle,t.participant_external_id,t.subject,t.unread_count,t.last_message_at,t.status,
           (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at
           FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
           WHERE t.creator_id=? ORDER BY COALESCE(t.last_message_at,t.updated_at) DESC LIMIT 100`).bind(creatorId).all<MessageThread>(),

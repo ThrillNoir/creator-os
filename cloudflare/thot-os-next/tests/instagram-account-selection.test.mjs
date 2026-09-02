@@ -13,6 +13,9 @@ test("Instagram message refresh validates an explicit account and keeps selected
   assert.match(refresh, /thread\.account_id !== requestedAccountId/);
   assert.match(refresh, /body: JSON\.stringify\(\{ creatorId: identity\.creator\.creator_id, accountId \}\)/);
   assert.match(messages, /getUnifiedMessages\(context\.creator\.creator_id, platform, query\.thread, query\.accountId\)/);
+  assert.match(messages, /const selectedInstagram = data\.selectedThread\?\.platform === "instagram"/);
+  assert.match(messages, /<form method="get">[\s\S]*name="thread" value=""/);
+  assert.match(messages, /<form action=\{refreshInstagramMessagesAction\}>[\s\S]*name="threadId" value=\{data\.selectedThread\?\.id/);
   assert.match(messages, /platform === "instagram" \? selectedInstagram/);
   assert.match(messages, /name="accountId"/);
 });

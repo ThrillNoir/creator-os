@@ -687,7 +687,8 @@ async function collectInstagramAnalytics(env: Env, creatorId: string, triggerTyp
 }
 
 async function syncInstagram(env: Env, creatorId: string, accountId?: string, forceAnalytics = false) {
-  const scopedAccountId = accountId ?? (await currentInstagramAnalyticsConnection(env, creatorId)).account_id;
+  const resolvedConnection = await currentInstagramAnalyticsConnection(env, creatorId, accountId);
+  const scopedAccountId = resolvedConnection.account_id;
   const result: { subscription?: unknown; messages?: unknown; analytics?: unknown; errors: string[] } = { errors: [] };
   try {
     const connection = await currentInstagramConnection(env, creatorId, scopedAccountId);

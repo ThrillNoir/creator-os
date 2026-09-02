@@ -71,6 +71,7 @@ test("0057 keeps legacy sync state and scopes new Instagram analytics by account
     const selectedThread = db.prepare("SELECT c.account_id FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'").get("thread-main", "adelaide");
     assert.equal(selectedThread.account_id, "adelaide-instagram-main");
     assert.notEqual(selectedThread.account_id, "adelaide-instagram-alt", "a posted account selector cannot retarget another thread's connection");
+    assert.deepEqual(db.prepare("SELECT t.id FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id WHERE t.creator_id=? AND c.platform='instagram' AND c.account_id=?").all("adelaide", "adelaide-instagram-alt"), [], "account browsing stays empty when the selected account has no threads");
 
     db.prepare("INSERT INTO instagram_media_metrics (creator_id,account_id,media_id,like_count) VALUES ('adelaide','adelaide-instagram-main','same-media',1)").run();
     db.prepare("INSERT INTO instagram_media_metrics (creator_id,account_id,media_id,like_count) VALUES ('adelaide','adelaide-instagram-alt','same-media',2) ON CONFLICT(creator_id,media_id) DO UPDATE SET account_id=excluded.account_id,like_count=excluded.like_count WHERE instagram_media_metrics.account_id IS NULL OR instagram_media_metrics.account_id=excluded.account_id").run();
