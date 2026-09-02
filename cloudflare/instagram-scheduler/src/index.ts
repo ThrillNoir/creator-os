@@ -25,7 +25,7 @@ type InstagramMessage = {
   story?: { reply_to?: { link?: string } };
 };
 type InstagramReplyDraft = {
-  id: string; creator_id: string; connection_id: string; thread_id: string; body: string; status: string;
+  id: string; creator_id: string; connection_id: string; account_id: string; thread_id: string; body: string; status: string;
   requested_by: string;
   external_thread_id: string; participant_external_id: string; participant_name: string; participant_handle: string;
   last_inbound_at: string | null;
@@ -345,12 +345,16 @@ async function approvedInstagramMedia(env: Env, post: DuePost) {
   return { url: signed.url, video: format[1] };
 }
 
-async function currentInstagramConnection(env: Env, creatorId: string) {
-  const rows = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id,mc.id AS messaging_connection_id
+async function currentInstagramConnection(env: Env, creatorId: string, accountId?: string) {
+  const statement = env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id,mc.id AS messaging_connection_id
     FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.creator_id=pc.creator_id AND oa.platform='instagram' AND oa.is_active=1
     JOIN messaging_connections mc ON mc.creator_id=pc.creator_id AND mc.platform='instagram' AND mc.account_id=oa.id
-    WHERE pc.creator_id=? AND pc.service='instagram'`).bind(creatorId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string; messaging_connection_id: string }>();
-  if (rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connected accounts; select an account before syncing messages." : "Instagram is not connected.");
+    WHERE pc.creator_id=? AND pc.service='instagram'${accountId ? " AND oa.id=?" : ""}`);
+  const rows = accountId
+    ? await statement.bind(creatorId, accountId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string; messaging_connection_id: string }>()
+    : await statement.bind(creatorId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string; messaging_connection_id: string }>();
+  if (!accountId && rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connected accounts; select an account before syncing messages." : "Instagram is not connected.");
+  if (accountId && rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connections for this account." : "The selected Instagram account is not connected.");
   const connection = rows.results[0];
   if (!connection || connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
   return connection;
@@ -359,14 +363,48 @@ async function currentInstagramConnection(env: Env, creatorId: string) {
 // Analytics uses the verified Instagram account, not the messaging inbox.
 // Keeping this lookup separate means a metric refresh cannot require or touch
 // a message subscription or message connection.
-async function currentInstagramAnalyticsConnection(env: Env, creatorId: string) {
-  const rows = await env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
+async function currentInstagramAnalyticsConnection(env: Env, creatorId: string, accountId?: string) {
+  const statement = env.DB.prepare(`SELECT pc.connected_account_id,pc.composio_user_id,pc.status,pc.external_account_id,pc.display_name,oa.id AS account_id
     FROM provider_connections pc JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.creator_id=pc.creator_id AND oa.platform='instagram' AND oa.is_active=1
-    WHERE pc.creator_id=? AND pc.service='instagram'`).bind(creatorId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
-  if (rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connected accounts; select an account before collecting analytics." : "Instagram is not connected.");
+    WHERE pc.creator_id=? AND pc.service='instagram'${accountId ? " AND oa.id=?" : ""}`);
+  const rows = accountId
+    ? await statement.bind(creatorId, accountId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>()
+    : await statement.bind(creatorId).all<{ connected_account_id: string; composio_user_id: string; status: string; external_account_id: string; display_name: string; account_id: string }>();
+  if (!accountId && rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connected accounts; select an account before collecting analytics." : "Instagram is not connected.");
+  if (accountId && rows.results.length !== 1) throw new Error(rows.results.length ? "Instagram has multiple connections for this account." : "The selected Instagram account is not connected.");
   const connection = rows.results[0];
   if (connection.status !== "active" || !connection.external_account_id) throw new Error("Instagram is not connected.");
   return connection;
+}
+
+async function instagramSyncState(env: Env, creatorId: string, accountId?: string) {
+  return accountId
+    ? env.DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_account_sync_state WHERE creator_id=? AND account_id=?").bind(creatorId, accountId).first<{ last_messages_sync_at: string | null; last_analytics_sync_at: string | null; last_error: string | null; updated_at: string }>()
+    : env.DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_messages_sync_at: string | null; last_analytics_sync_at: string | null; last_error: string | null; updated_at: string }>();
+}
+
+async function recordInstagramSyncState(env: Env, creatorId: string, accountId: string | undefined, field: "last_messages_sync_at" | "last_analytics_sync_at", connectionId: string, error: string | null = null) {
+  if (accountId) {
+    await env.DB.prepare(`INSERT INTO instagram_account_sync_state (creator_id,account_id,${field},last_error,updated_at)
+      VALUES (?,?,CURRENT_TIMESTAMP,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(creator_id,account_id) DO UPDATE SET ${field}=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP`)
+      .bind(creatorId, accountId, error, error).run();
+    return;
+  }
+  await env.DB.prepare(`INSERT INTO instagram_sync_state (creator_id,connection_id,${field},last_error,updated_at)
+    VALUES (?,?,CURRENT_TIMESTAMP,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(creator_id) DO UPDATE SET ${field}=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP`)
+    .bind(creatorId, connectionId, error, error).run();
+}
+
+async function recordInstagramSyncError(env: Env, creatorId: string, accountId: string | undefined, error: string) {
+  if (accountId) {
+    await env.DB.prepare(`INSERT INTO instagram_account_sync_state (creator_id,account_id,last_error,updated_at)
+      VALUES (?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(creator_id,account_id) DO UPDATE SET last_error=?,updated_at=CURRENT_TIMESTAMP`).bind(creatorId, accountId, error, error).run();
+    return;
+  }
+  await env.DB.prepare("UPDATE instagram_sync_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(error, creatorId).run();
 }
 
 async function currentInstagramPublishConnection(env: Env, post: DuePost) {
@@ -385,8 +423,8 @@ function storedInstagramComposioUserId(connection: { composio_user_id: string })
   return userId;
 }
 
-async function resolveInstagramRecipient(env: Env, creatorId: string, externalThreadId: string) {
-  const connection = await currentInstagramConnection(env, creatorId);
+async function resolveInstagramRecipient(env: Env, creatorId: string, externalThreadId: string, accountId?: string) {
+  const connection = await currentInstagramConnection(env, creatorId, accountId);
   const payload = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_MESSAGES", connection.connected_account_id, storedInstagramComposioUserId(connection), {
     conversation_id: externalThreadId,
     graph_api_version: "v25.0",
@@ -407,10 +445,11 @@ function normalizedUsername(value: string | undefined) {
   return value?.replace(/^@/, "").trim().toLowerCase() ?? "";
 }
 
-async function syncInstagramMessages(env: Env, creatorId: string, force = false) {
-  const connection = await currentInstagramConnection(env, creatorId);
+async function syncInstagramMessages(env: Env, creatorId: string, accountId?: string, force = false) {
+  const connection = await currentInstagramConnection(env, creatorId, accountId);
+  const scopedAccountId = connection.account_id;
   const instagramUserId = storedInstagramComposioUserId(connection);
-  const state = await env.DB.prepare("SELECT last_messages_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_messages_sync_at: string | null }>();
+  const state = await instagramSyncState(env, creatorId, scopedAccountId);
   const previousSync = state?.last_messages_sync_at ? new Date(`${state.last_messages_sync_at.replace(" ", "T")}Z`).getTime() : 0;
   const listed = await executeTool<unknown>(env, "INSTAGRAM_LIST_ALL_CONVERSATIONS", connection.connected_account_id, instagramUserId, {
     graph_api_version: "v25.0",
@@ -481,19 +520,20 @@ async function syncInstagramMessages(env: Env, creatorId: string, force = false)
     threadCount++;
   }
 
+  await recordInstagramSyncState(env, creatorId, scopedAccountId, "last_messages_sync_at", connection.messaging_connection_id);
   const completionStatements = [
     env.DB.prepare("UPDATE messaging_connections SET status='connected',read_enabled=1,last_synced_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(connection.messaging_connection_id, creatorId),
-    env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_messages_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_messages_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.messaging_connection_id),
   ];
   if (!previousSync || newMessageCount) completionStatements.push(env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'instagram_messages_synced','service:instagram-scheduler','service',?)").bind(crypto.randomUUID(), creatorId, connection.messaging_connection_id, JSON.stringify({ threadCount, newMessageCount, newInboundCount })));
   await env.DB.batch(completionStatements);
   return { threadCount, newMessageCount, newInboundCount };
 }
 
-async function syncInstagramAnalytics(env: Env, creatorId: string, force = false) {
-  const connection = await currentInstagramAnalyticsConnection(env, creatorId);
+async function syncInstagramAnalytics(env: Env, creatorId: string, accountId?: string, force = false) {
+  const connection = await currentInstagramAnalyticsConnection(env, creatorId, accountId);
+  const scopedAccountId = connection.account_id;
   const instagramUserId = storedInstagramComposioUserId(connection);
-  const state = await env.DB.prepare("SELECT last_analytics_sync_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<{ last_analytics_sync_at: string | null }>();
+  const state = await instagramSyncState(env, creatorId, scopedAccountId);
   if (!force && state?.last_analytics_sync_at) {
     const last = new Date(`${state.last_analytics_sync_at.replace(" ", "T")}Z`).getTime();
     if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60_000) {
@@ -559,18 +599,18 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
     if (missingShares) missingShareMedia += 1;
     if (!missingViews && likeCount !== null && commentsCount !== null && !missingSaves && !missingShares) completeMetricMedia += 1;
     const mediaStatements = [env.DB.prepare(`INSERT INTO instagram_media_metrics
-      (creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(creator_id,media_id) DO UPDATE SET permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP`)
-      .bind(creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount),
+      (creator_id,account_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(creator_id,media_id) DO UPDATE SET account_id=excluded.account_id,permalink=excluded.permalink,media_type=excluded.media_type,media_product_type=excluded.media_product_type,published_at=excluded.published_at,like_count=excluded.like_count,comments_count=excluded.comments_count,view_count=excluded.view_count,saved_count=excluded.saved_count,shares_count=excluded.shares_count,collected_at=CURRENT_TIMESTAMP`)
+      .bind(creatorId, connection.account_id, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount),
     env.DB.prepare(`INSERT INTO instagram_media_metric_observations
-      (id,creator_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at,source)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,'instagram_api')`)
-      .bind(crypto.randomUUID(), creatorId, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount)];
-    if (permalink) mediaStatements.push(env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND platform='instagram' AND external_post_id=? AND (external_url IS NULL OR external_url='')").bind(permalink, creatorId, mediaId));
+      (id,creator_id,account_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at,source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,'instagram_api')`)
+      .bind(crypto.randomUUID(), creatorId, connection.account_id, mediaId, permalink, item.media_type ?? null, item.media_product_type ?? null, item.timestamp ?? null, likeCount, commentsCount, viewCount, savedCount, sharesCount)];
+    if (permalink) mediaStatements.push(env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_id=? AND platform='instagram' AND external_post_id=? AND (external_url IS NULL OR external_url='')").bind(permalink, creatorId, connection.account_id, mediaId));
     await env.DB.batch(mediaStatements);
   }
-  const missingReceipts = await env.DB.prepare("SELECT id,external_post_id FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='published' AND external_post_id IS NOT NULL AND (external_url IS NULL OR external_url='') ORDER BY published_at DESC LIMIT 20").bind(creatorId).all<{ id: string; external_post_id: string }>();
+  const missingReceipts = await env.DB.prepare("SELECT id,external_post_id FROM social_posts WHERE creator_id=? AND account_id=? AND platform='instagram' AND status='published' AND external_post_id IS NOT NULL AND (external_url IS NULL OR external_url='') ORDER BY published_at DESC LIMIT 20").bind(creatorId, connection.account_id).all<{ id: string; external_post_id: string }>();
   for (const post of missingReceipts.results) {
     try {
       const receipt = await executeTool<unknown>(env, "INSTAGRAM_GET_IG_MEDIA", connection.connected_account_id, instagramUserId, {
@@ -579,13 +619,13 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
       });
       const permalink = record(receipt)?.permalink;
       if (typeof permalink === "string" && permalink) {
-        await env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND external_post_id=?").bind(permalink, post.id, creatorId, post.external_post_id).run();
+        await env.DB.prepare("UPDATE social_posts SET external_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND account_id=? AND external_post_id=?").bind(permalink, post.id, creatorId, connection.account_id, post.external_post_id).run();
       }
     } catch (error) {
       console.warn(JSON.stringify({ event: "instagram_receipt_backfill_failed", postId: post.id, message: error instanceof Error ? error.message : "Lookup failed" }));
     }
   }
-  await env.DB.prepare("INSERT INTO instagram_sync_state (creator_id,connection_id,last_analytics_sync_at,last_error,updated_at) VALUES (?,?,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP) ON CONFLICT(creator_id) DO UPDATE SET last_analytics_sync_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP").bind(creatorId, connection.account_id).run();
+  await recordInstagramSyncState(env, creatorId, scopedAccountId, "last_analytics_sync_at", connection.account_id);
   console.log(JSON.stringify({
     event: "instagram_analytics_metric_coverage",
     creatorId,
@@ -611,63 +651,65 @@ async function syncInstagramAnalytics(env: Env, creatorId: string, force = false
 
 type AnalyticsCollectionTrigger = "manual" | "cron";
 
-async function collectInstagramAnalytics(env: Env, creatorId: string, triggerType: AnalyticsCollectionTrigger, force = false) {
+async function collectInstagramAnalytics(env: Env, creatorId: string, triggerType: AnalyticsCollectionTrigger, accountId?: string, force = false) {
+  // Resolve and validate the exact account before creating a run row. An
+  // omitted account is only a compatibility shorthand for a sole account;
+  // all new state and locks remain account-scoped.
+  const scopedAccountId = accountId ?? (await currentInstagramAnalyticsConnection(env, creatorId)).account_id;
   const runId = crypto.randomUUID();
   const claim = await env.DB.prepare(`INSERT OR IGNORE INTO instagram_analytics_collection_runs
-    (id,creator_id,trigger_type,status,force_requested)
-    VALUES (?,?,?,'running',?)`).bind(runId, creatorId, triggerType, force ? 1 : 0).run();
+    (id,creator_id,trigger_type,status,force_requested,account_id)
+    VALUES (?,?,?,'running',?,?)`).bind(runId, creatorId, triggerType, force ? 1 : 0, scopedAccountId).run();
   if (!claim.meta.changes) {
     console.log(JSON.stringify({ event: "instagram_analytics_collection_skipped", creatorId, triggerType, reason: "collection_in_progress" }));
     return { ok: true, runId: null, status: "skipped", skipped: true, mediaCount: 0, mediaInsightsAttempted: 0, mediaInsightsSucceeded: 0, completeMetricMedia: 0, missingViewMedia: 0, missingSaveMedia: 0, missingShareMedia: 0, reason: "collection_in_progress" };
   }
   try {
-    const result = await syncInstagramAnalytics(env, creatorId, force);
+    const result = await syncInstagramAnalytics(env, creatorId, scopedAccountId, force);
     const status = result.skipped ? "skipped" : "completed";
     await env.DB.prepare(`UPDATE instagram_analytics_collection_runs
       SET status=?,media_count=?,media_insights_attempted=?,media_insights_succeeded=?,complete_metric_media=?,missing_view_media=?,missing_save_media=?,missing_share_media=?,completed_at=CURRENT_TIMESTAMP,error=NULL
-      WHERE id=? AND creator_id=? AND status='running'`)
-      .bind(status, result.mediaCount, result.mediaInsightsAttempted, result.mediaInsightsSucceeded, result.completeMetricMedia, result.missingViewMedia, result.missingSaveMedia, result.missingShareMedia, runId, creatorId).run();
+      WHERE id=? AND creator_id=? AND status='running' AND account_id IS ?`)
+      .bind(status, result.mediaCount, result.mediaInsightsAttempted, result.mediaInsightsSucceeded, result.completeMetricMedia, result.missingViewMedia, result.missingSaveMedia, result.missingShareMedia, runId, creatorId, scopedAccountId).run();
     console.log(JSON.stringify({ event: "instagram_analytics_collection", runId, creatorId, triggerType, status, mediaCount: result.mediaCount, mediaInsightsAttempted: result.mediaInsightsAttempted, mediaInsightsSucceeded: result.mediaInsightsSucceeded, completeMetricMedia: result.completeMetricMedia }));
     return { ok: true, runId, status, ...result };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instagram analytics collection failed.";
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE instagram_analytics_collection_runs
-        SET status='failed',completed_at=CURRENT_TIMESTAMP,error=?
-        WHERE id=? AND creator_id=? AND status='running'`).bind(message.slice(0, 2000), runId, creatorId),
-      env.DB.prepare("UPDATE instagram_sync_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?")
-        .bind(message.slice(0, 2000), creatorId),
-    ]);
+    await env.DB.prepare(`UPDATE instagram_analytics_collection_runs
+      SET status='failed',completed_at=CURRENT_TIMESTAMP,error=?
+      WHERE id=? AND creator_id=? AND status='running' AND account_id=?`).bind(message.slice(0, 2000), runId, creatorId, scopedAccountId).run();
+    await recordInstagramSyncError(env, creatorId, scopedAccountId, message.slice(0, 2000));
     console.warn(JSON.stringify({ event: "instagram_analytics_collection_failed", runId, creatorId, triggerType, message }));
     throw error;
   }
 }
 
-async function syncInstagram(env: Env, creatorId: string, forceAnalytics = false) {
+async function syncInstagram(env: Env, creatorId: string, accountId?: string, forceAnalytics = false) {
+  const scopedAccountId = accountId ?? (await currentInstagramAnalyticsConnection(env, creatorId)).account_id;
   const result: { subscription?: unknown; messages?: unknown; analytics?: unknown; errors: string[] } = { errors: [] };
   try {
-    const connection = await currentInstagramConnection(env, creatorId);
+    const connection = await currentInstagramConnection(env, creatorId, scopedAccountId);
     result.subscription = await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
   } catch (error) {
     result.errors.push(`Messaging subscription: ${error instanceof Error ? error.message : "check failed"}`);
   }
-  try { result.messages = await syncInstagramMessages(env, creatorId); } catch (error) { result.errors.push(`Messages: ${error instanceof Error ? error.message : "sync failed"}`); }
-  try { result.analytics = await syncInstagramAnalytics(env, creatorId, forceAnalytics); } catch (error) { result.errors.push(`Analytics: ${error instanceof Error ? error.message : "sync failed"}`); }
+  try { result.messages = await syncInstagramMessages(env, creatorId, scopedAccountId); } catch (error) { result.errors.push(`Messages: ${error instanceof Error ? error.message : "sync failed"}`); }
+  try { result.analytics = await syncInstagramAnalytics(env, creatorId, scopedAccountId, forceAnalytics); } catch (error) { result.errors.push(`Analytics: ${error instanceof Error ? error.message : "sync failed"}`); }
   const error = result.errors.join(" ").slice(0, 2000) || null;
-  if (error) await env.DB.prepare("UPDATE instagram_sync_state SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(error, creatorId).run();
+  if (error) await recordInstagramSyncError(env, creatorId, scopedAccountId, error);
   return { ok: result.errors.length === 0, ...result };
 }
 
 async function validateInstagramReplyTarget(request: Request, env: Env) {
   const input = await request.json<{ threadId?: string; creatorId?: string }>();
   if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
-  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id,c.status AS connection_status
+  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id,c.account_id,c.status AS connection_status
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
     WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'`)
-    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string; connection_status: string }>();
+    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string; account_id: string; connection_status: string }>();
   if (!thread) return Response.json({ ok: false, error: "instagram_thread_not_found" }, { status: 404 });
   if (thread.connection_status === "restricted") return Response.json({ ok: false, error: "Instagram messaging is restricted for this account. Do not retry until the account is independently authorised again." }, { status: 409 });
-  const { connection, recipient, messageCount } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id);
+  const { connection, recipient, messageCount } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id, thread.account_id);
   await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
   if (thread.participant_external_id && thread.participant_external_id !== recipient.id) {
     return Response.json({ ok: false, error: "Instagram recipient changed. Refresh messages before enabling replies." }, { status: 409 });
@@ -684,12 +726,12 @@ async function validateInstagramReplyTarget(request: Request, env: Env) {
 async function markInstagramThreadSeen(request: Request, env: Env) {
   const input = await request.json<{ threadId?: string; creatorId?: string }>();
   if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
-  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id
+  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id,c.account_id
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
     WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'`)
-    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string }>();
+    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string; account_id: string }>();
   if (!thread) return Response.json({ ok: false, error: "instagram_thread_not_found" }, { status: 404 });
-  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id);
+  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id, thread.account_id);
   if (thread.participant_external_id && thread.participant_external_id !== recipient.id) {
     return Response.json({ ok: false, error: "Instagram recipient changed. Refresh this conversation before marking it read." }, { status: 409 });
   }
@@ -706,10 +748,10 @@ async function markInstagramThreadSeen(request: Request, env: Env) {
   return Response.json({ ok: true, markedSeen: true });
 }
 
-async function syncInstagramMessagesOnly(env: Env, creatorId: string) {
-  const connection = await currentInstagramConnection(env, creatorId);
+async function syncInstagramMessagesOnly(env: Env, creatorId: string, accountId?: string) {
+  const connection = await currentInstagramConnection(env, creatorId, accountId);
   const subscription = await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
-  const messages = await syncInstagramMessages(env, creatorId);
+  const messages = await syncInstagramMessages(env, creatorId, accountId);
   return { ok: true, subscription, messages };
 }
 
@@ -719,7 +761,7 @@ async function sendInstagramReply(request: Request, env: Env) {
   const draft = await env.DB.prepare(`SELECT d.id,d.creator_id,d.connection_id,d.thread_id,d.body,d.status,d.requested_by,
       t.external_thread_id,t.participant_external_id,t.participant_name,t.participant_handle,
       (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=d.creator_id AND m.thread_id=d.thread_id AND m.direction='inbound') AS last_inbound_at,
-      c.status AS connection_status,c.write_enabled,c.outbound_validated,c.emergency_paused
+      c.account_id,c.status AS connection_status,c.write_enabled,c.outbound_validated,c.emergency_paused
     FROM instagram_reply_drafts d
     JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id AND t.connection_id=d.connection_id
     JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
@@ -734,7 +776,7 @@ async function sendInstagramReply(request: Request, env: Env) {
   if (!Number.isFinite(lastInboundAt) || Date.now() - lastInboundAt > 24 * 60 * 60_000) {
     return Response.json({ ok: false, error: "Instagram's active reply window is closed. Ask the person to send a new message, refresh the inbox, then reply." }, { status: 409 });
   }
-  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, draft.external_thread_id);
+  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, draft.external_thread_id, draft.account_id);
   if (draft.participant_external_id && draft.participant_external_id !== recipient.id) {
     return Response.json({ ok: false, error: "Instagram recipient changed. Refresh and validate this conversation again." }, { status: 409 });
   }
@@ -959,21 +1001,23 @@ async function completeConnection(request: Request, env: Env) {
   }
 }
 
-async function status(env: Env, creatorId: string) {
+async function status(env: Env, creatorId: string, accountId?: string) {
+  const accountFilter = accountId ? " AND account_id=?" : "";
+  const bindAccount = <T>(statement: D1PreparedStatement) => accountId ? statement.bind(creatorId, accountId) : statement.bind(creatorId);
   const [connection, lastRun, due, syncState, analytics] = await Promise.all([
-    env.DB.prepare("SELECT account_id,status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='instagram'").bind(creatorId).all(),
+    bindAccount(env.DB.prepare(`SELECT account_id,status,display_name,identity_confirmed_at,last_error,updated_at FROM provider_connections WHERE creator_id=? AND service='instagram'${accountFilter}`)).all(),
     env.DB.prepare("SELECT status,started_at,completed_at,claimed_count,published_count,failed_count,error FROM scheduler_runs WHERE service='instagram' ORDER BY started_at DESC LIMIT 1").first(),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='scheduled' AND unixepoch(scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)").bind(creatorId).first<{ count: number }>(),
-    env.DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first(),
-    env.DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first(),
+    bindAccount(env.DB.prepare(`SELECT COUNT(*) AS count FROM social_posts WHERE creator_id=? AND platform='instagram' AND status='scheduled' AND unixepoch(scheduled_at)<=unixepoch(CURRENT_TIMESTAMP)${accountId ? " AND account_id=?" : ""}`)).first<{ count: number }>(),
+    instagramSyncState(env, creatorId, accountId),
+    (accountId ? env.DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? AND account_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId, accountId) : env.DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId)).first(),
   ]);
   return Response.json({ ok: true, connections: connection.results, lastRun, due: due?.count ?? 0, syncState, analytics });
 }
 
-async function requestedCreatorId(request: Request) {
-  const input = await request.json<{ creatorId?: string }>();
+async function requestedScope(request: Request) {
+  const input = await request.json<{ creatorId?: string; accountId?: string }>();
   if (!input.creatorId) throw new Error("Creator scope is required.");
-  return input.creatorId;
+  return { creatorId: input.creatorId, accountId: typeof input.accountId === "string" && input.accountId ? input.accountId : undefined };
 }
 
 const routeCapabilities: Record<string, string> = {
@@ -1010,23 +1054,22 @@ async function syncNextCreator(env: Env) {
   await env.DB.prepare(`UPDATE instagram_analytics_collection_runs
     SET status='failed',completed_at=CURRENT_TIMESTAMP,error='Collection attempt exceeded 15 minutes; eligible for retry.'
     WHERE status='running' AND unixepoch(started_at) <= unixepoch(CURRENT_TIMESTAMP)-900`).run();
-  const creator = await env.DB.prepare(`SELECT pc.creator_id
+  const creator = await env.DB.prepare(`SELECT pc.creator_id,pc.account_id
     FROM provider_connections pc
     JOIN operational_accounts oa ON oa.id=pc.account_id AND oa.platform='instagram' AND oa.is_active=1
-    LEFT JOIN instagram_sync_state state ON state.creator_id=pc.creator_id
+    LEFT JOIN instagram_account_sync_state state ON state.creator_id=pc.creator_id AND state.account_id=pc.account_id
     WHERE pc.service='instagram' AND pc.status='active'
       AND (state.last_analytics_sync_at IS NULL OR unixepoch(state.last_analytics_sync_at)<=unixepoch(CURRENT_TIMESTAMP)-21600)
       AND NOT EXISTS (
         SELECT 1 FROM instagram_analytics_collection_runs failed
-        WHERE failed.creator_id=pc.creator_id AND failed.status='failed'
+        WHERE failed.creator_id=pc.creator_id AND failed.account_id=pc.account_id AND failed.status='failed'
           AND unixepoch(failed.started_at)>unixepoch(CURRENT_TIMESTAMP)-900
       )
-    GROUP BY pc.creator_id, state.last_analytics_sync_at
-    HAVING COUNT(*)=1
-    ORDER BY COALESCE(state.last_analytics_sync_at,'1970-01-01') ASC, pc.creator_id ASC
-    LIMIT 1`).first<{ creator_id: string }>();
+    GROUP BY pc.creator_id,pc.account_id,state.last_analytics_sync_at
+    ORDER BY COALESCE(state.last_analytics_sync_at,'1970-01-01') ASC, pc.creator_id ASC,pc.account_id ASC
+    LIMIT 1`).first<{ creator_id: string; account_id: string }>();
   if (!creator) return { skipped: true, reason: "no_active_creator" };
-  return collectInstagramAnalytics(env, creator.creator_id, "cron");
+  return collectInstagramAnalytics(env, creator.creator_id, "cron", creator.account_id);
 }
 
 export default {
@@ -1048,10 +1091,10 @@ export default {
       if (request.method === "POST" && url.pathname === "/messages/instagram/send") return sendInstagramReply(request, env);
       if (request.method === "POST" && url.pathname === "/messages/instagram/seen") return markInstagramThreadSeen(request, env);
       if (request.method === "POST" && url.pathname === "/run") return new Response("Not found", { status: 404 });
-      if (request.method === "POST" && url.pathname === "/sync") return Response.json(await syncInstagram(env, await requestedCreatorId(request), true));
-      if (request.method === "POST" && url.pathname === "/sync/analytics") return Response.json(await collectInstagramAnalytics(env, await requestedCreatorId(request), "manual", true));
-      if (request.method === "POST" && url.pathname === "/sync/messages") return Response.json(await syncInstagramMessagesOnly(env, await requestedCreatorId(request)));
-      if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);
+      if (request.method === "POST" && url.pathname === "/sync") { const scope = await requestedScope(request); return Response.json(await syncInstagram(env, scope.creatorId, scope.accountId, true)); }
+      if (request.method === "POST" && url.pathname === "/sync/analytics") { const scope = await requestedScope(request); return Response.json(await collectInstagramAnalytics(env, scope.creatorId, "manual", scope.accountId, true)); }
+      if (request.method === "POST" && url.pathname === "/sync/messages") { const scope = await requestedScope(request); return Response.json(await syncInstagramMessagesOnly(env, scope.creatorId, scope.accountId)); }
+      if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId, url.searchParams.get("accountId") || undefined);
       return new Response("Not found", { status: 404 });
     } catch (error) {
       console.error(JSON.stringify({ event: "instagram_scheduler_request_error", path: url.pathname, message: error instanceof Error ? error.message : "Unknown error" }));

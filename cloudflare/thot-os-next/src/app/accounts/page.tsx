@@ -62,7 +62,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       pc.status AS provider_status,pc.display_name,pc.last_error AS provider_error,state.last_analytics_sync_at
       FROM operational_accounts oa
       LEFT JOIN provider_connections pc ON pc.creator_id=oa.creator_id AND pc.service='instagram' AND pc.account_id=oa.id
-      LEFT JOIN instagram_sync_state state ON state.creator_id=oa.creator_id
+      LEFT JOIN instagram_account_sync_state state ON state.creator_id=oa.creator_id AND state.account_id=oa.id
       WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label`).bind(creatorId).all<InstagramSetup>(),
   ]);
   const instagram = instagramAccounts.results.find((account) => account.is_active);

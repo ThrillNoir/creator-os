@@ -20,9 +20,10 @@ function qualityLabel(value: "official" | "incomplete" | "stale" | "unavailable"
   return value[0].toUpperCase() + value.slice(1);
 }
 
-export default async function GrowthPage() {
+export default async function GrowthPage({ searchParams }: { searchParams: Promise<{ accountId?: string }> }) {
   const context = await requireCreatorContext();
-  const insights = await getGrowthInsights(context.creator.creator_id);
+  const query = await searchParams;
+  const insights = await getGrowthInsights(context.creator.creator_id, query.accountId);
   return <AppShell active="Growth insights">
     <PageHeader eyebrow="OFFICIAL METRICS" title="Growth insights" subtitle="Creator-scoped Instagram evidence, metric coverage and recommendations that stay in human control." />
     <section className="growth-summary" aria-label="Growth evidence summary">
@@ -34,7 +35,7 @@ export default async function GrowthPage() {
     </section>
 
     <section className="panel growth-method">
-      <div className="section-heading"><div><span className="eyebrow">MEASUREMENT CONTRACT</span><h2>What this page can—and cannot—do</h2></div><Link className="secondary-action" href="/operations?platform=instagram&section=analytics">Open Instagram analytics</Link></div>
+      <div className="section-heading"><div><span className="eyebrow">MEASUREMENT CONTRACT</span><h2>What this page can—and cannot—do</h2></div><Link className="secondary-action" href={`/operations?platform=instagram&section=analytics${query.accountId ? `&accountId=${encodeURIComponent(query.accountId)}` : ""}`}>Open Instagram analytics</Link></div>
       <p>{insights.metricDefinition}</p>
       <p>Only the creator&apos;s verified Instagram API observations enter this calculation. Recommendations are read-only: they cannot like, comment, follow, message, create, schedule, approve or publish anything.</p>
     </section>

@@ -833,21 +833,34 @@ export async function startInstagramReconnectAction(formData: FormData) {
   redirect(result.redirectUrl);
 }
 
-export async function refreshInstagramDataAction() {
+export async function refreshInstagramDataAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const env = cloudflareEnv();
-  const response = await fetchInternalService(env, "instagram", "instagram.sync.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/analytics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const accountId = String(formData.get("accountId") ?? "").trim();
+  const account = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='instagram' AND is_active=1").bind(accountId).first<{ id: string }>();
+  if (!account) throw new Error("Select an active Instagram account before refreshing analytics.");
+  const response = await fetchInternalService(env, "instagram", "instagram.sync.execute", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/analytics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id, accountId: account.id }) });
   const result = await response.json() as { ok?: boolean; errors?: string[]; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.errors?.join(" ") || result.error || "Instagram data could not be refreshed.");
   revalidatePath("/operations");
-  redirect("/operations?platform=instagram&section=analytics&saved=refreshed");
+  redirect(`/operations?platform=instagram&section=analytics&accountId=${encodeURIComponent(account.id)}&saved=refreshed`);
 }
 
 export async function refreshInstagramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();
   const env = cloudflareEnv();
-  const response = await fetchInternalService(env, "instagram", "instagram.messages.sync", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const thread = threadId ? await creatorPrepare(env.DB, identity.creator.creator_id, `SELECT c.account_id
+    FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
+    WHERE t.id=? AND t.creator_id=@creator AND c.platform='instagram'`).bind(threadId).first<{ account_id: string | null }>() : null;
+  if (threadId && !thread?.account_id) throw new Error("That Instagram conversation is outside this creator workspace.");
+  let accountId = thread?.account_id ?? "";
+  if (!accountId) {
+    const accounts = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='instagram' AND is_active=1 ORDER BY id LIMIT 2").all<{ id: string }>();
+    if (accounts.results.length !== 1) throw new Error("Select an Instagram conversation before refreshing messages.");
+    accountId = accounts.results[0].id;
+  }
+  const response = await fetchInternalService(env, "instagram", "instagram.messages.sync", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id, accountId }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   if (!response.ok || !result.ok) throw new Error(result.error || "Instagram messages could not be refreshed.");
   revalidatePath("/messages");

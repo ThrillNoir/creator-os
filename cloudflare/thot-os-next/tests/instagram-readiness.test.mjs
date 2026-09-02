@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { instagramSendingBlocker } from "../src/lib/instagram-readiness.ts";
 
@@ -12,4 +13,9 @@ test("Instagram readiness reports the selected account's first real blocker", ()
   assert.match(instagramSendingBlocker({ ...connected, outbound_validated: 0 }, true, false), /Validate the recipient/);
   assert.match(instagramSendingBlocker(connected, false, false), /reply window is closed/);
   assert.match(instagramSendingBlocker(connected, true, true), /paused/);
+});
+
+test("Instagram composer shows the concrete blocker even when the reply window is closed", async () => {
+  const source = await readFile(new URL("../src/app/messages/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /canSend \? <MessageQuickReply[\s\S]*: <div className="empty"><b>Instagram sending is locked\.<\/b><span>\{blocker\}<\/span>/);
 });

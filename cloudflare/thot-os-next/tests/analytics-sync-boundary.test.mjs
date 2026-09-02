@@ -15,7 +15,8 @@ test("Stage 3B keeps manual analytics reads separate from messages and outbound 
   assert.match(scheduler, /"POST \/sync\/analytics": "instagram\.sync\.execute"/);
   assert.match(scheduler, /async function currentInstagramAnalyticsConnection/);
   assert.match(scheduler, /syncInstagramAnalytics[\s\S]*currentInstagramAnalyticsConnection/);
-  assert.match(scheduler, /collectInstagramAnalytics\(env, creator\.creator_id, "cron"\)/);
+  assert.match(scheduler, /collectInstagramAnalytics\(env, creator\.creator_id, "cron", creator\.account_id\)/);
+  assert.match(scheduler, /instagram_account_sync_state/);
   assert.match(scheduler, /instagram_analytics_collection_runs_one_active|collection_in_progress/);
   assert.match(operations, /does not read messages, modify the account or publish/);
 });

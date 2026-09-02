@@ -1,6 +1,7 @@
 export type InsightConfidence = "insufficient" | "early" | "building" | "strong";
 
 export type InstagramOfficialObservation = {
+  account_id: string | null;
   media_id: string;
   permalink: string | null;
   media_type: string | null;

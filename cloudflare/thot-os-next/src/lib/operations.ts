@@ -106,6 +106,7 @@ export interface RedditSchedulerStatus {
 export type PlatformSchedulerStatus = RedditSchedulerStatus;
 
 export interface InstagramAnalyticsSnapshot {
+  account_id: string | null;
   reach: number | null;
   follower_count: number | null;
   accounts_engaged: number | null;
@@ -116,6 +117,7 @@ export interface InstagramAnalyticsSnapshot {
 }
 
 export interface InstagramMediaMetric {
+  account_id: string | null;
   media_id: string;
   permalink: string | null;
   media_type: string | null;
@@ -130,6 +132,7 @@ export interface InstagramMediaMetric {
 }
 
 export interface InstagramSyncState {
+  account_id?: string | null;
   last_messages_sync_at: string | null;
   last_analytics_sync_at: string | null;
   last_error: string | null;
@@ -137,6 +140,7 @@ export interface InstagramSyncState {
 }
 
 export interface InstagramAnalyticsCollectionRun {
+  account_id: string | null;
   status: "running" | "completed" | "skipped" | "failed";
   trigger_type: "manual" | "cron";
   media_count: number;
@@ -199,10 +203,11 @@ export async function getPlatformOperations(creatorId: string, platform: Operati
   return { definition, account, accounts, posts: posts.results, assets: assets.results, communities: communities.results, flairs: flairs.results };
 }
 
-export async function getInstagramSchedulerStatus(creatorId: string): Promise<PlatformSchedulerStatus | null> {
+export async function getInstagramSchedulerStatus(creatorId: string, accountId?: string): Promise<PlatformSchedulerStatus | null> {
   try {
     const env = cloudflareEnv();
-    const response = await fetchInternalService(env, "instagram", "instagram.status.read", env.INSTAGRAM_SCHEDULER, `https://instagram-scheduler/status?creator=${encodeURIComponent(creatorId)}`);
+    const accountQuery = accountId ? `&accountId=${encodeURIComponent(accountId)}` : "";
+    const response = await fetchInternalService(env, "instagram", "instagram.status.read", env.INSTAGRAM_SCHEDULER, `https://instagram-scheduler/status?creator=${encodeURIComponent(creatorId)}${accountQuery}`);
     if (!response.ok) return null;
     return await response.json() as PlatformSchedulerStatus;
   } catch {
@@ -210,13 +215,16 @@ export async function getInstagramSchedulerStatus(creatorId: string): Promise<Pl
   }
 }
 
-export async function getInstagramAnalytics(creatorId: string) {
+export async function getInstagramAnalytics(creatorId: string, accountId?: string) {
   const { DB } = cloudflareEnv();
+  const scoped = Boolean(accountId);
+  const scope = scoped ? " AND account_id=?" : "";
+  const bind = <T>(statement: D1PreparedStatement) => scoped ? statement.bind(creatorId, accountId) : statement.bind(creatorId);
   const [snapshot, media, syncState, collection] = await Promise.all([
-    DB.prepare("SELECT reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=? ORDER BY collected_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsSnapshot>(),
-    DB.prepare("SELECT media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at FROM instagram_media_metrics WHERE creator_id=? ORDER BY COALESCE(published_at,collected_at) DESC LIMIT 50").bind(creatorId).all<InstagramMediaMetric>(),
-    DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<InstagramSyncState>(),
-    DB.prepare("SELECT status,trigger_type,media_count,media_insights_attempted,media_insights_succeeded,complete_metric_media,missing_view_media,missing_save_media,missing_share_media,started_at,completed_at,error FROM instagram_analytics_collection_runs WHERE creator_id=? ORDER BY started_at DESC LIMIT 1").bind(creatorId).first<InstagramAnalyticsCollectionRun>(),
+    bind(DB.prepare(`SELECT account_id,reach,follower_count,accounts_engaged,total_interactions,profile_views,website_clicks,collected_at FROM instagram_analytics_snapshots WHERE creator_id=?${scope} ORDER BY collected_at DESC LIMIT 1`)).first<InstagramAnalyticsSnapshot>(),
+    bind(DB.prepare(`SELECT account_id,media_id,permalink,media_type,media_product_type,published_at,like_count,comments_count,view_count,saved_count,shares_count,collected_at FROM instagram_media_metrics WHERE creator_id=?${scope} ORDER BY COALESCE(published_at,collected_at) DESC LIMIT 50`)).all<InstagramMediaMetric>(),
+    scoped ? DB.prepare("SELECT account_id,last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_account_sync_state WHERE creator_id=? AND account_id=?").bind(creatorId, accountId).first<InstagramSyncState>() : DB.prepare("SELECT last_messages_sync_at,last_analytics_sync_at,last_error,updated_at FROM instagram_sync_state WHERE creator_id=?").bind(creatorId).first<InstagramSyncState>(),
+    bind(DB.prepare(`SELECT account_id,status,trigger_type,media_count,media_insights_attempted,media_insights_succeeded,complete_metric_media,missing_view_media,missing_save_media,missing_share_media,started_at,completed_at,error FROM instagram_analytics_collection_runs WHERE creator_id=?${scope} ORDER BY started_at DESC LIMIT 1`)).first<InstagramAnalyticsCollectionRun>(),
   ]);
   return { snapshot, media: media.results, syncState, collection };
 }
