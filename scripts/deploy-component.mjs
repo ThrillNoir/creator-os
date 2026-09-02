@@ -7,14 +7,14 @@ import { fileURLToPath } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
 import { verifyStagingArtifactManifest } from "./staging-artifact-lib.mjs";
 import { captureWorkerMetadata, createActivationD1ReadClient, mutationWranglerEnvironment, runWranglerMetadataRead } from "./service-auth-activate.mjs";
-import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan } from "./staging-web-deployment-lib.mjs";
+import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, stagingDeploymentWorkers, stagingToolchainDirectory } from "./staging-web-deployment-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const registryPath = path.join(root, "config/deployments.json");
 const ledgerPath = path.join(root, "config/staging-d1-migration-ledger.json");
 
 function usage() {
-  return "Usage: npm run deploy -- --plan|--apply|--reconcile --environment staging --component web|vault --artifact-manifest <path> --output <owner-only-json> [--approved-plan <path> --confirmation <deploy:...>]";
+  return `Usage: npm run deploy -- --plan|--apply|--reconcile --environment staging --component ${Object.keys(stagingDeploymentWorkers).join("|")} --artifact-manifest <path> --output <owner-only-json> [--approved-plan <path> --confirmation <deploy:...>]`;
 }
 
 function parseArguments(argv) {
@@ -55,17 +55,17 @@ export function deploymentWranglerEnvironment({ accountId, baseEnvironment = pro
 }
 
 function targetContext(options) {
-  if (options.environment !== "staging" || !["web", "vault"].includes(options.component)) throw new Error("Controlled deployment requires explicit --environment staging --component web|vault.");
+  if (options.environment !== "staging" || !Object.hasOwn(stagingDeploymentWorkers, options.component)) throw new Error("Controlled deployment requires explicit --environment staging and a reviewed --component.");
   if (!options.artifactManifest || !options.output) throw new Error(usage());
   const registry = readJson(registryPath, "deployment registry");
   const component = registry.environments?.staging?.components?.[options.component];
   const database = registry.environments?.staging?.resources?.d1?.["thot-os-staging"];
-  const expectedWorker = options.component === "web" ? "thot-os-staging" : "thot-os-vault-bridge-staging";
+  const expectedWorker = stagingDeploymentWorkers[options.component];
   if (!component || component.worker !== expectedWorker || !database) throw new Error("Reviewed staging deployment target is unavailable.");
   const artifactManifest = readJson(options.artifactManifest, "artifact manifest");
   const preflight = runPreflight({ environment: "staging", component: options.component, all: false, requireClean: true, registry: registryPath, gitSha: artifactManifest.source?.gitSha, gitBranch: artifactManifest.source?.gitBranch, buildTime: artifactManifest.build?.timestamp });
   if (!preflight.ok || preflight.results.length !== 1) throw new Error(`Deployment preflight failed: ${preflight.results.flatMap((result) => result.errors).join(" ")}`);
-  const lockfilePath = path.join(root, component.directory, "package-lock.json");
+  const lockfilePath = path.join(root, stagingToolchainDirectory(registry, options.component), "package-lock.json");
   verifyStagingArtifactManifest({ artifactDirectory: path.dirname(options.artifactManifest), lockfilePath, manifest: artifactManifest, expectedMetadata: preflight.results[0].metadata });
   const ledger = readJson(ledgerPath, "staging migration ledger");
   const pendingMigrations = ledger.pendingMigrations ?? [];
@@ -76,9 +76,9 @@ function targetContext(options) {
     metadata: { ...preflight.results[0].metadata, accountId: registry.environments.staging.accountId, config: component.config, databaseId: database.id },
     migrationNames: ledger.migrations.map((entry) => entry.name),
     requiredSecretNames: component.requiredSecrets,
-    artifactEntrypoint: options.component === "vault" ? (() => {
+    artifactEntrypoint: options.component !== "web" ? (() => {
       const candidates = artifactManifest.artifact.files.filter((entry) => entry.path.endsWith(".js") && !entry.path.endsWith(".js.map"));
-      if (candidates.length !== 1) throw new Error("Reviewed Vault artifact must contain exactly one deployable JavaScript entrypoint.");
+      if (candidates.length !== 1) throw new Error("Reviewed Worker artifact must contain exactly one deployable JavaScript entrypoint.");
       return { path: path.join(path.dirname(options.artifactManifest), candidates[0].path), bytes: candidates[0].bytes, sha256: candidates[0].sha256 };
     })() : null,
     d1Target: { accountId: registry.environments.staging.accountId, databaseId: database.id, databaseName: "thot-os-staging" },
@@ -100,8 +100,9 @@ function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
   let sourceDescriptor; let snapshotDescriptor; let snapshotPath; let temporaryDirectory;
   try {
     const directory = path.join(root, registry.environments.staging.components[metadata.component].directory);
-    const executable = metadata.component === "web" ? path.join(directory, "node_modules/.bin/opennextjs-cloudflare") : path.join(directory, "node_modules/.bin/wrangler");
-    if (metadata.component === "vault") {
+    const toolchainDirectory = path.join(root, stagingToolchainDirectory(registry, metadata.component));
+    const executable = metadata.component === "web" ? path.join(toolchainDirectory, "node_modules/.bin/opennextjs-cloudflare") : path.join(toolchainDirectory, "node_modules/.bin/wrangler");
+    if (metadata.component !== "web") {
       const lexical = lstatSync(artifactEntrypoint.path); if (!lexical.isFile() || lexical.isSymbolicLink()) throw new Error("reviewed_artifact_replaced");
       sourceDescriptor = openSync(artifactEntrypoint.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const opened = fstatSync(sourceDescriptor);
       if (!opened.isFile() || opened.size !== artifactEntrypoint.bytes || opened.size > 64 * 1024 ** 2) throw new Error("reviewed_artifact_replaced");

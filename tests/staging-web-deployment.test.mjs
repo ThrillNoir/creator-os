@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { deploymentWranglerEnvironment } from "../scripts/deploy-component.mjs";
-import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest } from "../scripts/staging-web-deployment-lib.mjs";
+import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest, stagingDeploymentWorkers } from "../scripts/staging-web-deployment-lib.mjs";
 
 const metadata = { environment: "staging", component: "web", worker: "thot-os-staging", accountId: "account", config: "cloudflare/thot-os-next/wrangler.jsonc", databaseId: "database", gitSha: "abc", gitBranch: "codex/release" };
 const artifactManifest = { artifact: { sha256: "artifact" }, build: { timestamp: "2026-08-26T00:00:00.000Z" } };
@@ -69,6 +69,34 @@ test("Vault receipt binds the fresh Worker version to the reviewed artifact tag"
   assert.equal(createApplyReceipt({ plan, before: vaultState, after }).deployment.workerVersion, "after");
   after.latestSecretVersion.versionTag = "creatoros-unrelated";
   assert.throws(() => createApplyReceipt({ plan, before: vaultState, after }), /not tagged with the reviewed artifact identity/);
+});
+
+test("each reviewed connector uses scoped plans, drift checks and tagged receipts", () => {
+  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl"]) {
+    const scoped = { ...metadata, component, worker: stagingDeploymentWorkers[component] };
+    const plan = createDeploymentPlan({ metadata: scoped, artifactManifest, migrationNames, requiredSecretNames, workerState });
+    assert.equal(plan.kind, `staging-${component}-deployment-plan`);
+    assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: scoped, artifactManifest, migrationNames, workerState }), true);
+    assert.throws(() => createDeploymentPlan({ metadata: { ...scoped, worker: "thot-os-production" }, artifactManifest, migrationNames, requiredSecretNames, workerState }), /reviewed staging/);
+    assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: scoped, artifactManifest, migrationNames, workerState: { ...workerState, latestVersionId: "drift" } }), /differs/);
+    const after = { latestVersionId: "after", versionIds: ["after", ...workerState.versionIds], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: requiredSecretNames, versionTag: plan.artifact.versionTag } };
+    assert.equal(createApplyReceipt({ plan, before: workerState, after }).kind, `staging-${component}-deployment-apply-receipt`);
+    after.latestSecretVersion.versionTag = "wrong-artifact";
+    assert.throws(() => createApplyReceipt({ plan, before: workerState, after }), /not tagged/);
+  }
+  for (const invalid of [{ ...metadata, environment: "production" }, { ...metadata, component: "unknown" }, { ...metadata, component: "constructor" }]) {
+    assert.throws(() => createDeploymentPlan({ metadata: invalid, artifactManifest, migrationNames, requiredSecretNames, workerState }), /reviewed staging/);
+  }
+});
+
+test("full verification retains one web test suite and lets OpenNext own one configured Next build", () => {
+  const root = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+  const web = JSON.parse(readFileSync(new URL("../cloudflare/thot-os-next/package.json", import.meta.url), "utf8")).scripts;
+  assert.equal(root.verify, "npm run lint && npm test && npm run verify:cloudflare");
+  assert.match(root.test, /npm --prefix cloudflare\/thot-os-next test/);
+  assert.match(root["verify:cloudflare"], /npm --prefix cloudflare\/thot-os-next run verify$/);
+  assert.equal(web.verify, "opennextjs-cloudflare build");
+  assert.equal(web.build, "next build --webpack");
 });
 
 test("apply refuses drift from the approved Worker state", () => {

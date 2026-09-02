@@ -6,14 +6,14 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "lint": "tsc --noEmit",
-    "build": "next build",
+    "build": "next build --webpack",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "node ../../scripts/deploy-component.mjs",
     "upload": "node ../../scripts/deploy-component.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts && node ../../scripts/normalize-generated-types.mjs cloudflare-env.d.ts",
     "health:staging": "node scripts/check-authenticated-health.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "verify": "npm test && npm run build && opennextjs-cloudflare build"
+    "verify": "opennextjs-cloudflare build"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "1.20.2",

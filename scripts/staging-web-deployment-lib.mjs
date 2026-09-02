@@ -2,6 +2,21 @@ import { createHash } from "node:crypto";
 
 export const deploymentPlanKind = "staging-web-deployment-plan";
 export const deploymentReceiptKind = "staging-web-deployment-apply-receipt";
+export const stagingDeploymentWorkers = Object.freeze({
+  web: "thot-os-staging",
+  vault: "thot-os-vault-bridge-staging",
+  instagram: "thot-os-instagram-scheduler-staging",
+  reddit: "thot-os-reddit-scheduler-staging",
+  telegram: "thot-os-telegram-bridge-staging",
+  publicLinks: "thot-os-public-links-staging",
+  publicLinksControl: "thot-os-public-links-control-staging",
+});
+
+// Public Workers already use the web package's pinned compiler in their scripts.
+export function stagingToolchainDirectory(registry, component) {
+  const owner = component === "publicLinks" || component === "publicLinksControl" ? "web" : component;
+  return registry.environments.staging.components[owner].directory;
+}
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -22,8 +37,8 @@ export function confirmationForDigest(digest) {
 }
 
 export function createDeploymentPlan({ metadata, artifactManifest, migrationNames, requiredSecretNames, workerState, createdAt = new Date().toISOString() }) {
-  const expectedWorker = { web: "thot-os-staging", vault: "thot-os-vault-bridge-staging" }[metadata?.component];
-  if (metadata?.environment !== "staging" || !expectedWorker || metadata?.worker !== expectedWorker) throw new Error("Controlled deployment supports only the reviewed staging web and Vault Workers.");
+  const expectedWorker = Object.hasOwn(stagingDeploymentWorkers, metadata?.component) && stagingDeploymentWorkers[metadata.component];
+  if (metadata?.environment !== "staging" || !expectedWorker || metadata?.worker !== expectedWorker) throw new Error("Controlled deployment supports only the reviewed staging component Workers.");
   if (!Array.isArray(migrationNames) || migrationNames.length === 0) throw new Error("Deployment plan requires an exact staging migration ledger.");
   if (!Array.isArray(requiredSecretNames)) throw new Error("Deployment plan requires reviewed secret names.");
   const remoteSecrets = new Set(workerState?.secretNames ?? []);
@@ -32,13 +47,13 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
 
   const plan = {
     schemaVersion: 1,
-    kind: metadata.component === "web" ? deploymentPlanKind : "staging-vault-deployment-plan",
+    kind: `staging-${metadata.component}-deployment-plan`,
     mode: "plan",
     environment: "staging",
     component: metadata.component,
     target: { accountId: metadata.accountId, worker: metadata.worker, config: metadata.config },
     source: { gitSha: metadata.gitSha, gitBranch: metadata.gitBranch },
-    artifact: { sha256: artifactManifest.artifact.sha256, buildTime: artifactManifest.build.timestamp, versionTag: metadata.component === "vault" ? `creatoros-${artifactManifest.artifact.sha256.slice(0, 48)}` : null },
+    artifact: { sha256: artifactManifest.artifact.sha256, buildTime: artifactManifest.build.timestamp, versionTag: metadata.component !== "web" ? `creatoros-${artifactManifest.artifact.sha256.slice(0, 48)}` : null },
     migration: { databaseId: metadata.databaseId, names: [...migrationNames], latest: migrationNames.at(-1), count: migrationNames.length },
     requiredSecretNames: [...requiredSecretNames].sort(),
     preDeployment: {
@@ -54,7 +69,7 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
 }
 
 function assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, migrationNames }) {
-  const expectedKind = metadata.component === "web" ? deploymentPlanKind : "staging-vault-deployment-plan";
+  const expectedKind = `staging-${metadata.component}-deployment-plan`;
   if (plan?.schemaVersion !== 1 || plan?.kind !== expectedKind || plan?.mode !== "plan") throw new Error("Approved deployment plan has an unsupported schema or kind.");
   const digest = planDigest(plan);
   if (plan.planSha256 !== digest || plan.confirmation !== confirmationForDigest(digest)) throw new Error("Approved deployment plan checksum is invalid.");
@@ -91,13 +106,13 @@ export function createApplyReceipt({ plan, before, after, observedAt = new Date(
     throw new Error("Fresh Worker version does not have the complete staging traffic allocation.");
   }
   if (after.latestSecretVersion.versionId !== workerVersion || after.latestSecretVersion.trafficPercentage !== 100) throw new Error("Fresh deployed version metadata is inconsistent.");
-  if (plan.component === "vault" && after.latestSecretVersion.versionTag !== plan.artifact.versionTag) throw new Error("Fresh Vault Worker version is not tagged with the reviewed artifact identity.");
+  if (plan.component !== "web" && after.latestSecretVersion.versionTag !== plan.artifact.versionTag) throw new Error("Fresh Worker version is not tagged with the reviewed artifact identity.");
   const observedSecrets = new Set(after.latestSecretVersion.secretNames);
   const missing = plan.requiredSecretNames.filter((name) => !observedSecrets.has(name));
   if (missing.length) throw new Error(`Fresh deployed version is missing required secret names: ${missing.join(", ")}.`);
   return {
     schemaVersion: 1,
-    kind: plan.component === "web" ? deploymentReceiptKind : "staging-vault-deployment-apply-receipt",
+    kind: `staging-${plan.component}-deployment-apply-receipt`,
     verification: "remote-observed",
     environment: "staging",
     component: plan.component,

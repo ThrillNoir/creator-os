@@ -3,6 +3,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runPreflight, projectRoot } from "./deployment-preflight.mjs";
 import { assertCompiledHealthMetadata, createStagingArtifactManifest, stagingArtifactManifestFilename, validateStagingArtifactMetadata, verifyStagingArtifactManifest } from "./staging-artifact-lib.mjs";
+import { buildVaultStagingArtifact } from "./build-vault-staging-artifact.mjs";
+import { stagingDeploymentWorkers } from "./staging-web-deployment-lib.mjs";
 
 const webDirectory = path.join(projectRoot, "cloudflare/thot-os-next");
 const nextBinary = path.join(webDirectory, "node_modules/.bin/next");
@@ -13,7 +15,7 @@ const artifactManifest = path.join(artifactDirectory, stagingArtifactManifestFil
 const lockfilePath = path.join(webDirectory, "package-lock.json");
 
 function usage() {
-  return "Usage: node scripts/build-staging-artifact.mjs [--component web]";
+  return `Usage: node scripts/build-staging-artifact.mjs [--component ${Object.keys(stagingDeploymentWorkers).join("|")}]`;
 }
 
 function parseArguments(argv) {
@@ -24,7 +26,7 @@ function parseArguments(argv) {
     else if (argument === "--help") options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
-  if (options.component !== "web") throw new Error("Only the web component has a compiled protected health route; use --component web.");
+  if (!Object.hasOwn(stagingDeploymentWorkers, options.component)) throw new Error("Select a reviewed staging component.");
   return options;
 }
 
@@ -79,7 +81,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const options = parseArguments(process.argv.slice(2));
     if (options.help) console.log(usage());
     else {
-      const outcome = buildStagingArtifact();
+      const outcome = options.component === "web" ? buildStagingArtifact() : buildVaultStagingArtifact(options.component);
       console.log(`Staging artifact verified: ${outcome.metadata.component}/${outcome.metadata.environment} at ${outcome.metadata.gitSha} (${outcome.artifactDigest}).`);
     }
   } catch (error) {
