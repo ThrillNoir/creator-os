@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { deploymentWranglerEnvironment } from "../scripts/deploy-component.mjs";
+import { assertDirectWebDeployment, deploymentWranglerEnvironment } from "../scripts/deploy-component.mjs";
 import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest, stagingDeploymentWorkers } from "../scripts/staging-web-deployment-lib.mjs";
 
 const metadata = { environment: "staging", component: "web", worker: "thot-os-staging", accountId: "account", config: "cloudflare/thot-os-next/wrangler.jsonc", databaseId: "database", gitSha: "abc", gitBranch: "codex/release" };
@@ -17,6 +17,19 @@ const workerState = {
   // version may predate a separately staged secret version.
   latestSecretVersion: { versionId: "before", trafficPercentage: 100, secretNames: [] },
 };
+
+test("direct web deployment is limited to prebuilt apps without cache preparation or skew mapping", () => {
+  const config = { default: { override: { incrementalCache: "dummy", tagCache: "dummy" } } };
+  assert.doesNotThrow(() => assertDirectWebDeployment(config));
+  assert.throws(() => assertDirectWebDeployment({}), /preparation/);
+  assert.throws(() => assertDirectWebDeployment({ ...config, cloudflare: { skewProtection: { enabled: true } } }), /preparation/);
+  for (const field of ["incrementalCache", "tagCache"]) {
+    assert.throws(() => assertDirectWebDeployment({ default: { override: { ...config.default.override, [field]: "r2" } } }), /preparation/);
+  }
+  const source = readFileSync(new URL("../scripts/deploy-component.mjs", import.meta.url), "utf8");
+  assert.match(source, /OPEN_NEXT_DEPLOY: "true"/);
+  assert.match(source, /await deployReviewedComponent/);
+});
 
 test("web deploy keeps only the Access credentials needed to reach protected staging", () => {
   const environment = deploymentWranglerEnvironment({

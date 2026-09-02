@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
 import { verifyStagingArtifactManifest } from "./staging-artifact-lib.mjs";
 import { captureWorkerMetadata, createActivationD1ReadClient, mutationWranglerEnvironment, runWranglerMetadataRead } from "./service-auth-activate.mjs";
@@ -96,12 +96,25 @@ async function observeStaging(context) {
   return { migrationNames, workerState: { ...captureWorkerMetadata(context.registry, context.metadata.component), secretNames } };
 }
 
-function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
+export function assertDirectWebDeployment(config) {
+  const overrides = config?.default?.override;
+  if (!overrides || overrides.incrementalCache !== "dummy" || overrides.tagCache !== "dummy" || config.cloudflare?.skewProtection?.enabled) {
+    throw new Error("Web cache or skew protection requires the OpenNext deployment preparation step.");
+  }
+}
+
+async function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
   let sourceDescriptor; let snapshotDescriptor; let snapshotPath; let temporaryDirectory;
   try {
     const directory = path.join(root, registry.environments.staging.components[metadata.component].directory);
     const toolchainDirectory = path.join(root, stagingToolchainDirectory(registry, metadata.component));
-    const executable = metadata.component === "web" ? path.join(toolchainDirectory, "node_modules/.bin/opennextjs-cloudflare") : path.join(toolchainDirectory, "node_modules/.bin/wrangler");
+    const executable = path.join(toolchainDirectory, "node_modules/.bin/wrangler");
+    if (metadata.component === "web") {
+      // This app has no cache population or skew mapping to prepare. Deploy the
+      // verified OpenNext output directly; don't start a remote preview session.
+      const { default: config } = await import(pathToFileURL(path.join(directory, ".open-next/.build/open-next.config.edge.mjs")).href);
+      assertDirectWebDeployment(config);
+    }
     if (metadata.component !== "web") {
       const lexical = lstatSync(artifactEntrypoint.path); if (!lexical.isFile() || lexical.isSymbolicLink()) throw new Error("reviewed_artifact_replaced");
       sourceDescriptor = openSync(artifactEntrypoint.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const opened = fstatSync(sourceDescriptor);
@@ -129,7 +142,7 @@ function deployReviewedComponent(registry, metadata, plan, artifactEntrypoint) {
     const environment = metadata.component === "web"
       ? deploymentWranglerEnvironment({ accountId: registry.environments.staging.accountId })
       : mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId });
-    execFileSync(executable, args, { cwd: directory, env: { ...environment, CI: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+    execFileSync(executable, args, { cwd: directory, env: { ...environment, CI: "1", ...(metadata.component === "web" ? { OPEN_NEXT_DEPLOY: "true" } : {}) }, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
     return { commandOutcome: "SUCCEEDED" };
   } catch {
     throw new Error("reviewed_deployment_command_failed");
@@ -172,7 +185,7 @@ async function main() {
   }
   assertApprovedPlan({ plan, confirmation: options.confirmation, metadata: context.metadata, artifactManifest: context.artifactManifest, migrationNames: before.migrationNames, workerState: before.workerState });
   let command;
-  try { command = deployReviewedComponent(context.registry, context.metadata, plan, context.artifactEntrypoint); }
+  try { command = await deployReviewedComponent(context.registry, context.metadata, plan, context.artifactEntrypoint); }
   catch {
     writeOwnerOnlyJson(options.output, { schemaVersion: 1, kind: `staging-${options.component}-deployment-uncertain-outcome`, environment: "staging", component: options.component, observedAt: new Date().toISOString(), planSha256: plan.planSha256, commandOutcome: "NONZERO_OR_TRANSPORT_FAILURE", outcome: "UNKNOWN_REQUIRES_READ_ONLY_RECONCILIATION", previousLatestVersion: before.workerState.latestVersionId, previousTraffic: before.workerState.deployment.versions, diagnosticCategory: "DEPLOYMENT_COMMAND_FAILED" });
     throw new Error("Deployment command failed; do not attribute any subsequently observed Worker version to this artifact. Reconcile before retrying.");
