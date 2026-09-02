@@ -1,4 +1,4 @@
-const CREATOR_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+import { isPublicCreatorSlug } from "../../../shared/public-profile-slug.ts";
 
 function configuredProfileOrigin(value: string | undefined) {
   if (!value) return null;
@@ -12,7 +12,7 @@ function configuredProfileOrigin(value: string | undefined) {
 }
 
 function publicProfileUrl(baseUrl: string | undefined, path: string, slug: string) {
-  if (!CREATOR_SLUG.test(slug)) return null;
+  if (!isPublicCreatorSlug(slug)) return null;
   const url = configuredProfileOrigin(baseUrl);
   if (!url) return null;
   url.pathname = `${path}/${encodeURIComponent(slug)}`;

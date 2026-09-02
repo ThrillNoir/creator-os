@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import worker from "../src/index.ts";
+import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
+
+test("reserved creator slugs cannot render or redirect even with a stored snapshot", async () => {
+  for (const slug of ["accounts", "api", "go", "health", "messages", "operations", "vault"]) {
+    assert.equal(isPublicCreatorSlug(slug), false);
+    const { env, events } = environment({ ...snapshot, creator: { ...snapshot.creator, slug } });
+    for (const pathname of [`/${slug}`, `/${slug}/more`, `/go/${slug}/official`]) {
+      assert.equal((await worker.fetch(new Request(`https://links.example${pathname}`), env)).status, 404);
+    }
+    assert.equal(events.length, 0);
+  }
+  assert.equal(isPublicCreatorSlug("thrill-noir"), true);
+  assert.equal(isPublicCreatorSlug("legacy--name"), true);
+  for (const slug of ["", "Bad", "-name", "a".repeat(81), "a/b"]) assert.equal(isPublicCreatorSlug(slug), false);
+});
 
 function environment(snapshot, configured = {}) {
   const events = [];

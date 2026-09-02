@@ -128,7 +128,7 @@ test("published profiles expose only environment-controlled public entry links f
   assert.match(copyLink, /navigator\.clipboard\.writeText\(url\)/);
   assert.doesNotMatch(copyLink, /destination|query|redirect/i);
   assert.match(urls, /url\.protocol !== "https:"/);
-  assert.match(urls, /CREATOR_SLUG/);
+  assert.match(urls, /isPublicCreatorSlug/);
   assert.match(wrangler, /"SAFE_PUBLIC_PROFILE_BASE_URL": "https:\/\/public-profile-staging\.thathuboverthere\.com"/);
   assert.match(wrangler, /"ADULT_GATEWAY_BASE_URL": "https:\/\/more-staging\.thathuboverthere\.com"/);
 });
@@ -140,6 +140,8 @@ test("public-profile save validation returns structured field errors without lea
     source("src/components/adult-profile-editor.tsx"),
   ]);
   assert.match(actions, /type PublicProfileDraftState/);
+  assert.match(actions, /isPublicCreatorSlug/);
+  assert.doesNotMatch(actions, /const publicProfileSlug =/);
   assert.match(actions, /reasonCode: "profile_validation_failed"/);
   assert.match(actions, /fieldErrors\[`linkDestination\.\$\{index\}`\]/);
   assert.match(actions, /if \(Object\.keys\(fieldErrors\)\.length/);

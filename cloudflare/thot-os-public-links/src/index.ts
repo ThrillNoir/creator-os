@@ -1,3 +1,5 @@
+import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
+
 type PublicLink = {
   id: string;
   label: string;
@@ -30,56 +32,12 @@ type PublicProfileSnapshot = {
   media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: "avatar" | "background"; checksum: string }>;
 };
 
-const CREATOR_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const LINK_ID = /^[a-zA-Z0-9_-]{1,120}$/;
 const HEX = /^#[0-9a-f]{6}$/i;
 const THEME_KEYS = new Set(["thot-noir", "soft-pearl", "candy-pink", "lavender-dream", "sunset", "ocean", "forest", "crimson", "chrome", "clean-minimal"]);
 const BUTTON_STYLES = new Set(["solid-rounded", "full-pill", "minimal-outline", "soft-card-icon", "elevated-shadow-tile"]);
 const BACKGROUND_MODES = new Set(["solid", "gradient"]);
 const RADIUS_SCALES = new Set(["compact", "comfortable", "round"]);
-// These paths belong to the private THOT OS product surface, not the public
-// link hub. Reserving them here means a future creator slug can never cause a
-// public request for a dashboard path to resolve to a profile by accident.
-const RESERVED_PRIVATE_PATHS = new Set([
-  "accounts",
-  "activity",
-  "admin",
-  "agents",
-  "analytics",
-  "approvals",
-  "api",
-  "auth",
-  "automation",
-  "calendar",
-  "connections",
-  "content",
-  "creators",
-  "finance",
-  "go",
-  "growth",
-  "healthz",
-  "health",
-  "handoff",
-  "launch-readiness",
-  "library",
-  "login",
-  "logout",
-  "messages",
-  "migration",
-  "money",
-  "operations",
-  "people",
-  "public-profile",
-  "publishing",
-  "reddit",
-  "reporting",
-  "research",
-  "schedule",
-  "settings",
-  "staging-qa",
-  "vault",
-  "voice",
-]);
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
@@ -157,17 +115,13 @@ function hasOnlyKeys(value: object, keys: readonly string[]) {
   return Object.keys(value).every((key) => keys.includes(key));
 }
 
-function isPublicCreatorSlug(value: string) {
-  return CREATOR_SLUG.test(value) && !RESERVED_PRIVATE_PATHS.has(value);
-}
-
 function validSnapshot(value: unknown, requestedSlug: string, env: Env): value is PublicProfileSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Partial<PublicProfileSnapshot>;
   const versionId = snapshot.publishedVersionId;
   if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media"]) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2 && snapshot.schemaVersion !== 3 && snapshot.schemaVersion !== 4) || typeof versionId !== "string" || !LINK_ID.test(versionId) || !snapshot.creator || !Array.isArray(snapshot.links)) return false;
   const creator = snapshot.creator;
-  if (!hasOnlyKeys(creator, ["slug", "displayName", "headline", "bio"]) || creator.slug !== requestedSlug || !CREATOR_SLUG.test(creator.slug) || typeof creator.displayName !== "string" || typeof creator.headline !== "string" || typeof creator.bio !== "string") return false;
+  if (!hasOnlyKeys(creator, ["slug", "displayName", "headline", "bio"]) || creator.slug !== requestedSlug || !isPublicCreatorSlug(creator.slug) || typeof creator.displayName !== "string" || typeof creator.headline !== "string" || typeof creator.bio !== "string") return false;
   if (creator.displayName.length < 1 || creator.displayName.length > 120 || creator.headline.length > 280 || creator.bio.length > 2000) return false;
   if (!snapshot.links.every((link) => {
     if (!link || typeof link !== "object" || !hasOnlyKeys(link, ["id", "label", "destinationUrl", "destinationHost"]) || !LINK_ID.test(link.id) || typeof link.label !== "string" || link.label.length < 1 || link.label.length > 80 || typeof link.destinationHost !== "string") return false;
@@ -274,7 +228,7 @@ export default {
       return new Response(body, { headers: { ...securityHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
     }
 
-    if (segments.length === 3 && segments[0] === "go" && CREATOR_SLUG.test(segments[1]) && LINK_ID.test(segments[2])) {
+    if (segments.length === 3 && segments[0] === "go" && isPublicCreatorSlug(segments[1]) && LINK_ID.test(segments[2])) {
       const snapshot = await loadSnapshot(env, segments[1]);
       const link = snapshot?.links.find((candidate) => candidate.id === segments[2]);
       const destination = link && safeHttpsUrl(link.destinationUrl);

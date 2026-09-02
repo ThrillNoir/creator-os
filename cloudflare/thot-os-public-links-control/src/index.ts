@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowStep } from "cloudflare:workers";
+import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { publicationIsAllowed, publicationPolicy } from "./publication-policy.ts";
 import { markProjectionDeliveredFailClosed, writeProjectionFailClosed } from "./projection-delivery.ts";
@@ -64,6 +65,7 @@ type AdultProfileRow = {
   sfw_text_color: string | null;
   sfw_card_color: string | null;
   sfw_radius_scale: string | null;
+  safe_profile_slug: string | null;
 };
 type AdultMediaRow = { id: string; object_key: string; sha256: string; alt_text: string; content_type: "image/webp"; image_role: "avatar" | "background" };
 type ActiveAdultProfileRow = { profile_id: string; creator_id: string; slug: string; version_id: string; approved_by: string };
@@ -244,6 +246,7 @@ async function loadApprovedProfile(env: Env, params: PublishParams) {
   if (!profile || !["draft", "active", "paused"].includes(profile.profile_status) || !["approved", "published", "superseded"].includes(profile.version_status) || !profile.approved_by || !profile.approved_at) {
     throw new Error("The requested public profile version is not explicitly approved for publication.");
   }
+  if (!isPublicCreatorSlug(profile.slug)) throw new Error("Choose a non-reserved public URL before publishing this profile.");
   const revisedLinks = await env.DB.prepare(`SELECT link_id AS id,label,destination_url,destination_host
     FROM creator_public_link_revisions
     WHERE profile_version_id=? AND creator_id=? AND enabled=1
@@ -519,7 +522,7 @@ async function loadApprovedAdultProfile(env: Env, params: AdultPublishParams) {
   if (!adultMediaDeliveryConfigured(env)) throw new Error("Protected adult-media delivery is not configured for this environment.");
   const safeOrigin = configuredOrigin(env.SAFE_PUBLIC_PROFILE_BASE_URL);
   if (!safeOrigin) throw new Error("The safe public-profile origin is not configured for the adult gateway release.");
-  const profile = await env.DB.prepare(`SELECT p.id AS profile_id,p.creator_id,c.slug,c.name AS display_name,p.status AS profile_status,
+  const profile = await env.DB.prepare(`SELECT p.id AS profile_id,p.creator_id,c.slug,c.name AS display_name,sp.slug AS safe_profile_slug,p.status AS profile_status,
       v.id AS version_id,v.status AS version_status,v.adult_bio,v.approved_by,v.approved_at,v.content_checksum,
       a.theme_key,a.button_style,a.background_mode,a.background_color,a.primary_color,a.text_color,a.card_color,a.radius_scale,a.inherit_sfw_theme,
       d.theme_key AS sfw_theme_key,d.button_style AS sfw_button_style,d.background_mode AS sfw_background_mode,d.background_color AS sfw_background_color,d.primary_color AS sfw_primary_color,d.text_color AS sfw_text_color,d.card_color AS sfw_card_color,d.radius_scale AS sfw_radius_scale
@@ -532,6 +535,9 @@ async function loadApprovedAdultProfile(env: Env, params: AdultPublishParams) {
     WHERE p.id=? AND p.creator_id=?`).bind(params.versionId, params.profileId, params.creatorId).first<AdultProfileRow>();
   if (!profile || !["draft", "active", "paused"].includes(profile.profile_status) || !["approved", "published", "superseded"].includes(profile.version_status) || !profile.approved_by || !profile.approved_at) {
     throw new Error("The requested adult profile version is not explicitly approved for publication.");
+  }
+  if (!profile.safe_profile_slug || !isPublicCreatorSlug(profile.safe_profile_slug)) {
+    throw new Error("An active safe public profile with a valid public URL is required before publishing this profile.");
   }
   const links = await env.DB.prepare(`SELECT link_id AS id,label,destination_url,destination_host
     FROM creator_adult_link_revisions WHERE creator_id=? AND profile_version_id=? AND enabled=1 ORDER BY sort_order ASC`)
@@ -547,7 +553,7 @@ async function loadApprovedAdultProfile(env: Env, params: AdultPublishParams) {
       AND d.derivative_kind='display' AND d.content_type='image/webp'
       AND u.surface='adult_profile' AND u.image_role=a.image_role AND u.status='processed'
     ORDER BY CASE a.image_role WHEN 'background' THEN 0 ELSE 1 END`).bind(profile.profile_id, profile.creator_id, profile.version_id).all<AdultMediaRow>();
-  return { profile, links: links.results, media: media.results, safeProfileUrl: `${safeOrigin}/${encodeURIComponent(profile.slug)}` };
+  return { profile, links: links.results, media: media.results, safeProfileUrl: `${safeOrigin}/${encodeURIComponent(profile.safe_profile_slug)}` };
 }
 
 async function copyAdultDisplayMedia(env: Env, profile: AdultProfileRow, media: AdultMediaRow[]) {

@@ -1,3 +1,5 @@
+import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
+
 type PublicMediaItem = {
   id: string;
   href: string;
@@ -13,7 +15,6 @@ type PublicSnapshot = {
   media: PublicMediaItem[];
 };
 
-const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const ID = /^[A-Za-z0-9_-]{1,160}$/;
 const SHA256 = /^[a-f0-9]{64}$/i;
 
@@ -54,7 +55,7 @@ function validCreator(value: unknown, slug: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const creator = value as Partial<PublicSnapshot["creator"]>;
   return hasOnlyKeys(creator, ["slug", "displayName", "headline", "bio"])
-    && creator.slug === slug && SLUG.test(creator.slug)
+    && creator.slug === slug && isPublicCreatorSlug(creator.slug)
     && typeof creator.displayName === "string" && creator.displayName.length >= 1 && creator.displayName.length <= 120
     && typeof creator.headline === "string" && creator.headline.length <= 280
     && typeof creator.bio === "string" && creator.bio.length <= 2000;
@@ -96,7 +97,7 @@ export default {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { ...headers("no-store"), allow: "GET, HEAD" } });
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length !== 4 || parts[0] !== "media" || !SLUG.test(parts[1]) || !ID.test(parts[2]) || !ID.test(parts[3]) || url.search || url.hash) return notFound();
+    if (parts.length !== 4 || parts[0] !== "media" || !isPublicCreatorSlug(parts[1]) || !ID.test(parts[2]) || !ID.test(parts[3]) || url.search || url.hash) return notFound();
     const [_, slug, versionId, attachmentId] = parts;
     const snapshot = await env.PUBLIC_LINKS.get(snapshotKey(slug), "json");
     if (!validSnapshot(snapshot, url.origin, slug, versionId, attachmentId)) return notFound();

@@ -59,3 +59,13 @@ test("public media rejects malformed creators and serves no cacheable error resp
   assert.equal(method.status, 405);
   assert.equal(method.headers.get("cache-control"), "no-store");
 });
+
+test("public media rejects reserved creator slugs before reading the projected object", async () => {
+  const reserved = structuredClone(snapshot);
+  reserved.creator.slug = "messages";
+  reserved.media[0].href = `https://media.example/media/messages/version-1/${attachmentId}`;
+  const { env, keys } = environment(reserved, { objectMetadata: { creatorSlug: "messages", versionId: "version-1", attachmentId, checksum, surface: "public_sfw", imageRole: "avatar" } });
+  const response = await worker.fetch(new Request(`https://media.example/media/messages/version-1/${attachmentId}`), env);
+  assert.equal(response.status, 404);
+  assert.deepEqual(keys, []);
+});

@@ -12,6 +12,7 @@ import { fetchInternalService } from "@/lib/internal-service";
 import { ensureConnectorServiceGrants } from "@/lib/connector-service-grants";
 import { approvedHttpsDestination } from "@/lib/profile-link-input";
 import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
+import { isPublicCreatorSlug } from "../../../shared/public-profile-slug.ts";
 
 function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
@@ -85,7 +86,6 @@ type PublicProfileVersionRow = {
   status: string;
 };
 
-const publicProfileSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const publicProfileId = /^[a-zA-Z0-9_-]{1,160}$/;
 
 function publicText(value: FormDataEntryValue | null, maximum: number, label: string, { required = false, collapseWhitespace = false }: { required?: boolean; collapseWhitespace?: boolean } = {}) {
@@ -98,7 +98,7 @@ function publicText(value: FormDataEntryValue | null, maximum: number, label: st
 
 function publicProfileSlugValue(value: FormDataEntryValue | null) {
   const slug = String(value ?? "").trim().toLowerCase();
-  if (!publicProfileSlug.test(slug) || slug.length > 80) throw new Error("Use a public URL slug of lowercase letters, numbers and single hyphens.");
+  if (!isPublicCreatorSlug(slug)) throw new Error("Use a public URL slug that is not reserved by the public service.");
   return slug;
 }
 
