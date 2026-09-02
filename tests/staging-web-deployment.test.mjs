@@ -85,7 +85,7 @@ test("Vault receipt binds the fresh Worker version to the reviewed artifact tag"
 });
 
 test("each reviewed connector uses scoped plans, drift checks and tagged receipts", () => {
-  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl"]) {
+  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl", "publicMedia"]) {
     const scoped = { ...metadata, component, worker: stagingDeploymentWorkers[component] };
     const plan = createDeploymentPlan({ metadata: scoped, artifactManifest, migrationNames, requiredSecretNames, workerState });
     assert.equal(plan.kind, `staging-${component}-deployment-plan`);
