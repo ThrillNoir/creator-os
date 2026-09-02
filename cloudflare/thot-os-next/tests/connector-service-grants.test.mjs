@@ -11,8 +11,8 @@ test("connection setup provisions only the selected creator and connector, witho
       INSERT INTO creators VALUES ('new-creator'),('other-creator');
       CREATE TABLE identity_audit_events (id TEXT,creator_id TEXT,actor_email TEXT,actor_role TEXT,event_type TEXT,subject TEXT,detail TEXT);`);
     sqlite.exec(readFileSync(new URL("../../thot-os-app/migrations/0029_service_principal_capabilities.sql", import.meta.url), "utf8"));
-    sqlite.exec(`INSERT INTO service_principals (id,principal_name) VALUES ('ig','thot-os-web-instagram'),('tg','thot-os-web-telegram');
-      INSERT INTO service_principal_credentials (id,service_principal_id,token_hash) VALUES ('ig-key','ig','test-ig-hash'),('tg-key','tg','test-tg-hash');`);
+    sqlite.exec(`INSERT INTO service_principals (id,principal_name) VALUES ('ig','thot-os-web-instagram'),('tg','thot-os-web-telegram'),('reddit','thot-os-web-reddit');
+      INSERT INTO service_principal_credentials (id,service_principal_id,token_hash) VALUES ('ig-key','ig','test-ig-hash'),('tg-key','tg','test-tg-hash'),('reddit-key','reddit','test-reddit-hash');`);
     const DB = {
       prepare(sql) {
         return { bind(...params) {
@@ -36,10 +36,13 @@ test("connection setup provisions only the selected creator and connector, witho
     await assert.rejects(ensureConnectorServiceGrants(DB, identity, "telegram"), /not authorised/);
     await ensureConnectorServiceGrants(DB, { ...identity, creator: { ...identity.creator, role: "agency_admin" } }, "telegram");
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_principal_creator_grants WHERE service_principal_id='tg' AND capability LIKE 'telegram.%'").get().n, 4);
+    await ensureConnectorServiceGrants(DB, identity, "reddit");
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_principal_creator_grants WHERE service_principal_id='reddit' AND creator_id='new-creator'").get().n, 4);
     sqlite.exec("UPDATE service_principal_creator_grants SET status='revoked' WHERE capability='instagram.connection.manage'");
     await assert.rejects(ensureConnectorServiceGrants(DB, identity, "instagram"), /permissions are not active/);
     assert.equal(sqlite.prepare("SELECT status FROM service_principal_creator_grants WHERE capability='instagram.connection.manage'").get().status, "revoked");
     sqlite.exec("UPDATE service_principal_credentials SET expires_at='2000-01-01' WHERE service_principal_id='ig'");
+    await assert.rejects(ensureConnectorServiceGrants(DB, identity, "instagram"), /permissions are not active/);
     await assert.rejects(ensureConnectorServiceGrants(DB, { ...identity, creator: { ...identity.creator, creator_id: "other-creator" } }, "instagram"), /permissions are not active/);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_principal_creator_grants WHERE creator_id='other-creator'").get().n, 0);
   } finally { sqlite.close(); }

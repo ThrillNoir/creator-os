@@ -704,6 +704,7 @@ export async function startRedditReconnectAction(formData: FormData) {
   const accountId = String(formData.get("accountId") ?? "").trim();
   const account = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='reddit' AND is_active=1").bind(accountId).first<{ id: string }>();
   if (!account) throw new Error("Select an active Reddit account to reconnect.");
+  await ensureConnectorServiceGrants(env.DB, identity, "reddit");
   const callbackUrl = new URL("/api/operations/reddit/callback", env.APP_BASE_URL).toString();
   const response = await fetchInternalService(env, "reddit", "reddit.connection.manage", env.REDDIT_SCHEDULER, "https://reddit-scheduler/connections/reddit/start", {
     method: "POST",
@@ -943,6 +944,10 @@ export async function validateInstagramReplyTargetAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   if (!threadId) throw new Error("Choose an Instagram conversation to validate.");
   const env = cloudflareEnv();
+  const thread = await creatorPrepare(env.DB, creatorId, `SELECT t.connection_id
+    FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
+    WHERE t.id=? AND t.creator_id=@creator AND c.platform='instagram'`).bind(threadId).first<{ connection_id: string }>();
+  if (!thread) throw new Error("That Instagram conversation is outside this creator workspace.");
   const response = await fetchInternalService(env, "instagram", "instagram.messages.write", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/validate", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -952,10 +957,10 @@ export async function validateInstagramReplyTargetAction(formData: FormData) {
   if (!response.ok || !result.ok) {
     const error = (result.error || "Instagram reply target validation failed.").slice(0, 500);
     await env.DB.batch([
-      creatorPrepare(env.DB, creatorId, "UPDATE messaging_connections SET outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND platform='instagram'").bind(error),
+      creatorPrepare(env.DB, creatorId, "UPDATE messaging_connections SET outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='instagram'").bind(error, thread.connection_id),
       creatorPrepare(env.DB, creatorId, `INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail)
-        SELECT ?,@creator,id,?,'instagram_reply_validation_failed',?,?,? FROM messaging_connections WHERE creator_id=@creator AND platform='instagram' LIMIT 1`)
-        .bind(crypto.randomUUID(), threadId, identity.email, identity.creator.role, JSON.stringify({ error })),
+        VALUES (?,@creator,?,?, 'instagram_reply_validation_failed',?,?,?)`)
+        .bind(crypto.randomUUID(), thread.connection_id, threadId, identity.email, identity.creator.role, JSON.stringify({ error })),
     ]);
     redirect(`/messages?platform=instagram&thread=${encodeURIComponent(threadId)}&saved=instagram_validation_failed`);
   }
