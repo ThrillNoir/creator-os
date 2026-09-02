@@ -9,7 +9,7 @@ import {
 
 test("activation requires every required section while Chrome remains optional", () => {
   assert.deepEqual([...ONBOARDING_SECTION_KEYS], [
-    "identity", "social_profiles", "paid_platforms", "chrome_access", "brand_voice", "positioning", "about_me",
+    "identity", "social_profiles", "paid_platforms", "brand_voice", "positioning", "about_me", "chrome_access",
   ]);
   assert.deepEqual([...OPTIONAL_ONBOARDING_SECTION_KEYS], ["chrome_access"]);
   assert.deepEqual(missingRequiredOnboardingSections([

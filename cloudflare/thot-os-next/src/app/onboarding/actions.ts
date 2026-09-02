@@ -7,6 +7,7 @@ import { humanAuditActor } from "@/lib/audit-identity";
 import { requireCreatorContext } from "@/lib/identity";
 import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
 import { missingRequiredOnboardingSections, ONBOARDING_SECTION_KEYS, REQUIRED_ONBOARDING_SECTION_KEYS } from "@/lib/onboarding-sections";
+import { complianceIdentityChanged, INVALIDATE_COMPLIANCE_IDENTITY_SQL, RESET_IDENTITY_VERIFICATION_SQL, SAVE_COMPLIANCE_IDENTITY_SQL } from "@/lib/onboarding-identity";
 import { requireStepUpSession, STEP_UP_COOKIE } from "@/lib/access-vault";
 import { redirect } from "next/navigation";
 
@@ -34,19 +35,21 @@ async function audit(creatorId: string, actor: { identity: string; role: string 
 async function changedSection(creatorId: string, section: string, email: string, isCreator: boolean) {
   const DB = cloudflareEnv().DB;
   await DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by) VALUES (?,?,?,?)
-    ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN (SELECT workflow_state FROM creator_onboarding_profiles WHERE creator_id=excluded.creator_id)='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
+    ON CONFLICT(creator_id,section_key) DO UPDATE SET status=CASE WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=NULL`)
     .bind(creatorId, section, isCreator ? "draft" : "admin_review", email, isCreator ? 1 : 0).run();
-  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN workflow_state='active' THEN 'admin_review' WHEN ? THEN 'draft' ELSE workflow_state END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(isCreator ? 1 : 0, creatorId).run();
+  await DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state=CASE WHEN ? THEN 'draft' ELSE 'admin_review' END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(isCreator ? 1 : 0, creatorId).run();
 }
 
 async function saveComplianceIdentity(DB: D1Database, creatorId: string, legalName: string, dob: string) {
-  const previous = await DB.prepare("SELECT legal_name,date_of_birth FROM creator_compliance_records WHERE creator_id=?").bind(creatorId).first<{ legal_name: string; date_of_birth: string }>();
-  const changed = Boolean(previous && (previous.legal_name !== legalName || previous.date_of_birth !== dob));
-  await DB.prepare(`INSERT INTO creator_compliance_records (creator_id,legal_name,date_of_birth,updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(creator_id) DO UPDATE SET legal_name=excluded.legal_name,date_of_birth=excluded.date_of_birth,updated_at=CURRENT_TIMESTAMP`).bind(creatorId, legalName, dob).run();
-  if (changed) await DB.batch([
-    DB.prepare("UPDATE creator_compliance_records SET adult_verified_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
-    DB.prepare("UPDATE creator_onboarding_profiles SET adult_verification_status=CASE WHEN adult_verification_status='verified' THEN 'submitted' ELSE adult_verification_status END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
+  const previousRow = await DB.prepare("SELECT legal_name,date_of_birth FROM creator_compliance_records WHERE creator_id=?").bind(creatorId).first<{ legal_name: string; date_of_birth: string }>();
+  const previous = previousRow && { legalName: previousRow.legal_name, dateOfBirth: previousRow.date_of_birth };
+  const changed = complianceIdentityChanged(previous, { legalName, dateOfBirth: dob });
+  await DB.batch([
+    DB.prepare(SAVE_COMPLIANCE_IDENTITY_SQL).bind(creatorId, legalName, dob),
+    ...(changed ? [
+      DB.prepare(INVALIDATE_COMPLIANCE_IDENTITY_SQL).bind(creatorId),
+      DB.prepare(RESET_IDENTITY_VERIFICATION_SQL).bind(creatorId),
+    ] : []),
   ]);
   return changed;
 }
@@ -103,10 +106,9 @@ async function createOperationalProfile(form: FormData, creatorOnly = false) {
   if (creator && loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const isActive = creator ? 0 : (form.has("isActive") && form.get("isActive") === "yes" ? 1 : 0);
   const creatorVisible = creator ? 1 : (form.has("creatorVisible") && form.get("creatorVisible") === "yes" ? 1 : 0);
-  const publishingAuthority = creator || isActive ? "not_configured" : "blocked";
   const id = crypto.randomUUID(); const DB = cloudflareEnv().DB; const actor = humanAuditActor(identity);
   await DB.prepare(`INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,account_kind,login_email,profile_url,account_purpose,is_active,connection_method,creator_visible,administrator_notes,capabilities_json,private_upload_destination)
-  VALUES (?,?,?,?,?,'not_connected','not_configured',?,?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, username, publishingAuthority, type, loginEmail, profileUrl(form, platform), value(form, "purpose", 400), isActive, loginMethod, creatorVisible, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
+  VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, username, type, loginEmail, profileUrl(form, platform), value(form, "purpose", 400), isActive, loginMethod, creatorVisible, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
   await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: Boolean(creatorVisible), isActive: Boolean(isActive), loginMethod }); revalidate();
   return id;
 }
@@ -233,7 +235,7 @@ export async function activateOnboardingAction() {
   if (!profile || profile.adult_verification_status !== "verified" || !profile.adult_verified_at || profile.contract_status !== "active" || profile.consent_status !== "recorded" || missingRequiredOnboardingSections(open.results).length) throw new Error("Complete every required onboarding section and activate compliance before activating this creator.");
   await DB.batch([
     DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='active',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
-    DB.prepare("UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured'").bind(creatorId),
+    DB.prepare("UPDATE operational_accounts SET is_active=1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_kind IN ('social','paid') AND creator_visible=1 AND is_active=0 AND publishing_authority='not_configured' AND EXISTS (SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=operational_accounts.creator_id AND e.subject=operational_accounts.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created')").bind(creatorId),
     DB.prepare("UPDATE creator_compliance_records SET activated_by=?,activated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(identity.email,creatorId),
   ]); await audit(creatorId,humanAuditActor(identity),"creator_onboarding_activated","onboarding",{}); revalidate();
 }

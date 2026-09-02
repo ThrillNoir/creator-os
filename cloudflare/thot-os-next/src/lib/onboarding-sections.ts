@@ -1,13 +1,3 @@
-export const ONBOARDING_SECTION_KEYS = [
-  "identity",
-  "social_profiles",
-  "paid_platforms",
-  "chrome_access",
-  "brand_voice",
-  "positioning",
-  "about_me",
-] as const;
-
 export const REQUIRED_ONBOARDING_SECTION_KEYS = [
   "identity",
   "social_profiles",
@@ -18,6 +8,8 @@ export const REQUIRED_ONBOARDING_SECTION_KEYS = [
 ] as const;
 
 export const OPTIONAL_ONBOARDING_SECTION_KEYS = ["chrome_access"] as const;
+
+export const ONBOARDING_SECTION_KEYS = [...REQUIRED_ONBOARDING_SECTION_KEYS, ...OPTIONAL_ONBOARDING_SECTION_KEYS] as const;
 
 export type OnboardingSectionRow = { section_key: string; status: string };
 
