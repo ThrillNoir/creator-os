@@ -31,13 +31,13 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger records applied 0056 and pending checkpoint B", () => {
+test("reviewed staging ledger records applied checkpoint B migrations", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 58);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0057_instagram_account_scoped_analytics.sql", "0058_fansly_claim_recovery.sql"]);
+  assert.equal(ledger.migrations.length, 60);
+  assert.deepEqual(ledger.pendingMigrations ?? [], []);
   assert.deepEqual(inventory[56], {
     number: 55,
     name: "0055_provider_connection_account_scope.sql",
@@ -49,6 +49,18 @@ test("reviewed staging ledger records applied 0056 and pending checkpoint B", ()
     name: "0056_creator_invitations.sql",
     sha256: "5a465735e2e71d348650620165bc90476c528115f892fc63e57a86fa1ef566f5",
     ledgerIndex: 58,
+  });
+  assert.deepEqual(inventory[58], {
+    number: 57,
+    name: "0057_instagram_account_scoped_analytics.sql",
+    sha256: "3cc22c1f67884a65a6b3c039fa0d18e6581e5588dd251342f35bd03d13fbc66e",
+    ledgerIndex: 59,
+  });
+  assert.deepEqual(inventory[59], {
+    number: 58,
+    name: "0058_fansly_claim_recovery.sql",
+    sha256: "7292bd2dc1a85c8ae35772153e85e4656e8a50830fe4e4a1f060c75812c57cc7",
+    ledgerIndex: 60,
   });
   assert.deepEqual(inventory.slice(43, 50).map((entry) => entry.name), [
     "0044_onlyfans_upload_bridge.sql", "0045_onlyfans_authorized_delivery.sql", "0046_onlyfans_sequential_batches.sql", "0047_onlyfans_supervised_delivery.sql", "0048_onlyfans_grouped_message_delivery.sql", "0044_creator_r2_library.sql", "0045_finished_media_uploads.sql",

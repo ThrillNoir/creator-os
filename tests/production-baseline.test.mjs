@@ -14,7 +14,10 @@ test("production baseline has no operational seed data and records complete D1 m
     readFile(baselinePath, "utf8"),
     readFile(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8").then(JSON.parse),
   ]);
-  const expected = ledger.migrations.map((entry) => entry.name);
+  // Production foundation remains intentionally at the pre-stabilisation
+  // schema; 0057/0058 are staging rollout migrations and are not production
+  // provenance until a separately approved production release exists.
+  const expected = ledger.migrations.filter((entry) => entry.remoteId <= 58).map((entry) => entry.name);
   const db = new Database(":memory:");
   try {
     db.exec(baseline);
