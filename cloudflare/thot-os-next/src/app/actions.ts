@@ -1068,6 +1068,40 @@ export async function validateTelegramConnectorAction() {
   redirect("/messages?platform=telegram&saved=telegram_validated");
 }
 
+export async function startTelegramPairingAction(formData: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  const creatorId = identity.creator.creator_id;
+  const username = String(formData.get("telegramUsername") ?? "").trim().replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{5,32}$/.test(username)) throw new Error("Enter the creator’s Telegram username without spaces.");
+  const { DB } = cloudflareEnv();
+  const [existing, bot] = await Promise.all([
+    creatorPrepare(DB, creatorId, "SELECT id FROM messaging_connections WHERE creator_id=@creator AND platform='telegram' LIMIT 1").first<{ id: string }>(),
+    DB.prepare("SELECT expected_bot_username FROM telegram_connector_state WHERE expected_bot_username<>'' ORDER BY CASE status WHEN 'connected' THEN 0 ELSE 1 END LIMIT 1").first<{ expected_bot_username: string }>(),
+  ]);
+  if (existing) throw new Error("This creator already has a Telegram messaging connection.");
+  if (!bot?.expected_bot_username) throw new Error("The agency Telegram bot is not configured.");
+  const connectionId = crypto.randomUUID();
+  await DB.batch([
+    creatorPrepare(DB, creatorId, `INSERT INTO messaging_connections (id,creator_id,platform,display_name,handle,mode,read_enabled,write_enabled,outbound_validated,status,last_error)
+      VALUES (?,@creator,'telegram',?,?,'observe',0,0,0,'needs_check','Open the agency bot from this Telegram account, tap Start, then confirm pairing.')`).bind(connectionId, `${identity.creator.creator_name} Telegram`, `@${username}`),
+    creatorPrepare(DB, creatorId, `INSERT INTO telegram_connector_state (creator_id,connection_id,chat_id,telegram_user_id,telegram_username,display_name,expected_bot_username,status)
+      VALUES (@creator,?,'','',?,?,?,'pending_validation')`).bind(connectionId, username, identity.creator.creator_name, bot.expected_bot_username),
+    creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'telegram_pairing_started',?,?,?)").bind(crypto.randomUUID(), connectionId, identity.email, identity.creator.role, JSON.stringify({ telegramUsername: `@${username}` })),
+  ]);
+  revalidatePath("/messages");
+  redirect("/messages?platform=telegram&saved=telegram_pairing_started");
+}
+
+export async function completeTelegramPairingAction() {
+  const identity = await requireCreatorContext("manage_identity");
+  const env = cloudflareEnv();
+  const response = await fetchInternalService(env, "telegram", "telegram.connection.manage", env.TELEGRAM_BRIDGE, "https://telegram-bridge/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id }) });
+  const result = await response.json() as { ok?: boolean; error?: string };
+  if (!response.ok || !result.ok) throw new Error(result.error || "Telegram pairing could not be confirmed.");
+  revalidatePath("/messages");
+  redirect("/messages?platform=telegram&saved=telegram_pairing_complete");
+}
+
 export async function refreshTelegramMessagesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const threadId = String(formData.get("threadId") ?? "").trim();

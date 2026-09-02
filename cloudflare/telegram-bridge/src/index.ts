@@ -59,9 +59,10 @@ async function validateIdentity(env: Env, creatorId: string) {
     if (!response.ok || !identity?.id || !identity.is_bot || identity.username?.toLowerCase() !== expected) {
       throw new Error(`Telegram bot identity did not match @${expected}.`);
     }
+    const paired = Boolean(state.chat_id && state.telegram_user_id);
     await env.DB.batch([
-      env.DB.prepare("UPDATE telegram_connector_state SET status='connected',identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId),
-      env.DB.prepare("UPDATE messaging_connections SET status='connected',outbound_validated=1,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, creatorId),
+      env.DB.prepare(`UPDATE telegram_connector_state SET status=?,identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?`).bind(paired ? "connected" : "pending_validation", creatorId),
+      env.DB.prepare("UPDATE messaging_connections SET status=?,outbound_validated=?,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(paired ? "connected" : "needs_check", paired ? 1 : 0, state.connection_id, creatorId),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_identity_validated','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, JSON.stringify({ username: `@${identity.username}` })),
     ]);
     return { ok: true, username: `@${identity.username}` };
@@ -73,6 +74,35 @@ async function validateIdentity(env: Env, creatorId: string) {
     ]);
     throw error;
   }
+}
+
+async function completePairing(env: Env, creatorId: string) {
+  const state = await connector(env, creatorId);
+  if (!state || !state.telegram_username || (state.chat_id && state.telegram_user_id)) throw new Error("Start this creator’s Telegram pairing first.");
+  await validateIdentity(env, creatorId);
+  await env.DB.prepare("INSERT OR IGNORE INTO telegram_bot_state (id) VALUES ('shared')").run();
+  const botState = await env.DB.prepare("SELECT next_update_id FROM telegram_bot_state WHERE id='shared'").first<{ next_update_id: number }>();
+  if (!botState) throw new Error("Telegram’s shared cursor is unavailable.");
+  const response = await executeTelegramTool<{ ok?: boolean; result?: TelegramUpdate[] }>(env, "TELEGRAM_GET_UPDATES", { offset: botState.next_update_id, limit: 100, timeout: 0, allowed_updates: ["message"] });
+  if (!response.ok) throw new Error("Telegram did not confirm the pairing check.");
+  const command = `/start cos_${creatorId}`.toLowerCase();
+  const expectedUsername = state.telegram_username.replace(/^@/, "").toLowerCase();
+  const message = (response.result ?? []).map((update) => update.message).find((candidate) => {
+    const username = candidate?.from?.username?.replace(/^@/, "").toLowerCase();
+    return candidate?.chat?.type === "private" && !candidate.from?.is_bot && candidate.text?.trim().toLowerCase() === command && username === expectedUsername;
+  });
+  if (!message?.chat?.id || !message.from?.id || String(message.chat.id) !== String(message.from.id)) throw new Error(`Open @${state.expected_bot_username.replace(/^@/, "")} from @${expectedUsername}, tap Start, then confirm pairing again.`);
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const duplicate = await env.DB.prepare("SELECT creator_id FROM telegram_connector_state WHERE creator_id<>? AND status<>'revoked' AND (chat_id=? OR telegram_user_id=?) LIMIT 1").bind(creatorId, chatId, userId).first<{ creator_id: string }>();
+  if (duplicate) throw new Error("That Telegram identity is already paired to another creator.");
+  const displayName = [message.from.first_name, message.from.last_name].filter(Boolean).join(" ") || state.display_name;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE telegram_connector_state SET chat_id=?,telegram_user_id=?,display_name=?,status='connected',identity_confirmed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(chatId, userId, displayName, creatorId),
+    env.DB.prepare("UPDATE messaging_connections SET status='connected',outbound_validated=1,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(state.connection_id, creatorId),
+    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,?,?,'telegram_creator_paired','service:telegram-bridge','service',?)").bind(crypto.randomUUID(), creatorId, state.connection_id, JSON.stringify({ telegramUsername: `@${expectedUsername}` })),
+  ]);
+  return { ok: true, username: `@${expectedUsername}` };
 }
 
 async function importUpdate(env: Env, state: Connector, update: TelegramUpdate) {
@@ -280,6 +310,7 @@ async function creatorIdFromBody(request: Request) {
 
 const routeCapabilities: Record<string, string> = {
   "POST /validate": "telegram.connection.manage",
+  "POST /pair": "telegram.connection.manage",
   "POST /run": "telegram.messages.sync",
   "POST /send": "telegram.messages.write",
   "GET /status": "telegram.status.read",
@@ -312,6 +343,7 @@ export default {
         return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
       }
       if (request.method === "POST" && url.pathname === "/validate") return Response.json(await validateIdentity(env, creatorId));
+      if (request.method === "POST" && url.pathname === "/pair") return Response.json(await completePairing(env, creatorId));
       if (request.method === "POST" && url.pathname === "/run") return Response.json(await pollSharedUpdates(env, "service", creatorId));
       if (request.method === "POST" && url.pathname === "/send") return sendMessage(request, env);
       if (request.method === "GET" && url.pathname === "/status") return status(env, creatorId);

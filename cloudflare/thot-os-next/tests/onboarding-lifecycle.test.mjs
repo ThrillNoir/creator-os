@@ -24,3 +24,14 @@ test("creator onboarding exposes the complete invitation-to-active lifecycle", a
   assert.match(authorization, /agency_admin: new Set\(\["view", "mutate", "approve", "manage_identity"\]\)/);
   assert.doesNotMatch(authorization, /operator: new Set\([^\n]*manage_identity/);
 });
+
+test("agency administrators receive a direct onboarding review queue", async () => {
+  const [creators, identityActions] = await Promise.all([
+    source("../src/app/creators/page.tsx"),
+    source("../src/app/identity-actions.ts"),
+  ]);
+  assert.match(creators, /Onboarding reviews/);
+  assert.match(creators, /workflow_state === "creator_review"/);
+  assert.match(creators, /name="returnTo"[^>]+value="\/onboarding"/);
+  assert.match(identityActions, /formData\.get\("returnTo"\) === "\/onboarding"/);
+});

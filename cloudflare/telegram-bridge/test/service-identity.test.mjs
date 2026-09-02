@@ -137,3 +137,33 @@ test("the local validate route rejects a Composio ownership mismatch", async () 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("pairing binds only the expected private Telegram username", async () => {
+  const originalFetch = globalThis.fetch;
+  const batches = [];
+  const DB = bridgeDatabase(batches);
+  const originalPrepare = DB.prepare.bind(DB);
+  DB.prepare = (sql) => {
+    const statement = originalPrepare(sql);
+    statement.first = async () => {
+      if (sql.includes("FROM service_principal_credentials")) return { id: "telegram-service-credential", principal_name: "thot-os-web-telegram" };
+      if (sql.includes("FROM telegram_connector_state WHERE creator_id=?")) return { creator_id: "thrill-noir", connection_id: "telegram-thrill-noir", chat_id: "", telegram_user_id: "", telegram_username: "thrillnoir", display_name: "THRILL NOIR", expected_bot_username: "expected_bot", status: "pending_validation", next_update_id: 0 };
+      if (sql.includes("FROM telegram_connector_state WHERE creator_id<>?")) return null;
+      if (sql.includes("FROM telegram_bot_state")) return { next_update_id: 0 };
+      return null;
+    };
+    return statement;
+  };
+  globalThis.fetch = async (url) => String(url).includes("TELEGRAM_GET_ME")
+    ? Response.json({ successful: true, data: { ok: true, result: { id: 1234, username: "expected_bot", is_bot: true } } })
+    : Response.json({ successful: true, data: { ok: true, result: [{ update_id: 1, message: { text: "/start cos_thrill-noir", chat: { id: 99, type: "private" }, from: { id: 99, username: "ThrillNoir", first_name: "Thrill" } } }] } });
+  try {
+    const response = await telegramBridge.fetch(new Request("http://local.test/pair", { method: "POST", headers: { authorization: `Bearer ${"x".repeat(48)}`, "x-thot-os-service-capability": "telegram.connection.manage" }, body: JSON.stringify({ creatorId: "thrill-noir" }) }), { ...correctIdentity, DB });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, username: "@thrillnoir" });
+    assert.ok(batches.some((statement) => statement.sql.includes("telegram_user_id=?") && statement.bindings[0] === "99" && statement.bindings[1] === "99"));
+    assert.ok(batches.some((statement) => statement.sql.includes("outbound_validated=1")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

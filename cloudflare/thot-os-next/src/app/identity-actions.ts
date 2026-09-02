@@ -67,7 +67,7 @@ export async function switchCreatorAction(formData: FormData) {
     cookieStore.delete(STEP_UP_COOKIE);
   }
   cookieStore.set("thot_os_creator", creatorId, { httpOnly: true, sameSite: "lax", secure: localBypass !== "1", path: "/", maxAge: 60 * 60 * 24 * 365 });
-  redirect("/");
+  redirect(formData.get("returnTo") === "/onboarding" ? "/onboarding" : "/");
 }
 
 export async function onboardCreatorWorkspaceAction(formData: FormData) {

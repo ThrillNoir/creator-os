@@ -3,9 +3,9 @@ import { AppShell, PageHeader } from "@/components/app-shell";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorRoleLabel, requireCreatorContext } from "@/lib/identity";
 import type { CreatorRole } from "@/lib/identity";
-import { assignBrowserProfileAction, onboardCreatorWorkspaceAction, registerBrowserProfileAction, revokeBridgeCredentialsAction, saveCreatorMembershipAction, suspendCreatorMembershipAction, revokeCreatorInvitationAction, resendCreatorInvitationAction } from "@/app/identity-actions";
+import { assignBrowserProfileAction, onboardCreatorWorkspaceAction, registerBrowserProfileAction, revokeBridgeCredentialsAction, saveCreatorMembershipAction, suspendCreatorMembershipAction, revokeCreatorInvitationAction, resendCreatorInvitationAction, switchCreatorAction } from "@/app/identity-actions";
 
-type AdminCreator = { id: string; name: string; status: string; assets: number; active_memberships: number; accounts: number; platforms: string | null; profiles: number };
+type AdminCreator = { id: string; name: string; status: string; workflow_state: string; onboarding_updated_at: string | null; assets: number; active_memberships: number; accounts: number; platforms: string | null; profiles: number };
 type Membership = { user_email: string; display_name: string; role: CreatorRole; status: string; created_at: string; updated_at: string };
 type BrowserProfile = { id: string; label: string; status: string; last_seen_at: string | null; assigned_accounts: number; verified_accounts: number };
 type Account = { id: string; platform: string; label: string; handle: string; connection_status: string; publishing_mode: string };
@@ -23,7 +23,7 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
   const creatorId = context.creator.creator_id;
   const { DB } = cloudflareEnv();
   const [creators, memberships, profiles, accounts, assignments, invitations, identityAudit, assetAudit, postAudit, communityAudit, vaultAudit, messagingAudit] = await Promise.all([
-    DB.prepare(`SELECT c.id,c.name,c.status,
+    DB.prepare(`SELECT c.id,c.name,c.status,COALESCE(cop.workflow_state,'draft') AS workflow_state,cop.updated_at AS onboarding_updated_at,
       COUNT(DISTINCT CASE WHEN a.source_available=1 THEN a.id END) AS assets,
       COUNT(DISTINCT CASE WHEN cm.status='active' THEN lower(cm.user_email) END) AS active_memberships,
       COUNT(DISTINCT oa.id) AS accounts,GROUP_CONCAT(DISTINCT oa.platform) AS platforms,
@@ -34,8 +34,9 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
       LEFT JOIN creator_memberships cm ON cm.creator_id=c.id
       LEFT JOIN operational_accounts oa ON oa.creator_id=c.id
       LEFT JOIN browser_profiles bp ON bp.creator_id=c.id AND bp.status<>'revoked'
+      LEFT JOIN creator_onboarding_profiles cop ON cop.creator_id=c.id
       WHERE lower(scope.user_email)=? AND scope.status='active' AND scope.role='agency_admin'
-      GROUP BY c.id,c.name,c.status ORDER BY c.name`).bind(context.email).all<AdminCreator>(),
+      GROUP BY c.id,c.name,c.status,cop.workflow_state,cop.updated_at ORDER BY c.name`).bind(context.email).all<AdminCreator>(),
     DB.prepare(`SELECT m.user_email,u.display_name,m.role,m.status,m.created_at,m.updated_at
       FROM creator_memberships m JOIN users u ON lower(u.email)=lower(m.user_email)
       WHERE m.creator_id=? ORDER BY CASE m.status WHEN 'active' THEN 0 ELSE 1 END,u.display_name`).bind(creatorId).all<Membership>(),
@@ -69,6 +70,7 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
   const activeMemberships = memberships.results.filter((membership) => membership.status === "active");
   const activePlatforms = [...new Set(accounts.results.map((account) => account.platform))];
   const verifiedPairings = assignments.results.filter((assignment) => assignment.verified_at && assignment.credential_active).length;
+  const onboardingReviews = creators.results.filter((creator) => creator.workflow_state === "creator_review" || creator.workflow_state === "admin_review");
   const saveMembership = saveCreatorMembershipAction.bind(null, creatorId);
   const suspendMembership = suspendCreatorMembershipAction.bind(null, creatorId);
   const registerProfile = registerBrowserProfileAction.bind(null, creatorId);
@@ -88,6 +90,10 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
       <article><b>{activeMemberships.length}</b><span>Active memberships · {selectedCreator.name}</span></article>
       <article><b>{activePlatforms.length}</b><span>Connected platform types</span></article>
       <article><b>{verifiedPairings}</b><span>Verified active bridge pairings</span></article>
+    </section>
+
+    <section className="panel admin-section"><div className="section-heading"><div><h2>Onboarding reviews</h2><p>Creator submissions waiting for agency review appear here.</p></div><span>{onboardingReviews.length} waiting</span></div>
+      {onboardingReviews.length ? onboardingReviews.map((creator) => <article className="identity-row admin-identity-row" key={creator.id}><div><strong>{creator.name}</strong><small>{statusLabel(creator.workflow_state)}{creator.onboarding_updated_at ? ` · submitted ${creator.onboarding_updated_at}` : ""}</small></div><form action={switchCreatorAction}><input name="creatorId" type="hidden" value={creator.id} /><input name="returnTo" type="hidden" value="/onboarding" /><button className="primary" type="submit">Review onboarding</button></form></article>) : <div className="empty"><b>No onboarding waiting</b><span>New creator submissions will appear here automatically.</span></div>}
     </section>
 
     <div className="admin-overview-grid">
