@@ -219,7 +219,7 @@ test("Unified Messages is creator scoped, auditable and fail-closed for outbound
     source("../telegram-bridge/src/index.ts"),
   ]);
   assert.match(shell, /"Messages", "\/messages"/);
-  assert.match(page, /Enter-to-send messaging/);
+  assert.match(page, /Ready for reviewed replies/);
   assert.match(page, /Telegram receipts/);
   assert.match(messages, /creator_id=\?/);
   assert.doesNotMatch(messages, /creator_id=['"]adelaide['"]/i);
@@ -271,7 +271,7 @@ test("Telegram and Fansly operate inside the unified thread with explicit device
   assert.match(manifest, /"version": "1\.1\.0"/);
 });
 
-test("Instagram replies use one-step Enter sending with subscriptions, validation and receipts", async () => {
+test("Instagram replies use one-step Enter sending with subscriptions and receipts", async () => {
   const [page, messages, actions, scheduler, migration, windowMigration, subscriptionMigration] = await Promise.all([
     source("src/app/messages/page.tsx"),
     source("src/lib/messages.ts"),
@@ -283,8 +283,8 @@ test("Instagram replies use one-step Enter sending with subscriptions, validatio
   ]);
   assert.doesNotMatch(page, /Save reply draft/);
   assert.doesNotMatch(page, /Confirm send to/);
-  assert.match(page, /MessageQuickReply platform="instagram"/);
-  assert.match(page, /Validate reply target/);
+  assert.match(page, /MessageQuickReply(?: key=\{`instagram:\$\{thread\.id\}`\})? platform="instagram"/);
+  assert.doesNotMatch(page, /Validate reply target/);
   assert.match(actions, /sendInstagramQuickReplyAction/);
   assert.match(actions, /instagram_quick_send_requested/);
   assert.match(actions, /enterToSend: true/);
@@ -321,7 +321,7 @@ test("Instagram message refresh stores private media and keeps read state provid
     source("../thot-os-app/migrations/0015_message_attachments.sql"),
   ]);
   assert.match(page, /InstagramAttachmentView/);
-  assert.match(page, /Refresh/);
+  assert.match(page, /MessageRefreshButton/);
   assert.match(page, /Mark read/);
   assert.match(page, /Instagram sends & receipts/);
   assert.match(messages, /message_attachments/);

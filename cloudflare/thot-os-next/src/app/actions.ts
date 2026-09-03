@@ -18,6 +18,18 @@ function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
 }
 
+function messagesRedirect(formData: FormData, saved: string) {
+  const params = new URLSearchParams();
+  const platform = String(formData.get("platform") ?? "").trim();
+  if (["telegram", "instagram", "fansly", "onlyfans"].includes(platform)) params.set("platform", platform);
+  for (const key of ["accountId", "thread"]) {
+    const value = String(formData.get(key) ?? "").trim();
+    if (value) params.set(key, value);
+  }
+  params.set("saved", saved);
+  return `/messages?${params.toString()}`;
+}
+
 type PublicProfileLinkInput = {
   id: string;
   stableId: string;
@@ -1059,7 +1071,7 @@ export async function setMessagingPauseAction(formData: FormData) {
     creatorPrepare(DB, creatorId, "UPDATE messaging_connections SET emergency_paused=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator").bind(paused ? 1 : 0),
     creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,event_type,actor,actor_role,detail) VALUES (?,@creator,'emergency_pause_changed',?,?,?)").bind(crypto.randomUUID(), actor, identity.creator.role, JSON.stringify({ paused })),
   ]);
-  redirect(`/messages?saved=${paused ? "paused" : "resumed"}`);
+  redirect(messagesRedirect(formData, paused ? "paused" : "resumed"));
 }
 
 export async function updateMessagingAuthorityAction(formData: FormData) {
@@ -1081,7 +1093,7 @@ export async function updateMessagingAuthorityAction(formData: FormData) {
     creatorPrepare(DB, creatorId, "UPDATE messaging_connections SET mode=?,read_enabled=?,write_enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator").bind(mode, readEnabled ? 1 : 0, writeEnabled ? 1 : 0, connectionId),
     creatorPrepare(DB, creatorId, "INSERT INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'permissions_updated',?,?,?)").bind(crypto.randomUUID(), connectionId, actor, identity.creator.role, JSON.stringify({ mode, readEnabled, writeEnabled })),
   ]);
-  redirect("/messages?saved=authority");
+  redirect(messagesRedirect(formData, "authority"));
 }
 
 export async function validateTelegramConnectorAction() {
