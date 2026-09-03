@@ -17,13 +17,17 @@ export function MessageQuickReply({ platform, threadId, participant }: { platfor
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef("");
+  const intentBodyRef = useRef<string | null>(null);
+  const retryRequestRef = useRef(false);
   const router = useRouter();
   const config = platformConfig[platform];
   const inputId = `${platform}-quick-reply-body`;
   const send = async (form: HTMLFormElement) => {
     const requestId = form.elements.namedItem("clientRequestId");
-    const clientRequestId = requestIdRef.current || crypto.randomUUID();
+    const clientRequestId = !retryRequestRef.current && requestIdRef.current && intentBodyRef.current === body ? requestIdRef.current : crypto.randomUUID();
     requestIdRef.current = clientRequestId;
+    intentBodyRef.current = body;
+    retryRequestRef.current = false;
     if (requestId instanceof HTMLInputElement) requestId.value = clientRequestId;
     const formData = new FormData(form);
     formData.set("clientRequestId", clientRequestId);
@@ -39,12 +43,15 @@ export function MessageQuickReply({ platform, threadId, participant }: { platfor
       if (result.ok) {
         setBody("");
         requestIdRef.current = "";
+        intentBodyRef.current = null;
       } else {
         setError(result.error || "The reply was not confirmed. Review the receipt before trying again.");
+        retryRequestRef.current = result.saved === "instagram_send_failed" || result.saved === "telegram_failed";
       }
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The reply could not be completed. Check the connection and try again.");
+      router.refresh();
     } finally {
       setSending(false);
     }

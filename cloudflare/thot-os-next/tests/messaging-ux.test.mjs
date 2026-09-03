@@ -31,8 +31,10 @@ test("quick reply state is controlled and keyed by thread at the page boundary",
   assert.match(page, /key=\{`telegram:\$\{thread\.id\}`\}/);
   assert.match(page, /key=\{`fansly:\$\{thread\.id\}`\}/);
   assert.match(reply, /useRef\(""\)/);
+  assert.match(reply, /useRef<string \| null>\(null\)/);
+  assert.match(reply, /retryRequestRef = useRef\(false\)/);
   assert.match(reply, /value=\{body\}/);
-  assert.match(reply, /requestIdRef\.current \|\| crypto\.randomUUID\(\)/);
+  assert.match(reply, /intentBodyRef\.current === body \? requestIdRef\.current : crypto\.randomUUID\(\)/);
   assert.match(reply, /event\.preventDefault\(\)/);
   assert.match(reply, /formData\.set\("inline", "1"\)/);
   assert.match(reply, /setBody\(""\)/);
