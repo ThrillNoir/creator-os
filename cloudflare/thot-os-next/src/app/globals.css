@@ -545,6 +545,7 @@ button, input, textarea, select { font: inherit; }
 .reply-compose textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 92px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #100c16; color: var(--ink); resize: vertical; }
 .reply-compose > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
 .reply-compose .primary { margin: 0; }
+.quick-reply-error { display: block; margin: 0; padding: 9px 10px; border: 1px solid #684d25; border-radius: 8px; background: #1f1913; }
 .reply-drafts { padding-top: 4px; }
 .reply-drafts > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); cursor: pointer; list-style: none; }
 .reply-drafts > summary::-webkit-details-marker { display: none; }

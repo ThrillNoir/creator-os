@@ -22,9 +22,10 @@ test("messages UX keeps scope visible, settings permission-aware, and actions co
 });
 
 test("quick reply state is controlled and keyed by thread at the page boundary", async () => {
-  const [page, reply] = await Promise.all([
+  const [page, reply, actions] = await Promise.all([
     source("src/app/messages/page.tsx"),
     source("src/components/message-quick-reply.tsx"),
+    source("src/app/actions.ts"),
   ]);
   assert.match(page, /key=\{`instagram:\$\{thread\.id\}`\}/);
   assert.match(page, /key=\{`telegram:\$\{thread\.id\}`\}/);
@@ -32,4 +33,20 @@ test("quick reply state is controlled and keyed by thread at the page boundary",
   assert.match(reply, /useRef\(""\)/);
   assert.match(reply, /value=\{body\}/);
   assert.match(reply, /requestIdRef\.current \|\| crypto\.randomUUID\(\)/);
+  assert.match(reply, /event\.preventDefault\(\)/);
+  assert.match(reply, /formData\.set\("inline", "1"\)/);
+  assert.match(reply, /setBody\(""\)/);
+  assert.match(reply, /router\.refresh\(\)/);
+  assert.match(reply, /role="alert"/);
+  assert.match(actions, /inlineMessageRequest/);
+  assert.match(actions, /satisfies InlineMessageResult/);
+  assert.match(actions, /saved: "fansly_reply_queued"/);
+});
+
+test("messaging review keeps audit collapsed and avoids unimplemented automatic-send language", async () => {
+  const page = await source("src/app/messages/page.tsx");
+  assert.doesNotMatch(page, /attentionEvent/);
+  assert.doesNotMatch(page, /Automatic sending/);
+  assert.match(page, /Operate — validated connection/);
+  assert.match(page, /<details className="panel message-audit">/);
 });

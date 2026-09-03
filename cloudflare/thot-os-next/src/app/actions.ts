@@ -30,6 +30,9 @@ function messagesRedirect(formData: FormData, saved: string) {
   return `/messages?${params.toString()}`;
 }
 
+const inlineMessageRequest = (formData: FormData) => formData.get("inline") === "1";
+type InlineMessageResult = { ok: boolean; saved: string; error?: string };
+
 type PublicProfileLinkInput = {
   id: string;
   stableId: string;
@@ -940,21 +943,35 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
       ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`).bind(draftId, thread.id, body, draftId).first<{ id: string; status: string }>();
     if (!existing) throw new Error("That Instagram reply could not be queued safely. Refresh Messages and try again.");
     draftId = existing.id;
-    if (existing.status === "sent") redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_sent`);
-    if (existing.status === "sending") redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_sending`);
-    if (existing.status === "uncertain") redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_uncertain`);
-    if (existing.status === "failed") redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_send_failed`);
+    if (existing.status === "sent") {
+      if (inlineMessageRequest(formData)) return { ok: true, saved: "instagram_sent" } satisfies InlineMessageResult;
+      redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_sent`);
+    }
+    if (existing.status === "sending") {
+      if (inlineMessageRequest(formData)) return { ok: false, saved: "instagram_sending", error: "This reply is already being sent. Check the receipt before trying again." } satisfies InlineMessageResult;
+      redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_sending`);
+    }
+    if (existing.status === "uncertain") {
+      if (inlineMessageRequest(formData)) return { ok: false, saved: "instagram_uncertain", error: "Instagram did not confirm the outcome. Check the live conversation before sending again." } satisfies InlineMessageResult;
+      redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_uncertain`);
+    }
+    if (existing.status === "failed") {
+      if (inlineMessageRequest(formData)) return { ok: false, saved: "instagram_send_failed", error: "Instagram did not accept this reply. Review the receipt before trying again." } satisfies InlineMessageResult;
+      redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=instagram_send_failed`);
+    }
   }
 
   let saved = "instagram_send_failed";
+  let actionError: string | undefined;
   try {
     const response = await fetchInternalService(env, "instagram", "instagram.messages.write", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/messages/instagram/send", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ draftId, creatorId }),
     });
-    const result = await response.json() as { ok?: boolean; sent?: boolean; uncertain?: boolean };
+    const result = await response.json() as { ok?: boolean; sent?: boolean; uncertain?: boolean; error?: string };
     saved = response.ok && result.ok && result.sent ? "instagram_sent" : result.uncertain ? "instagram_uncertain" : "instagram_send_failed";
+    actionError = result.error;
   } catch (error) {
     const message = `Outcome uncertain; check Instagram before sending again. ${error instanceof Error ? error.message : "The Instagram delivery service did not respond."}`.slice(0, 2000);
     await env.DB.batch([
@@ -963,8 +980,12 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
         .bind(crypto.randomUUID(), thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, error: message })),
     ]);
     saved = "instagram_uncertain";
+    actionError = message;
   }
   revalidatePath("/messages");
+  if (inlineMessageRequest(formData)) {
+    return { ok: saved === "instagram_sent", saved, error: actionError || (saved === "instagram_uncertain" ? "Instagram did not confirm the outcome. Check the live conversation before sending again." : saved === "instagram_send_failed" ? "Instagram did not accept this reply. Review the receipt before trying again." : undefined) } satisfies InlineMessageResult;
+  }
   redirect(`/messages?platform=instagram&thread=${encodeURIComponent(thread.id)}&saved=${saved}`);
 }
 
@@ -1191,6 +1212,7 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
   if (!inserted.meta?.changes) {
     const existing = await creatorPrepare(DB, creatorId, "SELECT status FROM telegram_send_log WHERE id=? AND creator_id=@creator").bind(logId).first<{ status: string }>();
     const saved = existing?.status === "sent" ? "telegram_sent" : existing?.status === "failed" ? "telegram_failed" : "telegram_queued";
+    if (inlineMessageRequest(formData)) return { ok: saved === "telegram_sent", saved, error: saved === "telegram_sent" ? undefined : saved === "telegram_failed" ? "Telegram did not confirm this message. Review the receipt before trying again." : "This message is already queued. Check the receipt before trying again." } satisfies InlineMessageResult;
     redirect(`/messages?platform=telegram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=${saved}`);
   }
   await creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO messaging_audit_events (id,creator_id,connection_id,event_type,actor,actor_role,detail) VALUES (?,@creator,?,'telegram_message_approved',?,?,?)")
@@ -1198,7 +1220,9 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
   const response = await fetchInternalService(env, "telegram", "telegram.messages.write", TELEGRAM_BRIDGE, "https://telegram-bridge/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ logId, creatorId }) });
   const result = await response.json() as { ok?: boolean; error?: string };
   revalidatePath("/messages");
-  redirect(`/messages?platform=telegram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=${response.ok && result.ok ? "telegram_sent" : "telegram_failed"}`);
+  const saved = response.ok && result.ok ? "telegram_sent" : "telegram_failed";
+  if (inlineMessageRequest(formData)) return { ok: saved === "telegram_sent", saved, error: saved === "telegram_sent" ? undefined : result.error || "Telegram did not confirm this message. Review the receipt before trying again." } satisfies InlineMessageResult;
+  redirect(`/messages?platform=telegram${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=${saved}`);
 }
 
 export async function sendFanslyReplyAction(formData: FormData) {
@@ -1227,6 +1251,7 @@ export async function sendFanslyReplyAction(formData: FormData) {
       VALUES (?,@creator,?,?, 'fansly_device_send_approved',?,?,?)`).bind(`fansly-send-audit-${requestId}`, thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, characters: body.length, directComposer: true })),
   ]);
   revalidatePath("/messages");
+  if (inlineMessageRequest(formData)) return { ok: true, saved: "fansly_reply_queued" } satisfies InlineMessageResult;
   redirect(`/messages?platform=fansly&thread=${encodeURIComponent(thread.id)}&saved=fansly_reply_queued`);
 }
 
