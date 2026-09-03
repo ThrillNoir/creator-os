@@ -61,6 +61,7 @@ test("inbox history and thread list are bounded separately from the composer", a
   assert.match(page, /className="thread-list-scroll" role="region" aria-label="Conversations" tabIndex=\{0\}/);
   assert.match(css, /\.message-history-viewport \{[^}]*overflow-y: auto/);
   assert.match(css, /\.thread-list, \.conversation \{[^}]*height: clamp/);
+  assert.match(css, /\.conversation-composer \{[^}]*flex: 0 0 auto/);
   assert.match(scroller, /following\.current && !window\.getSelection/);
   assert.match(scroller, /observer\.disconnect/);
 });

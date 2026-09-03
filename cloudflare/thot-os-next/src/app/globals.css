@@ -814,7 +814,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .message-history { position: relative; flex: 1 1 auto; min-height: 140px; }
 .message-history-viewport { height: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 8px; }
 .message-jump-latest { position: absolute; bottom: 8px; right: 16px; z-index: 1; }
-.conversation-composer { flex: 0 1 auto; max-height: 50%; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 12px; }
+.conversation-composer { flex: 0 0 auto; max-height: 50%; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 12px; }
 .conversation article { overflow-wrap: anywhere; }
 .conversation article p { word-break: normal; }
 .conversation .reply-compose textarea { max-height: 160px; }
