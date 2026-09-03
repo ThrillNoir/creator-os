@@ -938,11 +938,13 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
     WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND c.safety='sfw' AND ma.state IN ('canonical_verified','preview_ready')
       AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified'
       AND o.object_key=a.media_r2_key AND o.byte_count=a.bytes
+      AND (c.is_multi=0 OR EXISTS (SELECT 1 FROM asset_people ap WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id))
+      AND NOT EXISTS (SELECT 1 FROM asset_people ap LEFT JOIN people p ON p.id=ap.person_id AND p.creator_id=ap.creator_id WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id AND COALESCE(p.consent_status,'not_recorded')<>'recorded')
       AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL LIMIT 1`).bind(assetId)
     .first<{ id: string; safety: string; sha256: string; byte_count: number; verified_mime_type: string; r2_version: string; r2_etag: string }>() : null;
   if (assetId && !asset) throw new Error("Choose one creator-owned, SFW Instagram-approved asset whose private R2 source is verified.");
   if (asset && !["image/jpeg", "image/png", "video/mp4"].includes(asset.verified_mime_type)) throw new Error("Instagram replies support approved JPEG, PNG, or MP4 assets only.");
-  if (asset && asset.byte_count > (asset.verified_mime_type === "video/mp4" ? 25 * 1024 * 1024 : 8 * 1024 * 1024)) throw new Error("Choose a smaller Instagram photo or video.");
+  if (asset && (asset.byte_count <= 0 || asset.byte_count > (asset.verified_mime_type === "video/mp4" ? 25 * 1024 * 1024 : 8 * 1024 * 1024))) throw new Error("Choose a smaller Instagram photo or video.");
 
   const actor = identity.email;
   let draftId = `instagram-send-${requestId}`;
@@ -956,10 +958,11 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
       VALUES (?,@creator,?,?,'instagram_quick_send_requested',?,?,?)`)
       .bind(`instagram-send-audit-${requestId}`, thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, characters: body.length, assetId, enterToSend: true })).run();
   } else {
-    const existing = await creatorPrepare(env.DB, creatorId, `SELECT id,status,body,asset_id,asset_sha256,asset_bytes,asset_mime_type,asset_r2_version,asset_r2_etag FROM instagram_reply_drafts
+    const existing = await creatorPrepare(env.DB, creatorId, `SELECT id,thread_id,status,body,asset_id,asset_sha256,asset_bytes,asset_mime_type,asset_r2_version,asset_r2_etag FROM instagram_reply_drafts
       WHERE creator_id=@creator AND (id=? OR (thread_id=? AND body=? AND COALESCE(asset_id,'')=COALESCE(?, '') AND status IN ('draft','approved','sending')))
-      ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`).bind(draftId, thread.id, body, assetId, draftId).first<{ id: string; status: string; body: string; asset_id: string | null; asset_sha256: string | null; asset_bytes: number | null; asset_mime_type: string | null; asset_r2_version: string | null; asset_r2_etag: string | null }>();
+      ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`).bind(draftId, thread.id, body, assetId, draftId).first<{ id: string; thread_id: string; status: string; body: string; asset_id: string | null; asset_sha256: string | null; asset_bytes: number | null; asset_mime_type: string | null; asset_r2_version: string | null; asset_r2_etag: string | null }>();
     if (!existing) throw new Error("That Instagram reply could not be queued safely. Refresh Messages and try again.");
+    if (existing.thread_id !== thread.id) throw new Error("This request ID belongs to a different conversation. Refresh Messages and try again.");
     if (existing.body !== body || (existing.asset_id ?? null) !== assetId || existing.asset_sha256 !== (asset?.sha256 ?? null) || existing.asset_bytes !== (asset?.byte_count ?? null) || existing.asset_mime_type !== (asset?.verified_mime_type ?? null) || existing.asset_r2_version !== (asset?.r2_version ?? null) || existing.asset_r2_etag !== (asset?.r2_etag ?? null)) throw new Error("This request ID is already used for a different Instagram reply. Refresh Messages and try again.");
     draftId = existing.id;
     if (existing.status === "sent") {

@@ -25,6 +25,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ atta
       WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
         AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
         AND a.source_available=1 AND ma.state IN ('canonical_verified','preview_ready')
+        AND ma.canonical_storage_object_id=o.id
         AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL ORDER BY o.verified_at DESC LIMIT 1`)
       .bind(context.creator.creator_id, attachment.asset_id).first<{ object_key: string; byte_count: number; mime_type: string; sha256: string; r2_version: string; r2_etag: string }>();
     if (!source) return Response.json({ ok: false, error: "not_found" }, { status: 404 });

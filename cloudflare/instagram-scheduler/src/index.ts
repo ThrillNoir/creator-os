@@ -379,20 +379,29 @@ async function approvedInstagramMedia(env: Env, post: DuePost) {
 }
 
 async function approvedInstagramReplyMedia(env: Env, draft: InstagramReplyDraft) {
-  if (!draft.asset_id) return null;
+  if (!draft.asset_id) {
+    if (draft.asset_sha256 || draft.asset_bytes !== null || draft.asset_mime_type || draft.asset_r2_version || draft.asset_r2_etag || !draft.body.trim()) throw new Error("instagram_reply_media_missing");
+    return null;
+  }
+  if (draft.body.trim()) throw new Error("instagram_reply_media_and_text_not_supported");
   const source = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
     FROM asset_storage_objects o
     JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
     JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id
     WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
       AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
       AND o.byte_count=a.bytes AND a.source_available=1 AND ma.state IN ('canonical_verified','preview_ready')
+      AND ma.canonical_storage_object_id=o.id AND c.safety='sfw'
+      AND EXISTS (SELECT 1 FROM asset_destinations d WHERE d.asset_id=a.id AND d.creator_id=a.creator_id AND d.destination='instagram')
+      AND (c.is_multi=0 OR EXISTS (SELECT 1 FROM asset_people ap WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id))
+      AND NOT EXISTS (SELECT 1 FROM asset_people ap LEFT JOIN people p ON p.id=ap.person_id AND p.creator_id=ap.creator_id WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id AND COALESCE(p.consent_status,'not_recorded')<>'recorded')
       AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL
     ORDER BY o.verified_at DESC LIMIT 1`).bind(draft.creator_id, draft.asset_id)
     .first<CanonicalR2Source>();
   if (!source || source.sha256 !== draft.asset_sha256 || source.byte_count !== draft.asset_bytes || source.verified_mime_type !== draft.asset_mime_type) throw new Error("instagram_reply_media_changed");
   const maxBytes = source.verified_mime_type.startsWith("video/") ? MAX_INSTAGRAM_REPLY_VIDEO_BYTES : MAX_INSTAGRAM_REPLY_IMAGE_BYTES;
-  if (source.byte_count > maxBytes) throw new Error("instagram_reply_media_too_large");
+  if (source.byte_count <= 0 || source.byte_count > maxBytes) throw new Error("instagram_reply_media_too_large");
   const type = source.verified_mime_type === "video/mp4" ? "video" : source.verified_mime_type === "image/jpeg" || source.verified_mime_type === "image/png" ? "image" : null;
   if (!type) throw new Error("instagram_reply_media_type_unsupported");
   if (!draft.asset_r2_version || !draft.asset_r2_etag || source.r2_version !== draft.asset_r2_version || source.r2_etag !== draft.asset_r2_etag) throw new Error("instagram_reply_media_changed");
@@ -466,7 +475,7 @@ async function releaseInstagramMessageSync(env: Env, creatorId: string, accountI
 }
 
 async function assertInstagramMessageSyncLease(env: Env, creatorId: string, accountId: string, leaseId: string) {
-  const row = await env.DB.prepare("SELECT messages_sync_lease_id FROM instagram_account_sync_state WHERE creator_id=? AND account_id=?").bind(creatorId, accountId).first<{ messages_sync_lease_id: string | null }>();
+  const row = await env.DB.prepare("SELECT messages_sync_lease_id FROM instagram_account_sync_state WHERE creator_id=? AND account_id=? AND unixepoch(messages_sync_lease_at)>unixepoch('now')-?").bind(creatorId, accountId, MESSAGE_SYNC_LEASE_SECONDS).first<{ messages_sync_lease_id: string | null }>();
   if (row?.messages_sync_lease_id !== leaseId) throw new InstagramMessageSyncLeaseLostError("Instagram message sync lease expired.");
 }
 
@@ -610,6 +619,7 @@ async function syncInstagramMessages(env: Env, creatorId: string, accountId?: st
       detail = await proxyInstagram<unknown>(env, connection.connected_account_id, `/v25.0/${encodeURIComponent(conversation.id)}?fields=${encodeURIComponent(conversationFields)}`, "GET", AbortSignal.timeout(remainingMessageSyncTimeout(leaseDeadlineAt)));
     } catch (error) { if (error instanceof InstagramMessageSyncLeaseLostError) throw error; throw messageSyncError("conversation_detail", error); }
     await assertInstagramMessageReadEnabled(env, connection.messaging_connection_id, creatorId);
+    await assertInstagramMessageSyncLease(env, creatorId, scopedAccountId, leaseId);
     const detailRoot = record(detail) ?? {};
     const participants = dataRecords(detailRoot.participants) as InstagramParticipant[];
     const messages = dataRecords(detailRoot.messages) as InstagramMessage[];
@@ -671,6 +681,7 @@ async function syncInstagramMessages(env: Env, creatorId: string, accountId?: st
   }
 
   await assertInstagramMessageSyncLease(env, creatorId, scopedAccountId, leaseId);
+  await assertInstagramMessageReadEnabled(env, connection.messaging_connection_id, creatorId);
   const completionStatements = [
     env.DB.prepare(`INSERT INTO instagram_account_sync_state (creator_id,account_id,last_messages_sync_at,last_messages_error,last_messages_attachment_failures,updated_at)
       VALUES (?,?,CURRENT_TIMESTAMP,?,?,CURRENT_TIMESTAMP)
@@ -1014,7 +1025,7 @@ async function sendInstagramReply(request: Request, env: Env) {
           text: draft.body,
         });
     const providerMessageId = responseId(sent, "Instagram message");
-    const messageId = `instagram-outbound-${(await sha256(providerMessageId)).slice(0, 40)}`;
+    const messageId = `instagram-outbound-${(await sha256(`${input.creatorId}:${draft.connection_id}:${providerMessageId}`)).slice(0, 40)}`;
     await env.DB.batch([
       env.DB.prepare("UPDATE instagram_reply_drafts SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(providerMessageId, draft.id, input.creatorId),
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
@@ -1033,7 +1044,11 @@ async function sendInstagramReply(request: Request, env: Env) {
     const definitiveRejection = isDefinitiveInstagramRejection(message);
     const uncertain = sendAttempted && !definitiveRejection;
     const status = uncertain ? "uncertain" : "failed";
-    const safeMessage = `${uncertain ? "Outcome uncertain; check Instagram before sending again. " : ""}${message}`.slice(0, 2000);
+    // Provider errors can echo the signed media URL; never persist that URL in receipts.
+    const safeMessage = uncertain ? "Outcome uncertain; check Instagram before sending again."
+      : accountRestricted ? "Instagram messaging is restricted for this account. Do not retry until independently authorised."
+      : definitiveRejection ? "Instagram rejected this reply. Check the account and selected media before trying again."
+      : "The selected media is unavailable or no longer approved. Nothing was sent; choose an eligible asset again.";
     await env.DB.batch([
       env.DB.prepare("UPDATE instagram_reply_drafts SET status=?,error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(status, safeMessage, draft.id, input.creatorId),
       ...(definitiveRejection ? [env.DB.prepare(`UPDATE messaging_connections SET status=CASE WHEN ? THEN 'restricted' ELSE status END,
