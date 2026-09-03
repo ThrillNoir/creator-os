@@ -62,6 +62,8 @@ test("unsupported provider media stays visibly out of scope", async () => {
   assert.doesNotMatch(telegram, /TELEGRAM_SEND_(?:PHOTO|VIDEO)/);
   assert.match(migration, /telegram_media_handoffs/);
   assert.match(fansly, /sendFanslyReplyAction/);
+  assert.match(fansly, /Telegram photo\/video replies are not available yet/);
+  assert.match(fansly, /Fansly photo\/video replies are not available yet/);
   assert.doesNotMatch(fansly, /FANSLY_SEND_(?:IMAGE|VIDEO)/);
 });
 

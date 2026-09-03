@@ -73,6 +73,7 @@ export function MessageQuickReply({ platform, threadId, participant, assets = []
     <input type="hidden" name="inline" value="1" />
     <input type="hidden" name="clientRequestId" defaultValue="" />
     {platform === "instagram" && <MessageAttachmentPicker assets={assets} value={assetId} onChange={setAssetId} disabled={sending} />}
+    {platform !== "instagram" && <small>Photo/video replies are not available for {platform === "fansly" ? "Fansly" : "Telegram"} yet.</small>}
     <label htmlFor={inputId}>Reply</label>
     <textarea id={inputId} name={config.field} value={body} required={!assetId} disabled={sending} maxLength={config.maximum} placeholder={assetId ? "Photo/video sends on its own; remove the attachment to write a reply." : `Write a reply to ${participant}…`} onChange={(event) => setBody(event.currentTarget.value)} onKeyDown={(event) => {
       if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;

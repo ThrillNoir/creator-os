@@ -1228,6 +1228,7 @@ export async function markCollectedThreadReadAction(formData: FormData) {
 }
 
 export async function sendTelegramCreatorMessageAction(formData: FormData) {
+  if (String(formData.get("assetId") ?? "").trim()) throw new Error("Telegram photo/video replies are not available yet. Nothing was sent.");
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const message = String(formData.get("message") ?? "").trim();
@@ -1262,6 +1263,7 @@ export async function sendTelegramCreatorMessageAction(formData: FormData) {
 }
 
 export async function sendFanslyReplyAction(formData: FormData) {
+  if (String(formData.get("assetId") ?? "").trim()) throw new Error("Fansly photo/video replies are not available yet. Nothing was queued.");
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
   const threadId = String(formData.get("threadId") ?? "").trim();
