@@ -75,16 +75,16 @@ test("connection setup is creator scoped and keeps native sign-in separate", asy
     source("src/lib/fansly-pairing.ts"), source("src/app/library/page.tsx"),
   ]);
   assert.match(shell, /Accounts & connections/);
-  assert.match(page, /Official Instagram connection/);
-  assert.match(page, /Profiles received during onboarding/);
-  assert.match(page, /Configure \$\{account\.platform\} API/);
+  assert.match(page, /Instagram connections/);
+  assert.match(page, /Your saved accounts/);
+  assert.match(page, /Manage connection/);
   assert.match(page, /No THOT OS connector available yet/);
   assert.match(page, /Pair bridge and open vault/);
   assert.doesNotMatch(page, /name="password"/);
   assert.match(actions, /addFanslyAccountAction/);
   assert.match(actions, /requireCreatorContext\("manage_identity"\)/);
   assert.match(pairing, /Confirm the signed-in Fansly identity before pairing the bridge/);
-  assert.match(library, /R2 library/);
+  assert.match(library, /Private creator library/);
   assert.doesNotMatch([page, actions, library].join("\n"), /dropbox/i);
 });
 
@@ -151,7 +151,7 @@ test("Operations data and Reddit scheduling stay creator scoped and audited", as
   const [operations, page, actions, migration, communityEvents] = await Promise.all([source("src/lib/operations.ts"), source("src/app/operations/page.tsx"), source("src/app/actions.ts"), source("../thot-os-app/migrations/0003_operations_foundation.sql"), source("../thot-os-app/migrations/0017_reddit_community_events.sql")]);
   assert.match(operations, /creator_id=\?/);
   assert.match(operations, /operational_accounts WHERE creator_id=\? AND platform=\? AND is_active=1/);
-  assert.match(page, /account\.platform === "instagram" \|\| account\.platform === "reddit" \|\| account\.platform === "fansly"/);
+  assert.match(page, /supportsOperations\(account\.platform\)/);
   assert.doesNotMatch(operations, /creator_id=['"]adelaide['"]/i);
   assert.match(actions, /createRedditPostAction/);
   assert.match(actions, /saveRedditCommunityAction/);

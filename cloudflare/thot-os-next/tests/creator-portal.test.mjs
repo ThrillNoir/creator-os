@@ -64,13 +64,14 @@ test("Accounts exposes creator-scoped Instagram OAuth state without treating con
     source("../src/app/accounts/page.tsx"),
     source("../src/app/actions.ts"),
   ]);
-  assert.match(accounts, /Official Instagram connection/);
+  assert.match(accounts, /Instagram connections/);
   assert.match(accounts, /WHERE oa\.creator_id=\? AND oa\.platform='instagram'/);
   assert.match(accounts, /provider_connections pc ON pc\.creator_id=oa\.creator_id AND pc\.service='instagram'/);
   assert.match(accounts, /startInstagramReconnectAction/);
   assert.match(accounts, /Connect Instagram/);
-  assert.match(accounts, /does not create, schedule or publish content/i);
-  assert.match(accounts, /Open read-only analytics/);
+  assert.match(accounts, /Connecting does not publish or send anything/i);
+  assert.match(accounts, /View analytics/);
+  assert.match(accounts, /section=analytics&accountId=\$\{encodeURIComponent\(account.id\)\}/);
   assert.match(actions, /startInstagramReconnectAction[\s\S]*requireCreatorContext\("mutate"\)/);
   assert.match(actions, /instagram\.connection\.manage/);
 });

@@ -22,6 +22,7 @@ export interface OperationalAccount {
   publishing_authority: "confirmed" | "blocked" | "device_only" | "not_configured";
   warning_level: "none" | "attention" | "blocked";
   warning_message: string;
+  messaging_attention?: number;
   external_identity_confirmed_at: string | null;
   last_checked_at: string | null;
   last_success_at: string | null;
@@ -161,7 +162,7 @@ type PostCount = { platform: OperationPlatform; upcoming: number; past: number }
 export async function getOperationsOverview(creatorId: string) {
   const { DB } = cloudflareEnv();
   const [accountResult, eligibleResult, countResult, activityResult] = await Promise.all([
-    DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND is_active=1 ORDER BY platform,label").bind(creatorId).all<OperationalAccount>(),
+    DB.prepare(`SELECT oa.*,EXISTS(SELECT 1 FROM messaging_connections mc WHERE mc.creator_id=oa.creator_id AND mc.account_id=oa.id AND (mc.last_sync_error IS NOT NULL OR (mc.last_error IS NOT NULL AND mc.last_error<>\'Validate a conversation before the first Instagram reply.\'))) AS messaging_attention FROM operational_accounts oa WHERE oa.creator_id=? AND oa.is_active=1 ORDER BY oa.platform,oa.label`).bind(creatorId).all<OperationalAccount>(),
     DB.prepare(`SELECT destination,COUNT(*) AS assets FROM asset_destinations d JOIN assets a ON a.id=d.asset_id WHERE d.creator_id=? AND a.source_available=1 GROUP BY destination`).bind(creatorId).all<EligibleCount>(),
     DB.prepare(`SELECT platform,SUM(CASE WHEN status IN ('draft','scheduled','publishing') THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN status IN ('published','failed') THEN 1 ELSE 0 END) AS past FROM social_posts WHERE creator_id=? GROUP BY platform`).bind(creatorId).all<PostCount>(),
     DB.prepare(`SELECT p.id,p.account_id,p.asset_id,p.community_id,p.reddit_flair_id,p.reddit_flair_text,p.platform,p.title,p.caption,p.content_rating,p.status,p.scheduled_at,p.published_at,p.external_post_id,p.external_url,p.error,p.failure_reviewed_at,p.failure_reviewed_by,p.provider_container_id,p.provider_container_type,p.created_at,a.basename,c.name AS community_name FROM social_posts p LEFT JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id LEFT JOIN reddit_communities c ON c.id=p.community_id AND c.creator_id=p.creator_id WHERE p.creator_id=? ORDER BY COALESCE(p.published_at,p.scheduled_at,p.created_at) DESC LIMIT 8`).bind(creatorId).all<SocialPost>(),
@@ -176,7 +177,7 @@ export async function getOperationsOverview(creatorId: string) {
     upcoming: postCounts.get(platform.id)?.upcoming ?? 0,
     past: postCounts.get(platform.id)?.past ?? 0,
   }));
-  return { platforms, accounts: accountResult.results, activity: activityResult.results, warnings: accountResult.results.filter((account) => account.warning_level !== "none") };
+  return { platforms, accounts: accountResult.results, activity: activityResult.results, warnings: accountResult.results.filter((account) => account.warning_level !== "none" || Boolean(account.messaging_attention)) };
 }
 
 export async function getPlatformOperations(creatorId: string, platform: OperationPlatform, accountId?: string) {

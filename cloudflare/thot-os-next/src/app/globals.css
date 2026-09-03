@@ -513,11 +513,11 @@ button, input, textarea, select { font: inherit; }
 .compact-action { min-height: 30px; padding: 0 10px; border: 1px solid #654f9e; border-radius: 7px; background: #251c31; color: var(--purple2); font-size: 10px; font-weight: 750; cursor: pointer; }
 .conversation-heading-actions { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 11px; }
 .conversation-account { overflow-wrap: anywhere; }
-.thread-list > a { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; margin: 0 -8px; padding: 11px 8px; border-top: 1px solid var(--line); border-radius: 8px; }
-.thread-list > a:hover,.thread-list > a.active { background: #251c31; }
-.thread-list > a strong,.thread-list > a small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.thread-list > a small { margin-top: 4px; color: var(--muted); font-size: 10px; }
-.thread-list > a > b { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: var(--purple); font-size: 10px; }
+.thread-list-scroll > a { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; margin: 0 -8px; padding: 11px 8px; border-top: 1px solid var(--line); border-radius: 8px; }
+.thread-list-scroll > a:hover,.thread-list-scroll > a.active { background: #251c31; }
+.thread-list-scroll > a strong,.thread-list-scroll > a small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-list-scroll > a small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.thread-list-scroll > a > b { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: var(--purple); font-size: 10px; }
 .conversation article { max-width: 88%; margin: 12px 0; padding: 12px; border-radius: 11px; background: #221b2b; }
 .conversation article.outbound { margin-left: auto; background: #302450; }
 .conversation article div { display: flex; justify-content: space-between; gap: 12px; }
@@ -806,3 +806,36 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .public-profile-history article { grid-template-columns: auto minmax(0,1fr); }
   .public-profile-history > article > span:last-child { grid-column: 2; }
 }
+
+/* Keep transcript and conversation navigation bounded; the composer is separate. */
+.thread-list, .conversation { display: flex; flex-direction: column; height: clamp(520px, 78dvh, 900px); min-height: 0; }
+.thread-list > .section-heading, .conversation > .section-heading { flex: 0 0 auto; }
+.thread-list-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px; }
+.message-history { position: relative; flex: 1 1 auto; min-height: 140px; }
+.message-history-viewport { height: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 8px; }
+.message-jump-latest { position: absolute; bottom: 8px; right: 16px; z-index: 1; }
+.conversation-composer { flex: 0 1 auto; max-height: 50%; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 12px; }
+.conversation article { overflow-wrap: anywhere; }
+.conversation article p { word-break: normal; }
+.conversation .reply-compose textarea { max-height: 160px; }
+.onboarding-section > summary { cursor: pointer; list-style: none; }
+.onboarding-section > summary::-webkit-details-marker { display: none; }
+.onboarding-section > summary:focus-visible { outline: 2px solid var(--purple2); outline-offset: 5px; }
+.onboarding-section-toggle { display: block; margin-top: 10px; font-size: 12px; font-weight: 750; color: var(--muted); }
+.onboarding-section[open] .when-closed, .onboarding-section:not([open]) .when-open { display: none; }
+.onboarding-section-body { margin-top: 18px; }
+.onboarding-form-fields { display: contents; }
+.onboarding-section-body > form + form { margin-top: 16px; }
+.library-upload > summary { cursor: pointer; font-weight: 800; }
+.library-upload > summary:focus-visible, .thread-list-scroll:focus-visible, .message-history-viewport:focus-visible { outline: 2px solid var(--purple2); outline-offset: 2px; }
+.detail-preview video { width: 100%; max-height: 65dvh; }
+@media (max-width: 760px) {
+  .thread-list { height: auto; max-height: 360px; }
+  .thread-list-scroll { max-height: 220px; }
+  .conversation { height: max(580px, 82dvh); }
+}
+
+.account-connection { padding: 20px 0; border-top: 1px solid var(--line); }
+.account-connection-details, .credential-more { margin-top: 12px; }
+.account-connection-details > summary, .credential-more > summary, .account-lifecycle > summary { cursor: pointer; font-weight: 750; }
+.account-connection-details > .connection-row-actions, .credential-more > .connection-row-actions { margin-top: 12px; }

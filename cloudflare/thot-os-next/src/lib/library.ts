@@ -151,6 +151,7 @@ export async function getLibraryPageData(creatorId: string, filters: LibraryFilt
 }
 
 export async function getAssetByObjectId(creatorId: string, objectId: string) {
+  if (!/^(?:[a-f0-9]{64}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.test(objectId)) return null;
   const revisionedPrefix = `creators/${creatorId}/assets/${objectId}/previews/`;
   return cloudflareEnv().DB.prepare(`
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
@@ -162,8 +163,8 @@ export async function getAssetByObjectId(creatorId: string, objectId: string) {
     FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
       JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
-    WHERE a.creator_id=? AND substr(a.preview_r2_key,1,?)=? AND substr(a.preview_r2_key,-4)='.jpg' AND a.source_available=1
-  `).bind(creatorId, revisionedPrefix.length, revisionedPrefix).first<AssetRow>();
+    WHERE a.creator_id=? AND (a.id=? OR (substr(a.preview_r2_key,1,?)=? AND substr(a.preview_r2_key,-4)='.jpg')) AND a.source_available=1
+  `).bind(creatorId, objectId, revisionedPrefix.length, revisionedPrefix).first<AssetRow>();
 }
 
 export function objectIdFor(asset: AssetRow) {

@@ -167,7 +167,8 @@ export async function retireOperationalAccountAction(form: FormData) {
   ]);
   await audit(creatorId, humanAuditActor(identity), "operational_account_retired", accountId, { label: account.label, reversible: true });
   revalidate();
-  redirect("/onboarding?saved=account_retired");
+  revalidatePath("/accounts"); revalidatePath("/operations");
+  redirect("/accounts?saved=account_retired");
 }
 
 export async function saveChromeAccessAction(form: FormData) {

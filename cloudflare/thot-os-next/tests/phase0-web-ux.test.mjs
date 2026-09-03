@@ -23,6 +23,6 @@ test("retired accounts cannot become the presented publishing identity", async (
     source("../src/lib/operations.ts"),
   ]);
   assert.match(accounts, /platform='fansly' AND oa\.is_active=1/);
-  assert.match(accounts, /find\(\(account\) => account\.is_active\)/);
+  assert.match(accounts, /account\.is_active \? <>[\s\S]*startInstagramReconnectAction[\s\S]*: <Link href="\/onboarding">Review account/);
   assert.match(operations, /platform='fansly' AND is_active=1/);
 });

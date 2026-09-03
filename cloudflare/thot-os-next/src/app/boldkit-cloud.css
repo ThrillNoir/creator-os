@@ -229,8 +229,8 @@ body {
 .os-cloud-shell .platform-tabs a.active,
 .os-cloud-shell .message-streams a:hover,
 .os-cloud-shell .message-streams a.active,
-.os-cloud-shell .thread-list > a:hover,
-.os-cloud-shell .thread-list > a.active,
+.os-cloud-shell .thread-list-scroll > a:hover,
+.os-cloud-shell .thread-list-scroll > a.active,
 .os-cloud-shell .reply-validation,
 .os-cloud-shell .conversation article.outbound {
   border-color: var(--foreground);

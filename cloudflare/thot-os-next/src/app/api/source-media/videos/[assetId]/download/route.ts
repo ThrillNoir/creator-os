@@ -28,7 +28,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ asse
   const headers = noStoreHeaders({
     "content-type": record.verified_mime_type,
     "content-length": String(length),
-    "content-disposition": "attachment",
+    "content-disposition": new URL(request.url).searchParams.get("preview") === "1" ? "inline" : "attachment",
     "accept-ranges": "bytes",
   });
   return new Response(object.body, { status: range ? 206 : 200, headers: range ? { ...headers, "content-range": `bytes ${range.offset}-${range.offset + range.length - 1}/${record.byte_count}` } : headers });

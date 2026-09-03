@@ -22,7 +22,7 @@ export default async function AccessPage() {
     DB.prepare(`SELECT id FROM vault_pin_verifiers WHERE lower(identity_email)=lower(?) AND ((pin_scope='administrator' AND creator_id IS NULL AND ?='agency_admin') OR (pin_scope='creator' AND creator_id=? AND ? IN ('agency_admin','creator'))) LIMIT 1`).bind(context.email, context.creator.role, context.creator.creator_id, context.creator.role).first<{ id: string }>(),
   ]);
   return <AppShell active="Access">
-    <PageHeader eyebrow="STEP-UP PROTECTED" title="Access" subtitle="Passwords are encrypted at rest and are only revealed after a short, creator-scoped PIN confirmation." />
+    <PageHeader eyebrow="PIN PROTECTED" title="Saved logins" subtitle="Passwords are encrypted at rest and are only revealed after a short, creator-scoped PIN confirmation." />
     <AccessControls credentials={credentials.results} accounts={accounts.results} canAdmin={context.creator.role === "agency_admin"} hasPin={Boolean(pin)} />
   </AppShell>;
 }

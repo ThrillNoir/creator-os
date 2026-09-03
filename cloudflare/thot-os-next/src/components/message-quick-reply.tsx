@@ -1,11 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sendFanslyReplyAction, sendInstagramQuickReplyAction, sendTelegramCreatorMessageAction } from "@/app/actions";
 import { MessageAttachmentPicker, type MessageReplyAsset } from "@/components/message-attachment-picker";
 
 type QuickReplyPlatform = "instagram" | "telegram" | "fansly";
+
+export function confirmMessageNavigation() {
+  return window.dispatchEvent(new Event("message:navigate", { cancelable: true }));
+}
 
 const platformConfig = {
   instagram: { action: sendInstagramQuickReplyAction, field: "body", maximum: 1000 },
@@ -24,6 +28,25 @@ export function MessageQuickReply({ platform, threadId, participant, assets = []
   const router = useRouter();
   const config = platformConfig[platform];
   const inputId = `${platform}-quick-reply-body`;
+  const dirty = Boolean(body.trim() || assetId || sending);
+  useEffect(() => {
+    if (!dirty) return;
+    const confirm = (event: Event) => {
+      if (!window.confirm(sending ? "A reply is still sending. Leave this conversation and check its receipt later?" : "Discard this unsent reply?")) event.preventDefault();
+    };
+    const click = (event: MouseEvent) => {
+      const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(link instanceof HTMLAnchorElement) || link.target === "_blank" || link.hasAttribute("download") || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
+      const target = new URL(link.href);
+      if (target.pathname === location.pathname && target.search === location.search) return;
+      if (!confirmMessageNavigation()) { event.preventDefault(); event.stopPropagation(); }
+    };
+    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("message:navigate", confirm);
+    document.addEventListener("click", click, true);
+    window.addEventListener("beforeunload", unload);
+    return () => { window.removeEventListener("message:navigate", confirm); document.removeEventListener("click", click, true); window.removeEventListener("beforeunload", unload); };
+  }, [dirty, sending]);
   const send = async (form: HTMLFormElement) => {
     if (platform === "instagram" && assetId && body.trim()) {
       setError("Send this photo or video on its own. Remove the text or attachment first.");
@@ -78,9 +101,9 @@ export function MessageQuickReply({ platform, threadId, participant, assets = []
     <textarea id={inputId} name={config.field} value={body} required={!assetId} disabled={sending} maxLength={config.maximum} placeholder={assetId ? "Photo/video sends on its own; remove the attachment to write a reply." : `Write a reply to ${participant}…`} onChange={(event) => setBody(event.currentTarget.value)} onKeyDown={(event) => {
       if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
       event.preventDefault();
-      if (!sending && body.trim()) event.currentTarget.form?.requestSubmit();
+      if (!sending && (body.trim() || assetId)) event.currentTarget.form?.requestSubmit();
     }} />
     {error && <div className="reply-error quick-reply-error" role="alert">{error}</div>}
-    <div><small aria-live="polite">{sending ? platform === "fansly" ? "Queuing…" : "Sending…" : "Enter to send · Shift+Enter for a new line · receipt recorded"}</small><button className="primary" type="submit" disabled={sending}>{sending ? platform === "fansly" ? "Queuing…" : "Sending…" : "Send"}</button></div>
+    <div><small aria-live="polite">{sending ? platform === "fansly" ? "Queuing…" : "Sending…" : "Enter to send · Shift+Enter for a new line"}</small><button className="primary" type="submit" disabled={sending}>{sending ? platform === "fansly" ? "Queuing…" : "Sending…" : assetId ? assets.find((asset) => asset.id === assetId)?.verifiedMimeType.startsWith("video/") ? "Send video" : "Send photo" : "Send"}</button></div>
   </form>;
 }

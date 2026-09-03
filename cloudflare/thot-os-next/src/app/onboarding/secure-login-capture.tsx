@@ -73,6 +73,7 @@ export function SecureLoginCapture({ accounts, hasPin, createAccount, saveLoginM
       }
       if (method === "password" && draft.password) await request({ action: "create", accountId: selected, group: paidPlatforms.has(draft.platform) ? "paid" : "social", label: draft.username, username: draft.username, loginEmail: draft.loginEmail, password: draft.password });
 
+      editor.current?.dispatchEvent(new Event("onboarding:saved", { bubbles: true }));
       setDraft((current) => ({ ...current, password: "" })); setPin(""); setEditing(false);
       setMessage(method === "password" && draft.password ? "Login details saved securely." : "Account details saved securely."); router.refresh();
     } catch (error) { setMessage(error instanceof Error ? error.message : "Login details could not be saved."); }
