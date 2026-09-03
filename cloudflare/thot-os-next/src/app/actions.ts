@@ -909,39 +909,58 @@ export async function sendInstagramQuickReplyAction(formData: FormData) {
   const creatorId = identity.creator.creator_id;
   const threadId = String(formData.get("threadId") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
+  const requestedAssetId = String(formData.get("assetId") ?? "").trim();
+  const assetId = requestedAssetId || null;
   const requestId = String(formData.get("clientRequestId") ?? "").trim().toLowerCase();
   if (!threadId) throw new Error("Choose an Instagram conversation.");
-  if (!body || body.length > 1000) throw new Error("Instagram replies must contain between 1 and 1,000 characters.");
+  if ((!body && !assetId) || body.length > 1000) throw new Error("Write a reply or choose one approved photo/video asset.");
+  if (body && assetId) throw new Error("Instagram media replies cannot silently split text and media into separate sends.");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestId)) throw new Error("Refresh Messages before sending this Instagram reply.");
 
   const env = cloudflareEnv();
   const thread = await creatorPrepare(env.DB, creatorId, `SELECT t.id,t.connection_id,
       (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=t.creator_id AND m.thread_id=t.id AND m.direction='inbound') AS last_inbound_at,
-      c.status,c.write_enabled,c.outbound_validated,c.emergency_paused
+      c.status,c.mode,c.write_enabled,c.outbound_validated,c.emergency_paused
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
     WHERE t.id=? AND t.creator_id=@creator AND c.platform='instagram'`).bind(threadId)
-    .first<{ id: string; connection_id: string; last_inbound_at: string | null; status: string; write_enabled: number; outbound_validated: number; emergency_paused: number }>();
+    .first<{ id: string; connection_id: string; last_inbound_at: string | null; status: string; mode: string; write_enabled: number; outbound_validated: number; emergency_paused: number }>();
   if (!thread) throw new Error("That Instagram conversation is outside this creator workspace.");
-  if (thread.status !== "connected" || !thread.write_enabled || !thread.outbound_validated || thread.emergency_paused) throw new Error("Instagram sending is not currently authorised.");
+  if (thread.status !== "connected" || !thread.write_enabled || thread.emergency_paused || !["assist", "operate"].includes(thread.mode)) throw new Error("Instagram sending is not currently authorised.");
   const normalizedInbound = thread.last_inbound_at?.replace(" ", "T") ?? "";
   const lastInboundAt = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalizedInbound) ? normalizedInbound : `${normalizedInbound}Z`).getTime();
   if (!Number.isFinite(lastInboundAt) || Date.now() - lastInboundAt > 24 * 60 * 60_000) throw new Error("Instagram’s active reply window is closed. Ask the person to send a new message, refresh, then reply.");
 
+  const asset = assetId ? await creatorPrepare(env.DB, creatorId, `SELECT a.id,c.safety,o.sha256,o.byte_count,o.verified_mime_type,o.r2_version,o.r2_etag
+    FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id AND d.destination='instagram'
+    JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id
+    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    JOIN asset_storage_objects o ON o.id=ma.canonical_storage_object_id AND o.asset_id=a.id AND o.creator_id=a.creator_id
+    WHERE a.id=? AND a.creator_id=@creator AND a.source_available=1 AND c.safety='sfw' AND ma.state IN ('canonical_verified','preview_ready')
+      AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified'
+      AND o.object_key=a.media_r2_key AND o.byte_count=a.bytes
+      AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL LIMIT 1`).bind(assetId)
+    .first<{ id: string; safety: string; sha256: string; byte_count: number; verified_mime_type: string; r2_version: string; r2_etag: string }>() : null;
+  if (assetId && !asset) throw new Error("Choose one creator-owned, SFW Instagram-approved asset whose private R2 source is verified.");
+  if (asset && !["image/jpeg", "image/png", "video/mp4"].includes(asset.verified_mime_type)) throw new Error("Instagram replies support approved JPEG, PNG, or MP4 assets only.");
+  if (asset && asset.byte_count > (asset.verified_mime_type === "video/mp4" ? 25 * 1024 * 1024 : 8 * 1024 * 1024)) throw new Error("Choose a smaller Instagram photo or video.");
+
   const actor = identity.email;
   let draftId = `instagram-send-${requestId}`;
   const inserted = await creatorPrepare(env.DB, creatorId, `INSERT OR IGNORE INTO instagram_reply_drafts
-    (id,creator_id,connection_id,thread_id,body,status,requested_by)
-    VALUES (?,@creator,?,?,?,'draft',?)`).bind(draftId, thread.connection_id, thread.id, body, actor).run();
+    (id,creator_id,connection_id,thread_id,body,status,requested_by,asset_id,asset_sha256,asset_bytes,asset_mime_type,asset_r2_version,asset_r2_etag)
+    VALUES (?,@creator,?,?,?,'draft',?,?,?,?,?,?,?)`).bind(draftId, thread.connection_id, thread.id, body, actor,
+      asset?.id ?? null, asset?.sha256 ?? null, asset?.byte_count ?? null, asset?.verified_mime_type ?? null, asset?.r2_version ?? null, asset?.r2_etag ?? null).run();
   if (inserted.meta?.changes) {
     await creatorPrepare(env.DB, creatorId, `INSERT OR IGNORE INTO messaging_audit_events
       (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail)
       VALUES (?,@creator,?,?,'instagram_quick_send_requested',?,?,?)`)
-      .bind(`instagram-send-audit-${requestId}`, thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, characters: body.length, enterToSend: true })).run();
+      .bind(`instagram-send-audit-${requestId}`, thread.connection_id, thread.id, actor, identity.creator.role, JSON.stringify({ draftId, characters: body.length, assetId, enterToSend: true })).run();
   } else {
-    const existing = await creatorPrepare(env.DB, creatorId, `SELECT id,status FROM instagram_reply_drafts
-      WHERE creator_id=@creator AND (id=? OR (thread_id=? AND body=? AND status IN ('draft','approved','sending')))
-      ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`).bind(draftId, thread.id, body, draftId).first<{ id: string; status: string }>();
+    const existing = await creatorPrepare(env.DB, creatorId, `SELECT id,status,body,asset_id,asset_sha256,asset_bytes,asset_mime_type,asset_r2_version,asset_r2_etag FROM instagram_reply_drafts
+      WHERE creator_id=@creator AND (id=? OR (thread_id=? AND body=? AND COALESCE(asset_id,'')=COALESCE(?, '') AND status IN ('draft','approved','sending')))
+      ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`).bind(draftId, thread.id, body, assetId, draftId).first<{ id: string; status: string; body: string; asset_id: string | null; asset_sha256: string | null; asset_bytes: number | null; asset_mime_type: string | null; asset_r2_version: string | null; asset_r2_etag: string | null }>();
     if (!existing) throw new Error("That Instagram reply could not be queued safely. Refresh Messages and try again.");
+    if (existing.body !== body || (existing.asset_id ?? null) !== assetId || existing.asset_sha256 !== (asset?.sha256 ?? null) || existing.asset_bytes !== (asset?.byte_count ?? null) || existing.asset_mime_type !== (asset?.verified_mime_type ?? null) || existing.asset_r2_version !== (asset?.r2_version ?? null) || existing.asset_r2_etag !== (asset?.r2_etag ?? null)) throw new Error("This request ID is already used for a different Instagram reply. Refresh Messages and try again.");
     draftId = existing.id;
     if (existing.status === "sent") {
       if (inlineMessageRequest(formData)) return { ok: true, saved: "instagram_sent" } satisfies InlineMessageResult;

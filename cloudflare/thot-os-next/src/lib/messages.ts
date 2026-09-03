@@ -23,7 +23,7 @@ export interface MessageRow {
 
 export interface MessageAttachment {
   id: string; message_id: string; kind: "shared_post" | "story" | "image" | "video" | "audio" | "file";
-  external_url: string | null; mime_type: string | null; status: "ready" | "unavailable" | "failed"; error: string | null;
+  asset_id: string | null; external_url: string | null; mime_type: string | null; status: "ready" | "unavailable" | "failed"; error: string | null;
 }
 
 export interface TelegramLogRow {
@@ -97,7 +97,7 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
               FROM premium_message_drafts d JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id
               WHERE d.creator_id=? AND d.thread_id=? AND d.status NOT IN ('draft','cancelled') ORDER BY d.created_at DESC LIMIT 20`).bind(creatorId, selectedThread.id).all<PremiumReplyDraft>()
           : Promise.resolve({ results: [], success: true } as D1Result<PremiumReplyDraft>),
-        DB.prepare(`SELECT a.id,a.message_id,a.kind,a.external_url,a.mime_type,a.status,a.error
+        DB.prepare(`SELECT a.id,a.message_id,a.kind,a.asset_id,a.external_url,a.mime_type,a.status,a.error
           FROM message_attachments a JOIN messages m ON m.id=a.message_id AND m.creator_id=a.creator_id
           WHERE a.creator_id=? AND m.thread_id=? ORDER BY a.created_at,a.id`).bind(creatorId, selectedThread.id).all<MessageAttachment>(),
       ])

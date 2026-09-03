@@ -30,6 +30,8 @@ type InstagramReplyDraft = {
   external_thread_id: string; participant_external_id: string; participant_name: string; participant_handle: string;
   last_inbound_at: string | null;
   connection_status: string; mode: string; write_enabled: number; outbound_validated: number; emergency_paused: number;
+  asset_id: string | null; asset_sha256: string | null; asset_bytes: number | null; asset_mime_type: string | null;
+  asset_r2_version: string | null; asset_r2_etag: string | null;
 };
 type InstagramMediaInsights = {
   likes: number | null;
@@ -58,6 +60,9 @@ const R2_BUCKET = "thot-os-library-media-staging";
 const MESSAGE_SYNC_INTERVAL_SECONDS = 5 * 60;
 const MESSAGE_SYNC_LEASE_SECONDS = 15 * 60;
 const MESSAGE_SYNC_REQUEST_TIMEOUT_MS = 120_000;
+// Conservative THOT OS caps; these are not a claim about Meta's undocumented/provider-version limits.
+const MAX_INSTAGRAM_REPLY_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_INSTAGRAM_REPLY_VIDEO_BYTES = 25 * 1024 * 1024;
 type CanonicalR2Source = { object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string };
 
 function record(value: unknown): UnknownRecord | undefined {
@@ -91,14 +96,19 @@ async function executeTool<T>(env: Env, slug: string, connectedAccountId: string
   return response.data;
 }
 
-async function proxyInstagram<T>(env: Env, connectedAccountId: string, endpoint: string, method: "GET" | "POST", signal?: AbortSignal): Promise<T> {
+async function proxyInstagram<T>(env: Env, connectedAccountId: string, endpoint: string, method: "GET" | "POST", signal?: AbortSignal, body?: UnknownRecord): Promise<T> {
   const response = await jsonRequest<{ status?: number; data?: T }>(
-    `${COMPOSIO_V3}/tools/execute/proxy`,
+    `${COMPOSIO_V31}/tools/execute/proxy`,
     env.COMPOSIO_API_KEY,
-    { method: "POST", body: JSON.stringify({ connected_account_id: connectedAccountId, endpoint, method }), signal },
+    { method: "POST", body: JSON.stringify({ connected_account_id: connectedAccountId, endpoint, method, ...(body ? { body } : {}) }), signal },
   );
   if (!response.status || response.status < 200 || response.status >= 300) {
-    throw new Error(`Instagram connection check failed (${response.status ?? "unknown"}).`);
+    const detail = record(response.data);
+    const providerError = record(detail?.error) ?? detail;
+    const message = typeof providerError?.message === "string" ? providerError.message : "request rejected";
+    const code = providerError?.code !== undefined ? ` code ${String(providerError.code)}` : "";
+    const subcode = providerError?.error_subcode !== undefined ? ` subcode ${String(providerError.error_subcode)}` : "";
+    throw new Error(`Instagram request failed (${response.status ?? "unknown"})${code}${subcode}: ${message}`);
   }
   if (response.data === undefined) throw new Error("Instagram connection check returned no data.");
   return response.data;
@@ -366,6 +376,33 @@ async function approvedInstagramMedia(env: Env, post: DuePost) {
   const client = new AwsClient({ accessKeyId: env.R2_VIDEO_UPLOAD_ACCESS_KEY_ID.trim(), secretAccessKey: env.R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY.trim(), service: "s3", region: "auto" });
   const signed = await client.sign(new Request(url, { method: "GET" }), { aws: { signQuery: true } });
   return { url: signed.url, video: format[1] };
+}
+
+async function approvedInstagramReplyMedia(env: Env, draft: InstagramReplyDraft) {
+  if (!draft.asset_id) return null;
+  const source = await env.DB.prepare(`SELECT o.object_key,o.byte_count,o.verified_mime_type,o.sha256,o.r2_version,o.r2_etag
+    FROM asset_storage_objects o
+    JOIN assets a ON a.id=o.asset_id AND a.creator_id=o.creator_id
+    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+    WHERE o.creator_id=? AND o.asset_id=? AND o.provider='r2' AND o.storage_role='canonical_original'
+      AND o.bucket_role='library_media' AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
+      AND o.byte_count=a.bytes AND a.source_available=1 AND ma.state IN ('canonical_verified','preview_ready')
+      AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL
+    ORDER BY o.verified_at DESC LIMIT 1`).bind(draft.creator_id, draft.asset_id)
+    .first<CanonicalR2Source>();
+  if (!source || source.sha256 !== draft.asset_sha256 || source.byte_count !== draft.asset_bytes || source.verified_mime_type !== draft.asset_mime_type) throw new Error("instagram_reply_media_changed");
+  const maxBytes = source.verified_mime_type.startsWith("video/") ? MAX_INSTAGRAM_REPLY_VIDEO_BYTES : MAX_INSTAGRAM_REPLY_IMAGE_BYTES;
+  if (source.byte_count > maxBytes) throw new Error("instagram_reply_media_too_large");
+  const type = source.verified_mime_type === "video/mp4" ? "video" : source.verified_mime_type === "image/jpeg" || source.verified_mime_type === "image/png" ? "image" : null;
+  if (!type) throw new Error("instagram_reply_media_type_unsupported");
+  if (!draft.asset_r2_version || !draft.asset_r2_etag || source.r2_version !== draft.asset_r2_version || source.r2_etag !== draft.asset_r2_etag) throw new Error("instagram_reply_media_changed");
+  const object = await env.LIBRARY_MEDIA.head(source.object_key);
+  if (!object || !immutableR2IdentityMatches(source, object)) throw new Error("instagram_reply_media_integrity_failed");
+  const url = new URL(`https://3e7cfa6efb7a97825f1dc24515410c63.r2.cloudflarestorage.com/${R2_BUCKET}/${r2ObjectPath(source.object_key)}`);
+  url.searchParams.set("X-Amz-Expires", String(R2_PRESIGN_TTL_SECONDS));
+  const client = new AwsClient({ accessKeyId: env.R2_VIDEO_UPLOAD_ACCESS_KEY_ID.trim(), secretAccessKey: env.R2_VIDEO_UPLOAD_SECRET_ACCESS_KEY.trim(), service: "s3", region: "auto" });
+  const signed = await client.sign(new Request(url, { method: "GET" }), { aws: { signQuery: true } });
+  return { url: signed.url, type, mimeType: source.verified_mime_type };
 }
 
 async function currentInstagramConnection(env: Env, creatorId: string, accountId?: string) {
@@ -919,6 +956,7 @@ async function sendInstagramReply(request: Request, env: Env) {
   const input = await request.json<{ draftId?: string; creatorId?: string }>();
   if (!input.draftId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
   const draft = await env.DB.prepare(`SELECT d.id,d.creator_id,d.connection_id,d.thread_id,d.body,d.status,d.requested_by,
+      d.asset_id,d.asset_sha256,d.asset_bytes,d.asset_mime_type,d.asset_r2_version,d.asset_r2_etag,
       t.external_thread_id,t.participant_external_id,t.participant_name,t.participant_handle,
       (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=d.creator_id AND m.thread_id=d.thread_id AND m.direction='inbound') AS last_inbound_at,
       c.account_id,c.status AS connection_status,c.mode,c.write_enabled,c.outbound_validated,c.emergency_paused
@@ -962,22 +1000,31 @@ async function sendInstagramReply(request: Request, env: Env) {
 
   let sendAttempted = false;
   try {
+    const media = await approvedInstagramReplyMedia(env, draft);
     sendAttempted = true;
-    const sent = await executeTool<unknown>(env, "INSTAGRAM_SEND_TEXT_MESSAGE", connection.connected_account_id, storedInstagramComposioUserId(connection), {
-      graph_api_version: "v25.0",
-      ig_user_id: connection.external_account_id,
-      recipient_id: recipient.id,
-      text: draft.body,
-    });
+    const sent = media
+      ? await proxyInstagram<unknown>(env, connection.connected_account_id, `/v25.0/${encodeURIComponent(connection.external_account_id)}/messages`, "POST", AbortSignal.timeout(120_000), {
+          recipient: { id: recipient.id },
+          message: { attachment: { type: media.type, payload: { url: media.url } } },
+        })
+      : await executeTool<unknown>(env, "INSTAGRAM_SEND_TEXT_MESSAGE", connection.connected_account_id, storedInstagramComposioUserId(connection), {
+          graph_api_version: "v25.0",
+          ig_user_id: connection.external_account_id,
+          recipient_id: recipient.id,
+          text: draft.body,
+        });
     const providerMessageId = responseId(sent, "Instagram message");
     const messageId = `instagram-outbound-${(await sha256(providerMessageId)).slice(0, 40)}`;
     await env.DB.batch([
       env.DB.prepare("UPDATE instagram_reply_drafts SET status='sent',provider_message_id=?,completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='sending'").bind(providerMessageId, draft.id, input.creatorId),
       env.DB.prepare(`INSERT OR IGNORE INTO messages (id,creator_id,thread_id,external_message_id,direction,sender_type,body,sent_at,delivery_status)
         VALUES (?,? ,?,?,'outbound','agency',?,CURRENT_TIMESTAMP,'sent')`).bind(messageId, input.creatorId, draft.thread_id, providerMessageId, draft.body),
+      ...(media ? [env.DB.prepare(`INSERT OR IGNORE INTO message_attachments
+        (id,creator_id,message_id,source_key,kind,asset_id,asset_sha256,asset_bytes,asset_mime_type,asset_r2_version,asset_r2_etag,mime_type,status,error,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'ready',NULL,CURRENT_TIMESTAMP)`).bind(`instagram-attachment-${(await sha256(`${draft.id}:${draft.asset_id}`)).slice(0, 40)}`, input.creatorId, messageId, `asset:${draft.asset_id}`, media.type, draft.asset_id, draft.asset_sha256, draft.asset_bytes, draft.asset_mime_type, draft.asset_r2_version, draft.asset_r2_etag, media.mimeType)] : []),
       env.DB.prepare("UPDATE message_threads SET participant_external_id=?,last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, draft.thread_id, input.creatorId),
       env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_sent', 'service:instagram-scheduler', 'service', ?)")
-        .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, JSON.stringify({ draftId: draft.id, providerMessageId })),
+        .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, JSON.stringify({ draftId: draft.id, providerMessageId, assetId: draft.asset_id, mediaType: media?.type ?? null })),
     ]);
     return Response.json({ ok: true, sent: true, providerMessageId });
   } catch (error) {
