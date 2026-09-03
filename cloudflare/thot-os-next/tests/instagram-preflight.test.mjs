@@ -65,7 +65,8 @@ test("provider send follows preflight and atomic authority/window recheck, not a
   assert.ok(send.indexOf("await prepareInstagramReplyTarget") < send.indexOf("SET status='sending'"));
   assert.ok(send.indexOf("SET status='sending'") < send.indexOf("sendAttempted = true"));
   assert.match(send, /c\.status='connected' AND c\.write_enabled=1 AND c\.mode IN \('assist','operate'\) AND c\.emergency_paused=0/);
-  assert.match(send, /unixepoch\(COALESCE\(m\.sent_at,m\.created_at\)\)>=unixepoch\('now'\)-86400/);
+  assert.match(send, /COALESCE\(m\.sent_at,m\.created_at\)=\? AND \?>=unixepoch\('now'\)-86400/);
+  assert.match(send, /\.bind\(draft\.id, input\.creatorId, draft\.last_inbound_at, Math\.floor\(lastInboundAt \/ 1000\)\)/);
   assert.doesNotMatch(send, /!draft\.outbound_validated/);
 });
 
@@ -80,15 +81,28 @@ test("atomic send claim rejects a concurrent pause, restriction, observe mode or
       INSERT INTO instagram_reply_drafts VALUES ('draft','creator','connection','thread','draft','human',NULL,NULL,NULL,NULL);
       INSERT INTO messaging_connections VALUES ('connection','creator','connected',1,'assist',0);
       INSERT INTO messages VALUES ('thread','creator','inbound',datetime('now'),datetime('now'));`);
+    const timestampParser = stripTypeScriptTypes(source.slice(source.indexOf("function d1TimestampMs("), source.indexOf("function isDefinitiveInstagramRejection(")));
+    const parse = new Function(`${timestampParser}; return d1TimestampMs;`)();
+    const claim = (timestamp = db.prepare("SELECT COALESCE(sent_at,created_at) AS stamp FROM messages").get().stamp) => db.prepare(sql).run("draft", "creator", timestamp, Math.floor(parse(timestamp) / 1000));
     for (const change of ["emergency_paused=1", "status='restricted'", "write_enabled=0", "mode='observe'", "creator_id='other'"]) {
       db.exec("UPDATE messaging_connections SET emergency_paused=0,status='connected',write_enabled=1,mode='assist',creator_id='creator'");
       db.exec(`UPDATE messaging_connections SET ${change}`);
-      assert.equal(db.prepare(sql).run("draft", "creator").changes, 0, change);
+      assert.equal(claim().changes, 0, change);
     }
     db.exec("UPDATE messaging_connections SET creator_id='creator'; UPDATE messages SET sent_at=datetime('now','-25 hours')");
-    assert.equal(db.prepare(sql).run("draft", "creator").changes, 0);
+    assert.equal(claim().changes, 0);
     db.exec("UPDATE messages SET sent_at=datetime('now')");
-    assert.equal(db.prepare(sql).run("draft", "creator").changes, 1);
-    assert.equal(db.prepare(sql).run("draft", "creator").changes, 0, "second claim cannot send twice");
+    assert.equal(claim().changes, 1);
+    assert.equal(claim().changes, 0, "second claim cannot send twice");
+    for (const suffix of ["Z", "+0000", "+00:00", "+0800", "-0430"]) {
+      const offsetMinutes = suffix === "+0800" ? 480 : suffix === "-0430" ? -270 : 0;
+      const timestamp = new Date(Date.now() + offsetMinutes * 60_000).toISOString().slice(0,19) + suffix;
+      db.exec("UPDATE instagram_reply_drafts SET status='draft'");
+      db.prepare("UPDATE messages SET sent_at=?").run(timestamp);
+      assert.equal(claim().changes, 1, suffix);
+    }
+    const captured = db.prepare("SELECT sent_at FROM messages").get().sent_at;
+    db.exec("UPDATE instagram_reply_drafts SET status='draft'; UPDATE messages SET sent_at=datetime('now','-25 hours')");
+    assert.equal(claim(captured).changes, 0, "changed inbound timestamp cannot reuse an old parsed epoch");
   } finally { db.close(); }
 });

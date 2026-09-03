@@ -998,14 +998,16 @@ async function sendInstagramReply(request: Request, env: Env) {
     return Response.json({ ok: false, sent: false, uncertain: false, error: message }, { status: 409 });
   }
   const { connection, recipient } = target;
+  // SQLite cannot parse Meta's +0000 offset. Reuse the validated JS epoch,
+  // bound to the exact inbound timestamp still present in this scoped thread.
   const claim = await env.DB.prepare(`UPDATE instagram_reply_drafts SET status='sending',approved_by=requested_by,approved_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND creator_id=? AND status='draft'
       AND EXISTS (SELECT 1 FROM messaging_connections c WHERE c.id=instagram_reply_drafts.connection_id AND c.creator_id=instagram_reply_drafts.creator_id
         AND c.status='connected' AND c.write_enabled=1 AND c.mode IN ('assist','operate') AND c.emergency_paused=0)
       AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id=instagram_reply_drafts.thread_id AND m.creator_id=instagram_reply_drafts.creator_id
-        AND m.direction='inbound' AND unixepoch(COALESCE(m.sent_at,m.created_at))>=unixepoch('now')-86400)`)
-    .bind(draft.id, input.creatorId).run();
-  if (!claim.meta.changes) return Response.json({ ok: false, error: "instagram_reply_already_claimed" }, { status: 409 });
+        AND m.direction='inbound' AND COALESCE(m.sent_at,m.created_at)=? AND ?>=unixepoch('now')-86400)`)
+    .bind(draft.id, input.creatorId, draft.last_inbound_at, Math.floor(lastInboundAt / 1000)).run();
+  if (!claim.meta.changes) return Response.json({ ok: false, error: "This reply is already in progress or its sending conditions changed. Check receipts and refresh the conversation before trying again." }, { status: 409 });
   await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_approved', ?, ?, ?)")
     .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, draft.requested_by, requestedByRole, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
 
