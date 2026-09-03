@@ -91,6 +91,15 @@ test("approved media resolves only the exact creator-owned immutable source and 
   } finally { f.db.close(); }
 });
 
+test("approved MP4 media resolves as video", async () => {
+  const f = fixture();
+  try {
+    f.db.prepare("UPDATE asset_storage_objects SET verified_mime_type='video/mp4' WHERE asset_id='asset-a'").run();
+    const result = await f.approved(f.env, { ...f.draft(), asset_mime_type: "video/mp4" });
+    assert.deepEqual(result, { url: "https://signed.example/creator-media", type: "video", mimeType: "video/mp4" });
+  } finally { f.db.close(); }
+});
+
 test("cross-creator media lookup, changed source, revoked authority, consent, and deletion fail closed", async () => {
   const cases = [
     ["cross-creator asset", /instagram_reply_media_changed/, (f) => f.draft("creator-b", "asset-a")],
@@ -99,6 +108,46 @@ test("cross-creator media lookup, changed source, revoked authority, consent, an
     ["revoked source authority", /instagram_reply_media_changed/, (f) => { f.db.prepare("UPDATE asset_media_authorities SET state='archived' WHERE asset_id='asset-a'").run(); return f.draft(); }],
     ["revoked people consent", /instagram_reply_media_changed/, (f) => { f.db.prepare("INSERT INTO asset_people VALUES ('asset-a','creator-a','person-a')").run(); f.db.prepare("INSERT INTO people VALUES ('person-a','creator-a','revoked')").run(); return f.draft(); }],
     ["deleted source media", /instagram_reply_media_changed/, (f) => { f.db.prepare("UPDATE assets SET source_available=0 WHERE id='asset-a'").run(); return f.draft(); }],
+  ];
+  for (const [label, expected, mutate] of cases) {
+    const f = fixture();
+    try { await assert.rejects(f.approved(f.env, mutate(f)), expected, label); }
+    finally { f.db.close(); }
+  }
+});
+
+test("approved media rejects limits, unsupported source types, and incomplete authority", async () => {
+  const cases = [
+    ["oversize image", /instagram_reply_media_too_large/, (f) => {
+      f.db.prepare("UPDATE assets SET bytes=? WHERE id='asset-a'").run(8 * 1024 * 1024 + 1);
+      f.db.prepare("UPDATE asset_storage_objects SET byte_count=? WHERE asset_id='asset-a'").run(8 * 1024 * 1024 + 1);
+      return { ...f.draft(), asset_bytes: 8 * 1024 * 1024 + 1 };
+    }],
+    ["oversize video", /instagram_reply_media_too_large/, (f) => {
+      f.db.prepare("UPDATE assets SET bytes=? WHERE id='asset-a'").run(25 * 1024 * 1024 + 1);
+      f.db.prepare("UPDATE asset_storage_objects SET byte_count=?,verified_mime_type='video/mp4' WHERE asset_id='asset-a'").run(25 * 1024 * 1024 + 1);
+      return { ...f.draft(), asset_bytes: 25 * 1024 * 1024 + 1, asset_mime_type: "video/mp4" };
+    }],
+    ["unsupported MIME", /instagram_reply_media_type_unsupported/, (f) => {
+      f.db.prepare("UPDATE asset_storage_objects SET verified_mime_type='image/gif' WHERE asset_id='asset-a'").run();
+      return { ...f.draft(), asset_mime_type: "image/gif" };
+    }],
+    ["revoked Instagram destination", /instagram_reply_media_changed/, (f) => {
+      f.db.prepare("DELETE FROM asset_destinations WHERE asset_id='asset-a'").run();
+      return f.draft();
+    }],
+    ["unsafe classification", /instagram_reply_media_changed/, (f) => {
+      f.db.prepare("UPDATE asset_classifications SET safety='nsfw' WHERE asset_id='asset-a'").run();
+      return f.draft();
+    }],
+    ["wrong canonical pointer", /instagram_reply_media_changed/, (f) => {
+      f.db.prepare("UPDATE asset_media_authorities SET canonical_storage_object_id='object-asset-b' WHERE asset_id='asset-a'").run();
+      return f.draft();
+    }],
+    ["multi-person asset without recorded people", /instagram_reply_media_changed/, (f) => {
+      f.db.prepare("UPDATE asset_classifications SET is_multi=1 WHERE asset_id='asset-a'").run();
+      return f.draft();
+    }],
   ];
   for (const [label, expected, mutate] of cases) {
     const f = fixture();
