@@ -2,20 +2,8 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-09-02",
+  "observedAt": "2026-09-03",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
-  "pendingMigrations": [
-    {
-      "name": "0059_instagram_message_sync_reliability.sql",
-      "sha256": "8a884aa2800787aa19ee62d1b7e5436e5aacc5ad968f361245ed0a52539544a8",
-      "purpose": "Account-scoped Instagram inbox sync attempts, leases and partial attachment diagnostics."
-    },
-    {
-      "name": "0060_instagram_reply_media.sql",
-      "sha256": "9089c2549dfe5ee3794c7a709ccb579cb073245c5bc5ef5e9adfbcaedbb42ca9",
-      "purpose": "Immutable creator-scoped Instagram reply media intents and confirmed attachment receipts."
-    }
-  ],
   "migrations": [
     {
       "remoteId": 1,
@@ -353,6 +341,18 @@
       "name": "0058_fansly_claim_recovery.sql",
       "sha256": "7292bd2dc1a85c8ae35772153e85e4656e8a50830fe4e4a1f060c75812c57cc7",
       "purpose": "Applied bounded staging migration: nullable Fansly owner tokens, preserving legacy claims."
+    },
+    {
+      "remoteId": 61,
+      "name": "0059_instagram_message_sync_reliability.sql",
+      "sha256": "8a884aa2800787aa19ee62d1b7e5436e5aacc5ad968f361245ed0a52539544a8",
+      "purpose": "Applied bounded staging migration: account-scoped Instagram inbox sync attempts, leases and partial attachment diagnostics."
+    },
+    {
+      "remoteId": 62,
+      "name": "0060_instagram_reply_media.sql",
+      "sha256": "9089c2549dfe5ee3794c7a709ccb579cb073245c5bc5ef5e9adfbcaedbb42ca9",
+      "purpose": "Applied bounded staging migration: immutable creator-scoped Instagram reply media intents and confirmed attachment receipts."
     }
   ]
 }
