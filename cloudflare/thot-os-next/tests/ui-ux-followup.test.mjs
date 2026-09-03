@@ -50,6 +50,8 @@ test("video review resolves an asset UUID without a photo preview and stays crea
   assert.match(page, /video controls preload="metadata"/);
   assert.match(page, /saveAssetAttributesAction/);
   assert.doesNotMatch(page, /canPrepare=|method: "POST"/);
+  const css = await source("app/globals.css");
+  assert.match(css, /\.video-card \.copy-attributes \{[^}]*max-height: none[^}]*opacity: 1/);
 });
 
 test("inbox history and thread list are bounded separately from the composer", async () => {
