@@ -22,10 +22,11 @@ test("messages UX keeps scope visible, settings permission-aware, and actions co
 });
 
 test("quick reply state is controlled and keyed by thread at the page boundary", async () => {
-  const [page, reply, actions] = await Promise.all([
+  const [page, reply, actions, picker] = await Promise.all([
     source("src/app/messages/page.tsx"),
     source("src/components/message-quick-reply.tsx"),
     source("src/app/actions.ts"),
+    source("src/components/message-attachment-picker.tsx"),
   ]);
   assert.match(page, /key=\{`instagram:\$\{thread\.id\}`\}/);
   assert.match(page, /key=\{`telegram:\$\{thread\.id\}`\}/);
@@ -34,7 +35,8 @@ test("quick reply state is controlled and keyed by thread at the page boundary",
   assert.match(reply, /useRef<string \| null>\(null\)/);
   assert.match(reply, /retryRequestRef = useRef\(false\)/);
   assert.match(reply, /value=\{body\}/);
-  assert.match(reply, /intentBodyRef\.current === body \? requestIdRef\.current : crypto\.randomUUID\(\)/);
+  assert.match(reply, /intentKeyRef\.current === intentKey \? requestIdRef\.current : crypto\.randomUUID\(\)/);
+  assert.match(reply, /String\(formData\.get\("assetId"\) \?\? ""\)/);
   assert.match(reply, /event\.preventDefault\(\)/);
   assert.match(reply, /formData\.set\("inline", "1"\)/);
   assert.match(reply, /setBody\(""\)/);
@@ -43,6 +45,12 @@ test("quick reply state is controlled and keyed by thread at the page boundary",
   assert.match(actions, /inlineMessageRequest/);
   assert.match(actions, /satisfies InlineMessageResult/);
   assert.match(actions, /saved: "fansly_reply_queued"/);
+  assert.match(picker, /name="assetId"/);
+  assert.match(picker, /Remove attachment/);
+  assert.match(picker, /media-only reply/);
+  assert.match(page, /getInstagramReplyAssets/);
+  assert.match(page, /asset_people/);
+  assert.match(page, /verified_mime_type IN/);
 });
 
 test("messaging review keeps audit collapsed and avoids unimplemented automatic-send language", async () => {

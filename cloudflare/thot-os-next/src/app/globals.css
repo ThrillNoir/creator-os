@@ -545,6 +545,16 @@ button, input, textarea, select { font: inherit; }
 .reply-compose textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 92px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #100c16; color: var(--ink); resize: vertical; }
 .reply-compose > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
 .reply-compose .primary { margin: 0; }
+.message-attachment-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #18121f; }
+.message-attachment-picker > label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 750; }
+.message-attachment-picker select { width: 100%; min-height: 32px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; background: #100c16; color: var(--ink); }
+.message-attachment-help { color: var(--muted); font-size: 10px; }
+.selected-message-attachment { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.selected-message-attachment img,.selected-message-attachment-icon { display: grid; flex: none; width: 52px; height: 52px; place-items: center; border-radius: 7px; background: #100c16; color: var(--purple2); font-size: 9px; object-fit: cover; }
+.selected-message-attachment > div { display: grid; min-width: 0; gap: 4px; }
+.selected-message-attachment strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-message-attachment small { color: var(--muted); font-size: 9px; }
+.selected-message-attachment .secondary-action { justify-self: start; min-height: 26px; margin-top: 2px; padding: 0 8px; font-size: 9px; }
 .quick-reply-error { display: block; margin: 0; padding: 9px 10px; border: 1px solid #684d25; border-radius: 8px; background: #1f1913; }
 .reply-drafts { padding-top: 4px; }
 .reply-drafts > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); cursor: pointer; list-style: none; }
