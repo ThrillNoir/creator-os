@@ -333,7 +333,10 @@ test("Instagram message refresh stores private media and keeps read state provid
   assert.match(schedulerConfig, /"binding": "PREVIEWS"/);
   assert.match(attachmentRoute, /requireCreatorContext/);
   assert.match(attachmentRoute, /a\.creator_id=\?/);
-  assert.match(attachmentRoute, /PREVIEWS\.get/);
+  assert.match(attachmentRoute, /let bucket: R2Bucket = PREVIEWS/);
+  assert.match(attachmentRoute, /bucket\.get\(objectKey/);
+  assert.match(attachmentRoute, /bucket = LIBRARY_MEDIA/);
+  assert.match(attachmentRoute, /immutableR2IdentityMatches\(expected, object\)/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS message_attachments/);
   assert.match(migration, /"privateR2Media":true/);
 });

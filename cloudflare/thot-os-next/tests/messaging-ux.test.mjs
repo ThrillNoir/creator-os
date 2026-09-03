@@ -36,6 +36,9 @@ test("quick reply state is controlled and keyed by thread at the page boundary",
   assert.match(reply, /retryRequestRef = useRef\(false\)/);
   assert.match(reply, /value=\{body\}/);
   assert.match(reply, /intentKeyRef\.current === intentKey \? requestIdRef\.current : crypto\.randomUUID\(\)/);
+  assert.match(reply, /required=\{!assetId\}/);
+  assert.match(reply, /assetId && body\.trim\(\)/);
+  assert.match(reply, /disabled=\{sending\}/);
   assert.match(reply, /String\(formData\.get\("assetId"\) \?\? ""\)/);
   assert.match(reply, /event\.preventDefault\(\)/);
   assert.match(reply, /formData\.set\("inline", "1"\)/);

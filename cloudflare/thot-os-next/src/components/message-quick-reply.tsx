@@ -25,6 +25,10 @@ export function MessageQuickReply({ platform, threadId, participant, assets = []
   const config = platformConfig[platform];
   const inputId = `${platform}-quick-reply-body`;
   const send = async (form: HTMLFormElement) => {
+    if (platform === "instagram" && assetId && body.trim()) {
+      setError("Send this photo or video on its own. Remove the text or attachment first.");
+      return;
+    }
     const requestId = form.elements.namedItem("clientRequestId");
     const formData = new FormData(form);
     const intentKey = `${body}\u0000${String(formData.get("assetId") ?? "")}`;
@@ -68,9 +72,9 @@ export function MessageQuickReply({ platform, threadId, participant, assets = []
     <input type="hidden" name="threadId" value={threadId} />
     <input type="hidden" name="inline" value="1" />
     <input type="hidden" name="clientRequestId" defaultValue="" />
-    {platform === "instagram" && <MessageAttachmentPicker assets={assets} value={assetId} onChange={setAssetId} />}
+    {platform === "instagram" && <MessageAttachmentPicker assets={assets} value={assetId} onChange={setAssetId} disabled={sending} />}
     <label htmlFor={inputId}>Reply</label>
-    <textarea id={inputId} name={config.field} value={body} required maxLength={config.maximum} placeholder={`Write a reply to ${participant}…`} onChange={(event) => setBody(event.currentTarget.value)} onKeyDown={(event) => {
+    <textarea id={inputId} name={config.field} value={body} required={!assetId} disabled={sending} maxLength={config.maximum} placeholder={assetId ? "Photo/video sends on its own; remove the attachment to write a reply." : `Write a reply to ${participant}…`} onChange={(event) => setBody(event.currentTarget.value)} onKeyDown={(event) => {
       if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
       event.preventDefault();
       if (!sending && body.trim()) event.currentTarget.form?.requestSubmit();

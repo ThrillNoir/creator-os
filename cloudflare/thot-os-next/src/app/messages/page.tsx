@@ -55,10 +55,11 @@ async function getInstagramReplyAssets(creatorId: string): Promise<MessageReplyA
       AND o.r2_version IS NOT NULL AND o.r2_etag IS NOT NULL
       AND (c.is_multi=0 OR EXISTS (SELECT 1 FROM asset_people ap WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id))
       AND NOT EXISTS (
-        SELECT 1 FROM asset_people ap JOIN people p ON p.id=ap.person_id AND p.creator_id=ap.creator_id
+        SELECT 1 FROM asset_people ap LEFT JOIN people p ON p.id=ap.person_id AND p.creator_id=ap.creator_id
         WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id AND COALESCE(p.consent_status,'not_recorded')<>'recorded'
       )
       AND o.verified_mime_type IN ('image/jpeg','image/png','video/mp4')
+      AND o.byte_count>0
       AND o.byte_count <= CASE WHEN o.verified_mime_type='video/mp4' THEN 26214400 ELSE 8388608 END
     ORDER BY a.modified_at DESC LIMIT 60`).bind(creatorId).all<{ id: string; basename: string; extension: string; bytes: number; preview_r2_key: string | null; verified_mime_type: string }>();
   return rows.results.map((asset) => {
