@@ -4,6 +4,19 @@ import test from "node:test";
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
+test("attention totals include sync errors without flagging healthy read-only accounts or obsolete Instagram validation", async () => {
+  const messages = await source("src/lib/messages.ts");
+  const predicate = messages.match(/attention: connections\.filter\(\(connection\) =>([\s\S]*?)\)\.length/)[1];
+  const needsAttention = new Function("connection", `return Boolean(${predicate});`);
+  const healthy = { platform: "instagram", status: "connected", mode: "observe", write_enabled: 0, last_error: null, last_sync_error: null };
+  assert.equal(needsAttention(healthy), false);
+  assert.equal(needsAttention({ ...healthy, last_sync_error: "Sync completed with attachment errors." }), true);
+  assert.equal(needsAttention({ ...healthy, last_error: "Provider restriction" }), true);
+  assert.equal(needsAttention({ ...healthy, last_error: "Validate a conversation before the first Instagram reply." }), false);
+  assert.equal(needsAttention({ ...healthy, status: "restricted" }), true);
+  assert.equal(needsAttention({ ...healthy, platform: "fansly", status: "device_bridge_ready" }), false);
+});
+
 test("messages UX keeps scope visible, settings permission-aware, and actions contextual", async () => {
   const [page, actions, css] = await Promise.all([
     source("src/app/messages/page.tsx"),

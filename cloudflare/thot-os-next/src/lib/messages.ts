@@ -127,7 +127,10 @@ export async function getUnifiedMessages(creatorId: string, platform?: MessagePl
       conversations: connections.reduce((sum, connection) => sum + Number(connection.thread_count), 0),
       unread: connections.reduce((sum, connection) => sum + Number(connection.unread_count), 0),
       sent: telegramResult.results.filter((item) => item.status === "sent").length + Number(instagramSentResult?.count ?? 0) + Number(premiumSentResult?.count ?? 0),
-      attention: connections.filter((connection) => connection.status !== "connected" && connection.status !== "device_bridge_ready").length,
+      attention: connections.filter((connection) =>
+        (connection.status !== "connected" && connection.status !== "device_bridge_ready") || connection.last_sync_error ||
+        (connection.last_error && !(connection.platform === "instagram" && connection.last_error === "Validate a conversation before the first Instagram reply."))
+      ).length,
     },
   };
 }
