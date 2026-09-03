@@ -70,3 +70,23 @@ test("messaging review keeps audit collapsed and avoids unimplemented automatic-
   assert.match(page, /Operate — validated connection/);
   assert.match(page, /<details className="panel message-audit">/);
 });
+
+test("Instagram account switching is immediate and the stored inbox refreshes while visible", async () => {
+  const [page, selector, refresh] = await Promise.all([
+    source("src/app/messages/page.tsx"),
+    source("src/components/message-account-selector.tsx"),
+    source("src/components/message-auto-refresh.tsx"),
+  ]);
+  assert.match(page, /MessageAccountSelector/);
+  assert.match(page, /MessageAutoRefresh/);
+  assert.match(page, /instagramConversationCount = instagramConnections\.reduce/);
+  assert.match(page, /item === "instagram" \? `\$\{instagramConnections\.length\} account/);
+  assert.match(selector, /method="get" action="\/messages"/);
+  assert.match(selector, /name="thread" value=""/);
+  assert.match(selector, /<noscript>/);
+  assert.match(selector, /router\.push/);
+  assert.match(selector, /accountId: event\.currentTarget\.value/);
+  assert.match(refresh, /intervalMs = 30_000/);
+  assert.match(refresh, /document\.visibilityState === "visible"/);
+  assert.match(refresh, /router\.refresh\(\)/);
+});
