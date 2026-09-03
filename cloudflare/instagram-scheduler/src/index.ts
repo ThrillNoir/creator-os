@@ -29,7 +29,7 @@ type InstagramReplyDraft = {
   requested_by: string;
   external_thread_id: string; participant_external_id: string; participant_name: string; participant_handle: string;
   last_inbound_at: string | null;
-  connection_status: string; write_enabled: number; outbound_validated: number; emergency_paused: number;
+  connection_status: string; mode: string; write_enabled: number; outbound_validated: number; emergency_paused: number;
 };
 type InstagramMediaInsights = {
   likes: number | null;
@@ -703,27 +703,53 @@ async function syncInstagram(env: Env, creatorId: string, accountId?: string, fo
   return { ok: result.errors.length === 0, ...result };
 }
 
+async function prepareInstagramReplyTarget(env: Env, creatorId: string, thread: {
+  id: string; connection_id: string; external_thread_id: string; participant_external_id: string; account_id: string;
+}) {
+  try {
+    const resolved = await resolveInstagramRecipient(env, creatorId, thread.external_thread_id, thread.account_id);
+    if (resolved.connection.messaging_connection_id !== thread.connection_id) throw new Error("Instagram account changed. Refresh this conversation before replying.");
+    if (thread.participant_external_id && thread.participant_external_id !== resolved.recipient.id) throw new Error("Instagram recipient changed. Refresh this conversation before replying.");
+    await ensureInstagramMessageSubscriptions(env, resolved.connection.connected_account_id, resolved.connection.external_account_id);
+    // Validation records technical readiness only; it cannot reconnect or grant authority.
+    const ready = await env.DB.prepare("UPDATE messaging_connections SET outbound_validated=1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='connected'")
+      .bind(thread.connection_id, creatorId).run();
+    if (!ready.meta.changes) throw new Error("Instagram connection changed during the check. Refresh before replying.");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE message_threads SET participant_external_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND connection_id=?")
+        .bind(resolved.recipient.id, thread.id, creatorId, thread.connection_id),
+      env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_target_validated','service:instagram-scheduler','service',?)")
+        .bind(crypto.randomUUID(), creatorId, thread.connection_id, thread.id, JSON.stringify({ messageCount: resolved.messageCount, recipientIdStored: true, liveMessageSent: false })),
+    ]);
+    return resolved;
+  } catch (error) {
+    const restricted = isInstagramAccountRestriction(error instanceof Error ? error.message : "");
+    const message = restricted
+      ? "Instagram messaging is restricted for this account (Meta OAuthException code 368/subcode 1404169). Do not retry until independently authorised."
+      : "Instagram could not confirm this conversation is ready. No message was sent. Refresh the conversation before trying again.";
+    await env.DB.prepare(`UPDATE messaging_connections SET status=CASE WHEN ? THEN 'restricted' ELSE status END,
+      write_enabled=CASE WHEN ? THEN 0 ELSE write_enabled END,outbound_validated=0,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?`)
+      .bind(restricted ? 1 : 0, restricted ? 1 : 0, message, thread.connection_id, creatorId).run();
+    throw new Error(message);
+  }
+}
+
 async function validateInstagramReplyTarget(request: Request, env: Env) {
   const input = await request.json<{ threadId?: string; creatorId?: string }>();
   if (!input.threadId || !input.creatorId) return Response.json({ ok: false, error: "missing_scope" }, { status: 400 });
-  const thread = await env.DB.prepare(`SELECT t.id,t.external_thread_id,t.participant_external_id,c.account_id,c.status AS connection_status
+  const thread = await env.DB.prepare(`SELECT t.id,t.connection_id,t.external_thread_id,t.participant_external_id,c.account_id,c.status AS connection_status
     FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
     WHERE t.id=? AND t.creator_id=? AND c.platform='instagram'`)
-    .bind(input.threadId, input.creatorId).first<{ id: string; external_thread_id: string; participant_external_id: string; account_id: string; connection_status: string }>();
+    .bind(input.threadId, input.creatorId).first<{ id: string; connection_id: string; external_thread_id: string; participant_external_id: string; account_id: string; connection_status: string }>();
   if (!thread) return Response.json({ ok: false, error: "instagram_thread_not_found" }, { status: 404 });
   if (thread.connection_status === "restricted") return Response.json({ ok: false, error: "Instagram messaging is restricted for this account. Do not retry until the account is independently authorised again." }, { status: 409 });
-  const { connection, recipient, messageCount } = await resolveInstagramRecipient(env, input.creatorId, thread.external_thread_id, thread.account_id);
-  await ensureInstagramMessageSubscriptions(env, connection.connected_account_id, connection.external_account_id);
-  if (thread.participant_external_id && thread.participant_external_id !== recipient.id) {
-    return Response.json({ ok: false, error: "Instagram recipient changed. Refresh messages before enabling replies." }, { status: 409 });
+  if (thread.connection_status !== "connected") return Response.json({ ok: false, error: "Instagram is not connected for this conversation." }, { status: 409 });
+  try {
+    const { recipient, messageCount } = await prepareInstagramReplyTarget(env, input.creatorId, thread);
+    return Response.json({ ok: true, participantUsername: recipient.username ? `@${recipient.username.replace(/^@/, "")}` : null, messageCount });
+  } catch (error) {
+    return Response.json({ ok: false, sent: false, error: error instanceof Error ? error.message : "Instagram account check failed." }, { status: 409 });
   }
-  await env.DB.batch([
-    env.DB.prepare("UPDATE message_threads SET participant_external_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(recipient.id, thread.id, input.creatorId),
-    env.DB.prepare("UPDATE messaging_connections SET outbound_validated=1,status='connected',last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(connection.messaging_connection_id, input.creatorId),
-    env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_target_validated','service:instagram-scheduler','service',?)")
-      .bind(crypto.randomUUID(), input.creatorId, connection.messaging_connection_id, thread.id, JSON.stringify({ messageCount, recipientIdStored: true, liveMessageSent: false })),
-  ]);
-  return Response.json({ ok: true, participantUsername: recipient.username ? `@${recipient.username.replace(/^@/, "")}` : null, messageCount });
 }
 
 async function markInstagramThreadSeen(request: Request, env: Env) {
@@ -764,7 +790,7 @@ async function sendInstagramReply(request: Request, env: Env) {
   const draft = await env.DB.prepare(`SELECT d.id,d.creator_id,d.connection_id,d.thread_id,d.body,d.status,d.requested_by,
       t.external_thread_id,t.participant_external_id,t.participant_name,t.participant_handle,
       (SELECT MAX(COALESCE(m.sent_at,m.created_at)) FROM messages m WHERE m.creator_id=d.creator_id AND m.thread_id=d.thread_id AND m.direction='inbound') AS last_inbound_at,
-      c.account_id,c.status AS connection_status,c.write_enabled,c.outbound_validated,c.emergency_paused
+      c.account_id,c.status AS connection_status,c.mode,c.write_enabled,c.outbound_validated,c.emergency_paused
     FROM instagram_reply_drafts d
     JOIN message_threads t ON t.id=d.thread_id AND t.creator_id=d.creator_id AND t.connection_id=d.connection_id
     JOIN messaging_connections c ON c.id=d.connection_id AND c.creator_id=d.creator_id
@@ -772,21 +798,34 @@ async function sendInstagramReply(request: Request, env: Env) {
     .bind(input.draftId, input.creatorId).first<InstagramReplyDraft>();
   if (!draft) return Response.json({ ok: false, error: "instagram_reply_draft_not_found" }, { status: 404 });
   if (draft.status !== "draft") return Response.json({ ok: false, error: "instagram_reply_not_sendable" }, { status: 409 });
-  if (draft.connection_status !== "connected" || !draft.write_enabled || !draft.outbound_validated || draft.emergency_paused) {
-    return Response.json({ ok: false, error: "Instagram sending is locked. Validate the reply target, enable sending, and confirm messaging is not paused." }, { status: 409 });
+  if (draft.connection_status !== "connected" || !draft.write_enabled || !["assist", "operate"].includes(draft.mode) || draft.emergency_paused) {
+    return Response.json({ ok: false, error: "Instagram sending is locked. Check account permissions and confirm messaging is not paused." }, { status: 409 });
   }
   const lastInboundAt = d1TimestampMs(draft.last_inbound_at);
   if (!Number.isFinite(lastInboundAt) || Date.now() - lastInboundAt > 24 * 60 * 60_000) {
     return Response.json({ ok: false, error: "Instagram's active reply window is closed. Ask the person to send a new message, refresh the inbox, then reply." }, { status: 409 });
   }
-  const { connection, recipient } = await resolveInstagramRecipient(env, input.creatorId, draft.external_thread_id, draft.account_id);
-  if (draft.participant_external_id && draft.participant_external_id !== recipient.id) {
-    return Response.json({ ok: false, error: "Instagram recipient changed. Refresh and validate this conversation again." }, { status: 409 });
+  let target: Awaited<ReturnType<typeof prepareInstagramReplyTarget>>;
+  let requestedByRole: Awaited<ReturnType<typeof storedHumanActorRole>>;
+  try {
+    requestedByRole = await storedHumanActorRole(env, input.creatorId, draft.requested_by);
+    if (requestedByRole === "viewer") throw new Error("The original draft requester cannot send messages.");
+    target = await prepareInstagramReplyTarget(env, input.creatorId, { ...draft, id: draft.thread_id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Instagram preflight failed. No message was sent.";
+    await env.DB.prepare("UPDATE instagram_reply_drafts SET status='failed',error=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND status='draft'")
+      .bind(message, draft.id, input.creatorId).run();
+    return Response.json({ ok: false, sent: false, uncertain: false, error: message }, { status: 409 });
   }
+  const { connection, recipient } = target;
   const claim = await env.DB.prepare(`UPDATE instagram_reply_drafts SET status='sending',approved_by=requested_by,approved_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP
-    WHERE id=? AND creator_id=? AND status='draft'`).bind(draft.id, input.creatorId).run();
+    WHERE id=? AND creator_id=? AND status='draft'
+      AND EXISTS (SELECT 1 FROM messaging_connections c WHERE c.id=instagram_reply_drafts.connection_id AND c.creator_id=instagram_reply_drafts.creator_id
+        AND c.status='connected' AND c.write_enabled=1 AND c.mode IN ('assist','operate') AND c.emergency_paused=0)
+      AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id=instagram_reply_drafts.thread_id AND m.creator_id=instagram_reply_drafts.creator_id
+        AND m.direction='inbound' AND unixepoch(COALESCE(m.sent_at,m.created_at))>=unixepoch('now')-86400)`)
+    .bind(draft.id, input.creatorId).run();
   if (!claim.meta.changes) return Response.json({ ok: false, error: "instagram_reply_already_claimed" }, { status: 409 });
-  const requestedByRole = await storedHumanActorRole(env, input.creatorId, draft.requested_by);
   await env.DB.prepare("INSERT INTO messaging_audit_events (id,creator_id,connection_id,thread_id,event_type,actor,actor_role,detail) VALUES (?,?,?,?, 'instagram_reply_approved', ?, ?, ?)")
     .bind(crypto.randomUUID(), input.creatorId, draft.connection_id, draft.thread_id, draft.requested_by, requestedByRole, JSON.stringify({ draftId: draft.id, characters: draft.body.length })).run();
 
