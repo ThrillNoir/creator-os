@@ -68,3 +68,27 @@ test("provider send follows preflight and atomic authority/window recheck, not a
   assert.match(send, /unixepoch\(COALESCE\(m\.sent_at,m\.created_at\)\)>=unixepoch\('now'\)-86400/);
   assert.doesNotMatch(send, /!draft\.outbound_validated/);
 });
+
+test("atomic send claim rejects a concurrent pause, restriction, observe mode or closed window", () => {
+  const sql = source.match(/const claim = await env\.DB\.prepare\(`(UPDATE instagram_reply_drafts SET status='sending'[\s\S]*?)`\)/)?.[1];
+  assert.ok(sql);
+  const db = new Database(":memory:");
+  try {
+    db.exec(`CREATE TABLE instagram_reply_drafts (id TEXT,creator_id TEXT,connection_id TEXT,thread_id TEXT,status TEXT,requested_by TEXT,approved_by TEXT,approved_at TEXT,error TEXT,updated_at TEXT);
+      CREATE TABLE messaging_connections (id TEXT,creator_id TEXT,status TEXT,write_enabled INTEGER,mode TEXT,emergency_paused INTEGER);
+      CREATE TABLE messages (thread_id TEXT,creator_id TEXT,direction TEXT,sent_at TEXT,created_at TEXT);
+      INSERT INTO instagram_reply_drafts VALUES ('draft','creator','connection','thread','draft','human',NULL,NULL,NULL,NULL);
+      INSERT INTO messaging_connections VALUES ('connection','creator','connected',1,'assist',0);
+      INSERT INTO messages VALUES ('thread','creator','inbound',datetime('now'),datetime('now'));`);
+    for (const change of ["emergency_paused=1", "status='restricted'", "write_enabled=0", "mode='observe'", "creator_id='other'"]) {
+      db.exec("UPDATE messaging_connections SET emergency_paused=0,status='connected',write_enabled=1,mode='assist',creator_id='creator'");
+      db.exec(`UPDATE messaging_connections SET ${change}`);
+      assert.equal(db.prepare(sql).run("draft", "creator").changes, 0, change);
+    }
+    db.exec("UPDATE messaging_connections SET creator_id='creator'; UPDATE messages SET sent_at=datetime('now','-25 hours')");
+    assert.equal(db.prepare(sql).run("draft", "creator").changes, 0);
+    db.exec("UPDATE messages SET sent_at=datetime('now')");
+    assert.equal(db.prepare(sql).run("draft", "creator").changes, 1);
+    assert.equal(db.prepare(sql).run("draft", "creator").changes, 0, "second claim cannot send twice");
+  } finally { db.close(); }
+});
