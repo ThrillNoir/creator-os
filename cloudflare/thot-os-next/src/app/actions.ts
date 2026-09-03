@@ -867,24 +867,38 @@ export async function refreshInstagramMessagesAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   const requestedAccountId = String(formData.get("accountId") ?? "").trim();
   const env = cloudflareEnv();
-  const requestedAccount = requestedAccountId ? await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='instagram' AND is_active=1").bind(requestedAccountId).first<{ id: string }>() : null;
-  if (requestedAccountId && !requestedAccount) throw new Error("That Instagram account is not active in this creator workspace.");
-  const thread = threadId ? await creatorPrepare(env.DB, identity.creator.creator_id, `SELECT c.account_id
-    FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
-    WHERE t.id=? AND t.creator_id=@creator AND c.platform='instagram'`).bind(threadId).first<{ account_id: string | null }>() : null;
-  if (threadId && !thread?.account_id) throw new Error("That Instagram conversation is outside this creator workspace.");
-  if (thread?.account_id && requestedAccountId && thread.account_id !== requestedAccountId) throw new Error("Choose the Instagram account assigned to this conversation before refreshing.");
-  let accountId = requestedAccountId || thread?.account_id || "";
-  if (!accountId) {
-    const accounts = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='instagram' AND is_active=1 ORDER BY id LIMIT 2").all<{ id: string }>();
-    if (accounts.results.length !== 1) throw new Error("Select an Instagram conversation before refreshing messages.");
-    accountId = accounts.results[0].id;
+  let accountId = requestedAccountId;
+  let saved = "instagram_messages_failed";
+  try {
+    const requestedAccount = requestedAccountId ? await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE id=? AND creator_id=@creator AND platform='instagram' AND is_active=1").bind(requestedAccountId).first<{ id: string }>() : null;
+    if (requestedAccountId && !requestedAccount) throw new Error("That Instagram account is not active in this creator workspace.");
+    const thread = threadId ? await creatorPrepare(env.DB, identity.creator.creator_id, `SELECT c.account_id
+      FROM message_threads t JOIN messaging_connections c ON c.id=t.connection_id AND c.creator_id=t.creator_id
+      WHERE t.id=? AND t.creator_id=@creator AND c.platform='instagram'`).bind(threadId).first<{ account_id: string | null }>() : null;
+    if (threadId && !thread?.account_id) throw new Error("That Instagram conversation is outside this creator workspace.");
+    if (thread?.account_id && requestedAccountId && thread.account_id !== requestedAccountId) throw new Error("Choose the Instagram account assigned to this conversation before refreshing.");
+    accountId = requestedAccountId || thread?.account_id || "";
+    if (!accountId) {
+      const accounts = await creatorPrepare(env.DB, identity.creator.creator_id, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='instagram' AND is_active=1 ORDER BY id LIMIT 2").all<{ id: string }>();
+      if (accounts.results.length !== 1) throw new Error("Select an Instagram conversation before refreshing messages.");
+      accountId = accounts.results[0].id;
+    }
+    const response = await fetchInternalService(env, "instagram", "instagram.messages.sync", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id, accountId }) });
+    const result = await response.json() as { ok?: boolean; status?: string; error?: string };
+    saved = response.ok && result.ok
+      ? result.status === "partial" ? "instagram_messages_partial" : "instagram_messages_refreshed"
+      : result.status === "busy" ? "instagram_messages_busy"
+        : result.status === "read_disabled" ? "instagram_messages_read_disabled"
+          : "instagram_messages_failed";
+    revalidatePath("/messages");
+  } catch {
+    saved = "instagram_messages_failed";
   }
-  const response = await fetchInternalService(env, "instagram", "instagram.messages.sync", env.INSTAGRAM_SCHEDULER, "https://instagram-scheduler/sync/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId: identity.creator.creator_id, accountId }) });
-  const result = await response.json() as { ok?: boolean; error?: string };
-  if (!response.ok || !result.ok) throw new Error(result.error || "Instagram messages could not be refreshed.");
-  revalidatePath("/messages");
-  redirect(`/messages?platform=instagram&accountId=${encodeURIComponent(accountId)}${threadId ? `&thread=${encodeURIComponent(threadId)}` : ""}&saved=instagram_messages_refreshed`);
+  const redirectData = new FormData();
+  redirectData.set("platform", "instagram");
+  if (accountId) redirectData.set("accountId", accountId);
+  if (threadId) redirectData.set("thread", threadId);
+  redirect(messagesRedirect(redirectData, saved));
 }
 
 export async function markInstagramThreadReadAction(formData: FormData) {

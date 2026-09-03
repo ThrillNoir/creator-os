@@ -7,6 +7,7 @@ export interface MessagingConnection {
   id: string; creator_id: string; account_id: string | null; platform: MessagePlatform; display_name: string; handle: string;
   mode: "observe" | "assist" | "operate"; read_enabled: number; write_enabled: number; outbound_validated: number;
   emergency_paused: number; status: string; last_synced_at: string | null; last_error: string | null;
+  last_sync_error: string | null;
   thread_count: number; unread_count: number;
 }
 

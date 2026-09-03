@@ -17,6 +17,13 @@ test("messages UX keeps scope visible, settings permission-aware, and actions co
   assert.match(page, /open=\{canApproveMessaging/);
   assert.match(actions, /function messagesRedirect/);
   assert.match(actions, /redirect\(messagesRedirect\(formData, "authority"\)\)/);
+  assert.match(actions, /instagram_messages_partial/);
+  assert.match(actions, /instagram_messages_busy/);
+  assert.match(actions, /instagram_messages_read_disabled/);
+  assert.match(actions, /instagram_messages_failed/);
+  assert.match(page, /Instagram inbox partially refreshed/);
+  assert.match(page, /last_sync_error/);
+  assert.match(page, /name="thread" value=\{data\.selectedThread\?\.id \?\? ""\}/);
   assert.match(css, /\.message-workspace \{ display: grid; grid-template-columns: minmax\(220px/);
   assert.match(css, /\.thread-list-actions \{ display: flex; flex-wrap: wrap/);
 });
