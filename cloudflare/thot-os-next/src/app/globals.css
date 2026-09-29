@@ -698,6 +698,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .public-profile-form .wide,.public-profile-form > button { grid-column: 1 / -1; }
 .public-link-fields { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(150px,.5fr) minmax(260px,1.5fr); gap: 12px; }
 .public-link-fields label { min-width: 0; }
+.public-profile-form input[type="checkbox"] { flex: none; width: 18px; height: 18px; min-height: 0; padding: 0; margin: 0; accent-color: var(--purple); }
+.public-profile-form label.booking-checkbox { display: flex; align-items: center; gap: 9px; min-height: 44px; font-size: 12px; cursor: pointer; }
+.public-profile-form label.booking-checkbox:has(input:disabled) { cursor: default; opacity: .65; }
+.public-profile-form input[type="checkbox"]:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.booking-field-row { display: grid; grid-template-columns: minmax(0,1fr) 110px 100px; align-items: center; gap: 12px; padding: 3px 0; }
+.booking-field-row > b { font-size: 13px; overflow-wrap: anywhere; }
+.public-link-fields.booking-option-row { grid-template-columns: minmax(0,1fr) minmax(0,2fr) auto; align-items: end; margin-bottom: 12px; }
+@media (max-width: 480px) {
+  .booking-field-row { grid-template-columns: minmax(0,1fr) 82px 76px; gap: 6px; }
+  .public-profile-form .booking-field-row label { gap: 5px; font-size: 11px; }
+  .public-link-fields.booking-option-row { grid-template-columns: minmax(0,1fr); }
+  .booking-option-row > button { justify-self: start; }
+}
+
 .public-profile-actions { margin: 16px 0; }
 .public-profile-actions .confirmed-action { max-width: none; }
 .public-withdraw { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
