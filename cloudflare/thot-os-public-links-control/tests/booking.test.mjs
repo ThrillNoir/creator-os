@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import Database from "better-sqlite3";
 import { handleBooking, purgeBookingReceipts } from "../src/booking.ts";
-import { validateBookingConfig, validateBookingEnquiry, bookingLinks } from "../../shared/booking-contract.ts";
+import contactWorker from "../../thot-os-public-contact/src/index.ts";
+import { validateBookingConfig, validateBookingEnquiry, bookingLinks, bookingFieldNames } from "../../shared/booking-contract.ts";
 
 const now = Date.parse("2026-09-28T02:00:00Z");
 const token = "local-test-only-".repeat(4);
@@ -45,6 +46,49 @@ async function fixture() {
   const request = (body, path = "submit", credential = token) => new Request(`https://private/booking/${path}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${credential}`, "x-thot-os-service-capability": "booking.enquiry.submit" }, body: JSON.stringify(body) });
   return { db, env, sent, payload, request };
 }
+
+test("public custom-request form reaches private delivery once and rejects a withdrawn open form", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const f = await fixture(); t.after(() => f.db.close());
+  const custom = validateBookingConfig({ ...config, fields: Object.fromEntries(bookingFieldNames.map(name => [name, { visible: name === "specialRequests", required: name === "specialRequests" }])) });
+  f.db.prepare("UPDATE creator_booking_configs SET config_json=?").run(JSON.stringify(custom));
+  const snapshot = { schemaVersion: 2, creator: { id: "creator-a", slug: "creator-a", displayName: "Creator A" }, versionId: "version-a", config: custom, channels: { sms: "+61400000000", email: "creator@example.test" } };
+  const env = {
+    CONTACT_PROFILES: { get: async () => snapshot }, CONTACT_EVENTS: { writeDataPoint() {} },
+    BOOKING_SERVICE_TOKEN: token, BOOKING_FORM_SECRET: "synthetic-form-secret-".repeat(3),
+    BOOKING_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    TURNSTILE_SECRET: "test-only", TURNSTILE_SITE_KEY: "test-only", TURNSTILE_EXPECTED_HOSTNAME: "contact.example",
+    PUBLIC_LINKS_CONTROL: { fetch: (url, init) => handleBooking(new Request(url, init), f.env, now) },
+  };
+  t.mock.method(globalThis, "fetch", async (url) => {
+    assert.equal(url, "https://challenges.cloudflare.com/turnstile/v0/siteverify");
+    return Response.json({ success: true, action: "booking", hostname: "contact.example" });
+  });
+  const url = "https://contact.example/book/creator-a";
+  const form = async () => {
+    const page = await contactWorker.fetch(new Request(url), env);
+    assert.equal(page.status, 200);
+    const html = await page.text(), data = new FormData();
+    assert.doesNotMatch(html, /name="(?:date|address|phone)"|creator@example\.test/);
+    for (const name of ["submissionId", "issuedAt", "signature"]) data.set(name, html.match(new RegExp(`name="${name}" value="([^"]+)"`))[1]);
+    for (const [key, value] of Object.entries({ firstName: "Ava", lastName: "Example", email: "visitor@example.test", specialRequests: "A personalised birthday greeting", address: "Hidden injected address", consent: "yes", acknowledged: "yes", "cf-turnstile-response": "local-token" })) data.set(key, value);
+    return data;
+  };
+  const submit = data => contactWorker.fetch(new Request(url, { method: "POST", headers: { origin: "https://contact.example", "cf-connecting-ip": "192.0.2.1" }, body: data }), env);
+  const first = await form(), later = await form();
+  const accepted = await submit(first);
+  assert.equal(accepted.status, 200);
+  assert.match(await accepted.text(), /Continue in WhatsApp/);
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].to, "creator@example.test");
+  assert.match(f.sent[0].text, /A personalised birthday greeting/);
+  assert.doesNotMatch(f.sent[0].text, /Hidden injected address|Address:/);
+  assert.equal((await submit(first)).status, 400);
+  f.db.exec("INSERT INTO creator_profile_projection_deliveries VALUES('creator-a','profile-a','version-a','public_sfw','withdraw')");
+  assert.equal((await submit(later)).status, 400);
+  assert.equal((await contactWorker.fetch(new Request(url), env)).status, 404);
+  assert.equal(f.sent.length, 1);
+});
 
 test("email resolves approved recipient; receipt excludes enquiry PII; duplicate never sends again", async (t) => {
   const f = await fixture(); t.after(() => f.db.close());

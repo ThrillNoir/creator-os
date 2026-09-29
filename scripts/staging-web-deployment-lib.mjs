@@ -43,9 +43,14 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
   if (metadata?.environment !== "staging" || !expectedWorker || metadata?.worker !== expectedWorker) throw new Error("Controlled deployment supports only the reviewed staging component Workers.");
   if (!Array.isArray(migrationNames) || migrationNames.length === 0) throw new Error("Deployment plan requires an exact staging migration ledger.");
   if (!Array.isArray(requiredSecretNames)) throw new Error("Deployment plan requires reviewed secret names.");
+  const firstBootstrap = metadata.component === "publicContact" && workerState?.absent === true;
+  if (workerState?.absent === true && !firstBootstrap) throw new Error("Only the reviewed publicContact staging Worker may use the first-bootstrap path.");
+  if (firstBootstrap && (!Number.isInteger(workerState.absenceCode) || ![10007, 10090].includes(workerState.absenceCode) || workerState.routeLessConfig !== true)) {
+    throw new Error("Public-contact first bootstrap requires a provider not-found proof and route-less reviewed config.");
+  }
   const remoteSecrets = new Set(workerState?.secretNames ?? []);
   const missing = requiredSecretNames.filter((name) => !remoteSecrets.has(name));
-  if (missing.length) throw new Error(`Staging Worker secret inventory is missing required names: ${missing.join(", ")}.`);
+  if (missing.length && !firstBootstrap) throw new Error(`Staging Worker secret inventory is missing required names: ${missing.join(", ")}.`);
 
   const plan = {
     schemaVersion: 1,
@@ -58,12 +63,10 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
     artifact: { sha256: artifactManifest.artifact.sha256, buildTime: artifactManifest.build.timestamp, versionTag: metadata.component !== "web" ? `creatoros-${artifactManifest.artifact.sha256.slice(0, 48)}` : null },
     migration: { databaseId: metadata.databaseId, names: [...migrationNames], latest: migrationNames.at(-1), count: migrationNames.length },
     requiredSecretNames: [...requiredSecretNames].sort(),
-    preDeployment: {
-      latestVersionId: workerState.latestVersionId,
-      versionIds: [...workerState.versionIds],
-      traffic: workerState.deployment.versions,
-      workerSecretNames: [...workerState.secretNames].sort(),
-    },
+    preDeployment: firstBootstrap
+      ? { workerAbsent: true, absenceCode: workerState.absenceCode, latestVersionId: null, versionIds: [], traffic: [], workerSecretNames: [...workerState.secretNames].sort() }
+      : { latestVersionId: workerState.latestVersionId, versionIds: [...workerState.versionIds], traffic: workerState.deployment.versions, workerSecretNames: [...workerState.secretNames].sort() },
+    ...(firstBootstrap ? { firstBootstrap: { routeLess: true, requiredSecretNames: [...requiredSecretNames].sort() } } : {}),
     createdAt,
   };
   const digest = planDigest(plan);
@@ -84,22 +87,29 @@ function assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, mi
 }
 
 export function assertReconciliationPlan(input) {
-  return assertPlanIdentity(input);
+  assertPlanIdentity(input);
+  if (input.plan.firstBootstrap && input.workerState?.absent === true) throw new Error("First-bootstrap deployment remains absent; outcome is not reconciled and requires a new reviewed plan before any retry.");
+  return true;
 }
 
 export function assertApprovedPlan({ plan, confirmation, metadata, artifactManifest, migrationNames, workerState }) {
   assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, migrationNames });
-  const current = {
-    latestVersionId: workerState.latestVersionId,
-    versionIds: workerState.versionIds,
-    traffic: workerState.deployment.versions,
-    workerSecretNames: [...workerState.secretNames].sort(),
-  };
+  if (plan.firstBootstrap && JSON.stringify(plan.firstBootstrap.requiredSecretNames) !== JSON.stringify(plan.requiredSecretNames)) {
+    throw new Error("First-bootstrap plan secret names differ from the reviewed required-secret declaration.");
+  }
+  if (workerState.absent === true && (plan.firstBootstrap?.routeLess !== true || workerState.routeLessConfig !== true)) {
+    throw new Error("First-bootstrap apply requires the reviewed route-less public-contact config.");
+  }
+  const current = workerState.absent === true
+    ? { workerAbsent: true, absenceCode: workerState.absenceCode, latestVersionId: null, versionIds: [], traffic: [], workerSecretNames: [...workerState.secretNames].sort() }
+    : { latestVersionId: workerState.latestVersionId, versionIds: workerState.versionIds, traffic: workerState.deployment.versions, workerSecretNames: [...workerState.secretNames].sort() };
   if (JSON.stringify(plan.preDeployment) !== JSON.stringify(current)) throw new Error("Current staging Worker version, traffic, or secret-name state differs from the approved deployment plan.");
   return true;
 }
 
 export function createApplyReceipt({ plan, before, after, observedAt = new Date().toISOString() }) {
+  const firstBootstrap = plan.firstBootstrap?.routeLess === true;
+  if (firstBootstrap && before?.absent !== true) throw new Error("First-bootstrap receipt requires the approved absent Worker baseline.");
   const newVersionIds = after.versionIds.filter((id) => !before.versionIds.includes(id));
   if (newVersionIds.length !== 1) throw new Error("Deployment did not produce exactly one verifiable fresh Worker version.");
   const workerVersion = newVersionIds[0];
@@ -129,7 +139,7 @@ export function createApplyReceipt({ plan, before, after, observedAt = new Date(
       previousLatestVersion: before.deployment.versions.length === 1 && before.deployment.versions[0].percentage === 100 ? before.deployment.versions[0].versionId : before.latestVersionId,
       workerVersion,
       traffic: after.deployment.versions,
-      requiredSecretNamesVerified: [...plan.requiredSecretNames],
+      requiredSecretNamesVerified: plan.requiredSecretNames.filter((name) => observedSecrets.has(name)),
     },
     smokeTest: { verified: false, status: "PENDING_AUTHENTICATED_HEALTH_CHECK" },
     rollback: { worker: plan.target.worker, traffic: before.deployment.versions },

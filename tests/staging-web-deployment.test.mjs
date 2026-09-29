@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { assertDirectWebDeployment, deploymentWranglerEnvironment } from "../scripts/deploy-component.mjs";
+import { assertBootstrapSecretsFileOption, assertDirectWebDeployment, assertRouteLessFirstBootstrapConfig, deploymentWranglerEnvironment, observeAbsentPublicContactWorker, snapshotBootstrapSecrets, workerNotFoundProviderCode, workerStateFromPlanBaseline } from "../scripts/deploy-component.mjs";
 import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest, stagingDeploymentWorkers } from "../scripts/staging-web-deployment-lib.mjs";
 
 const metadata = { environment: "staging", component: "web", worker: "thot-os-staging", accountId: "account", config: "cloudflare/thot-os-next/wrangler.jsonc", databaseId: "database", gitSha: "abc", gitBranch: "codex/release" };
@@ -45,6 +47,55 @@ test("web deploy keeps only the Access credentials needed to reach protected sta
   assert.equal(environment.CLOUDFLARE_ACCESS_CLIENT_ID, "access-id");
   assert.equal(environment.CLOUDFLARE_ACCESS_CLIENT_SECRET, "access-secret");
   assert.equal(environment.CLOUDFLARE_AUTH_USE_KEYRING, "true");
+});
+
+test("public-contact first bootstrap accepts only a provider-proven absent route-less staging Worker", () => {
+  assert.equal(assertRouteLessFirstBootstrapConfig({ workers_dev: false, preview_urls: false }), true);
+  for (const config of [{ workers_dev: true, preview_urls: false }, { workers_dev: false, preview_urls: true }, { workers_dev: false, preview_urls: false, routes: [] }, { workers_dev: false, preview_urls: false, route: "contact.example" }]) {
+    assert.throws(() => assertRouteLessFirstBootstrapConfig(config), /first bootstrap/);
+  }
+  const target = { accountId: "account", worker: stagingDeploymentWorkers.publicContact };
+  const diagnostic = `/accounts/account/workers/scripts/${target.worker}/versions`;
+  assert.equal(workerNotFoundProviderCode({ stderr: `${diagnostic} [code: 10007]` }, target), 10007);
+  assert.equal(workerNotFoundProviderCode({ stderr: `${diagnostic} [code: 10090]` }, target), 10090);
+  assert.equal(workerNotFoundProviderCode({ stderr: `${diagnostic} [code: 10007] [code: 10090]` }, target), null);
+  assert.equal(workerNotFoundProviderCode({ stderr: `/accounts/other/workers/scripts/${target.worker}/versions [code: 10007]` }, target), null);
+  assert.equal(workerNotFoundProviderCode({ stderr: `${diagnostic} authentication failed [code: 10007]` }, target), null);
+  const registry = { environments: { staging: { accountId: "account", components: { web: { directory: "cloudflare/thot-os-next" }, publicContact: { config: "cloudflare/thot-os-public-contact/wrangler.staging.jsonc" } } } } };
+  const contact = { environment: "staging", component: "publicContact", worker: stagingDeploymentWorkers.publicContact, accountId: "account", config: "cloudflare/thot-os-public-contact/wrangler.staging.jsonc" };
+  const absent = observeAbsentPublicContactWorker(registry, contact, { execFileSyncImpl: () => { throw { stderr: `${diagnostic} [code: 10007]` }; } });
+  assert.deepEqual(absent, { absent: true, absenceCode: 10007, versionIds: [], deployment: { versions: [] }, secretNames: [] });
+  assert.throws(() => observeAbsentPublicContactWorker(registry, contact, { execFileSyncImpl: () => { throw { stderr: "timeout" }; } }), /not proven/);
+  assert.throws(() => observeAbsentPublicContactWorker(registry, { ...contact, environment: "production" }, { execFileSyncImpl: () => undefined }), /only the reviewed/);
+  assert.throws(() => observeAbsentPublicContactWorker(registry, { ...contact, accountId: "other-account" }, { execFileSyncImpl: () => undefined }), /only the reviewed/);
+});
+
+test("bootstrap secrets use an owner-only immutable snapshot with exactly the reviewed names", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "creatoros-bootstrap-secrets-test-"));
+  try {
+    const source = path.join(directory, "secrets.json");
+    writeFileSync(source, JSON.stringify({ FIRST: "one", SECOND: "two" }), { mode: 0o600 });
+    const snapshot = snapshotBootstrapSecrets(source, ["FIRST", "SECOND"], directory);
+    assert.equal(readFileSync(snapshot, "utf8"), readFileSync(source, "utf8"));
+    assert.throws(() => snapshotBootstrapSecrets(source, ["FIRST"], directory), /exactly the required/);
+    writeFileSync(source, JSON.stringify({ FIRST: "one" }), { mode: 0o600 });
+    assert.throws(() => snapshotBootstrapSecrets(source, ["FIRST", "SECOND"], directory), /exactly the required/);
+    writeFileSync(source, JSON.stringify({ FIRST: "one", SECOND: "" }), { mode: 0o600 });
+    assert.throws(() => snapshotBootstrapSecrets(source, ["FIRST", "SECOND"], directory), /exactly the required/);
+    chmodSync(source, 0o644);
+    assert.throws(() => snapshotBootstrapSecrets(source, ["FIRST", "SECOND"], directory), /owner-only/);
+    chmodSync(source, 0o600);
+    const link = path.join(directory, "link.json"); symlinkSync(source, link);
+    assert.throws(() => snapshotBootstrapSecrets(link, ["FIRST", "SECOND"], directory), /owner-only/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("bootstrap secrets file is unavailable to ordinary, planning, and reconciliation flows", () => {
+  assert.throws(() => assertBootstrapSecretsFileOption({ mode: "apply", bootstrapSecretsFile: "/owner/secrets.json" }, {}), /only for an approved public-contact/);
+  assert.throws(() => assertBootstrapSecretsFileOption({ mode: "plan", bootstrapSecretsFile: "/owner/secrets.json" }, { firstBootstrap: {} }), /only for an approved first-bootstrap/);
+  assert.throws(() => assertBootstrapSecretsFileOption({ mode: "reconcile", bootstrapSecretsFile: "/owner/secrets.json" }, { firstBootstrap: {} }), /only for an approved first-bootstrap/);
+  assert.throws(() => assertBootstrapSecretsFileOption({ mode: "apply" }, { firstBootstrap: {} }), /requires --bootstrap-secrets-file/);
+  assert.equal(assertBootstrapSecretsFileOption({ mode: "apply", bootstrapSecretsFile: "/owner/secrets.json" }, { firstBootstrap: {} }), true);
 });
 
 test("Vault deploy gives Wrangler a verified owner-only named snapshot", () => {
@@ -148,4 +199,23 @@ test("apply receipt rejects a fresh version that lost a required web secret bind
     latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: ["VAULT_MASTER_KEY_V1"] },
   };
   assert.throws(() => createApplyReceipt({ plan, before: workerState, after }), /missing required secret names/);
+});
+
+test("public-contact bootstrap binds provider absence and artifact and requires deployed secrets", () => {
+  const contact = { ...metadata, component: "publicContact", worker: stagingDeploymentWorkers.publicContact };
+  const absent = { absent: true, absenceCode: 10007, routeLessConfig: true, versionIds: [], deployment: { versions: [] }, secretNames: [] };
+  const plan = createDeploymentPlan({ metadata: contact, artifactManifest, migrationNames, requiredSecretNames, workerState: absent });
+  assert.deepEqual(plan.firstBootstrap, { routeLess: true, requiredSecretNames });
+  assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: contact, artifactManifest, migrationNames, workerState: absent }), true);
+  assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: contact, artifactManifest, migrationNames, workerState: { ...absent, routeLessConfig: false } }), /route-less/);
+  assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: contact, artifactManifest, migrationNames, workerState: { ...absent, absenceCode: 10090 } }), /differs/);
+  assert.throws(() => createDeploymentPlan({ metadata: { ...contact, environment: "production" }, artifactManifest, migrationNames, requiredSecretNames, workerState: absent }), /reviewed staging/);
+  assert.throws(() => createDeploymentPlan({ metadata: { ...metadata, component: "publicLinks", worker: stagingDeploymentWorkers.publicLinks }, artifactManifest, migrationNames, requiredSecretNames, workerState: absent }), /Only the reviewed/);
+  assert.throws(() => assertReconciliationPlan({ plan, confirmation: plan.confirmation, metadata: contact, artifactManifest, migrationNames, workerState: absent }), /remains absent/);
+  const after = { latestVersionId: "after", versionIds: ["after"], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: [], versionTag: plan.artifact.versionTag } };
+  assert.throws(() => createApplyReceipt({ plan, before: absent, after }), /missing required secret names/);
+  after.latestSecretVersion.secretNames = requiredSecretNames;
+  const receipt = createApplyReceipt({ plan, before: absent, after });
+  assert.deepEqual(receipt.deployment.requiredSecretNamesVerified, requiredSecretNames);
+  assert.equal(createApplyReceipt({ plan, before: workerStateFromPlanBaseline(plan), after }).deployment.workerVersion, "after");
 });

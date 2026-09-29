@@ -64,6 +64,8 @@ function configResources(config) {
   const kv = config.kv_namespaces ?? [];
   const queueProducers = config.queues?.producers ?? [];
   const services = config.services ?? [];
+  const rateLimits = config.ratelimits ?? [];
+  const email = config.send_email ?? [];
   return {
     d1: d1.map((binding) => ({ name: binding.database_name, id: binding.database_id, migrationsDir: binding.migrations_dir })),
     r2: r2.map((binding) => binding.bucket_name),
@@ -75,6 +77,7 @@ function configResources(config) {
       ...(config.queues?.consumers ?? []).map((binding) => binding.queue),
       ...(config.queues?.consumers ?? []).map((binding) => binding.dead_letter_queue).filter(Boolean),
     ],
+    rateLimits: rateLimits.map((binding) => binding.namespace_id),
     services: Object.fromEntries(services.map((binding) => [binding.binding, binding.service])),
     secrets: config.secrets?.required ?? [],
     bindingNames: {
@@ -86,6 +89,8 @@ function configResources(config) {
       analytics: analytics.map((binding) => binding.binding),
       kv: kv.map((binding) => binding.binding),
       queues: queueProducers.map((binding) => binding.binding),
+      rateLimits: rateLimits.map((binding) => binding.name),
+      email: email.map((binding) => binding.name),
       services: services.map((binding) => binding.binding),
     },
   };
@@ -98,8 +103,38 @@ function resourceNames(environment) {
     analytics: new Set(environment.resources?.analytics ?? []),
     kv: new Set(environment.resources?.kv ?? []),
     queues: new Set(environment.resources?.queues ?? []),
+    rateLimits: new Set(environment.resources?.rateLimits ?? []),
     workers: new Set(Object.values(environment.resources?.workers ?? {})),
   };
+}
+
+function validatePublicContactConfig(errors, componentName, component, config) {
+  if (componentName !== "publicContact") return;
+  const routes = config.routes ?? [];
+  if (config.workers_dev !== false || config.preview_urls !== false || "route" in config
+    || !Array.isArray(routes) || routes.length > 1
+    || routes.some((route) => route?.pattern !== component.publicHostname || route?.custom_domain !== true)) {
+    errors.push("publicContact permits only its approved staging custom hostname, with workers_dev=false and preview_urls=false.");
+  }
+  if ((config.d1_databases ?? []).length || (config.r2_buckets ?? []).length) {
+    errors.push("publicContact must not bind D1 or R2 resources.");
+  }
+  const contactKv = component.resources?.kv ?? [];
+  if (!listsMatch((config.kv_namespaces ?? []).map((binding) => binding.id), contactKv)) {
+    errors.push("publicContact must bind only its dedicated CONTACT_PROFILES KV namespace.");
+  }
+  const rateLimits = config.ratelimits ?? [];
+  if (rateLimits.length !== 1
+    || rateLimits[0].name !== "BOOKING_RATE_LIMITER"
+    || rateLimits[0].namespace_id !== component.resources?.rateLimits?.[0]
+    || rateLimits[0].simple?.limit !== 5
+    || rateLimits[0].simple?.period !== 60) {
+    errors.push("publicContact requires the owned BOOKING_RATE_LIMITER contract of 5 requests per 60 seconds.");
+  }
+  const vars = config.vars ?? {};
+  if (vars.TURNSTILE_SITE_KEY !== "0x4AAAAAAFI459ZZKtJAgrMg" || vars.TURNSTILE_EXPECTED_HOSTNAME !== "booking-staging.thathuboverthere.com") {
+    errors.push("publicContact Turnstile configuration must use the approved booking staging widget and hostname.");
+  }
 }
 
 function addExactListError(errors, label, actual, expected) {
@@ -254,6 +289,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
     addExactListError(errors, "R2 bindings", resources.r2, component.resources?.r2 ?? []);
     addExactListError(errors, "Images bindings", resources.images, component.resources?.images ?? []);
     addExactListError(errors, "Queue bindings", [...new Set(resources.queues)], component.resources?.queues ?? []);
+    addExactListError(errors, "Rate limit bindings", resources.rateLimits, component.resources?.rateLimits ?? []);
     addExactListError(errors, "KV namespace bindings", resources.kv, component.resources?.kv ?? []);
     const expectedServices = component.resources?.services ?? {};
     if (JSON.stringify(resources.services) !== JSON.stringify(expectedServices)) errors.push(`Service bindings mismatch for ${environmentName}/${componentName}.`);
@@ -271,6 +307,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
       addExactListError(errors, `${resourceType} logical bindings`, actualBindings, expectedBindings);
     }
     validatePublicationPolicyConfig(errors, componentName, component, config);
+    validatePublicContactConfig(errors, componentName, component, config);
 
     const d1Registry = environment.resources?.d1 ?? {};
     for (const binding of resources.d1) {
@@ -292,6 +329,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
       ["Analytics Engine", resources.analytics, currentResources.analytics],
       ["KV namespace", resources.kv, currentResources.kv],
       ["Queue", resources.queues, currentResources.queues],
+      ["rate limit", resources.rateLimits, currentResources.rateLimits],
       ["service Worker", Object.values(resources.services), currentResources.workers],
     ];
     for (const [label, values, ownedValues] of checks) {

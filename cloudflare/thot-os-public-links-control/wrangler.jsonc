@@ -16,7 +16,9 @@
     "PUBLIC_MEDIA_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
     "ADULT_MEDIA_DELIVERY_ENABLED": "1",
     "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
-    "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com"
+    "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
+    "BOOKING_ACTION_BASE_URL": "https://booking-staging.thathuboverthere.com",
+    "BOOKING_ENQUIRIES_ENABLED": "false"
   },
   "d1_databases": [
     {
@@ -34,6 +36,10 @@
     {
       "binding": "ADULT_PROFILES",
       "id": "960ce926cd234170aa789a8eb0ca223a"
+    },
+    {
+      "binding": "CONTACT_PROFILES",
+      "id": "57d716b2562b4bb989e62482df6f6b19"
     }
   ],
   "r2_buckets": [
@@ -72,6 +78,14 @@
       "class_name": "AdultProfileWithdrawWorkflow"
     }
   ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["welcome@thathuboverthere.com"],
+      "allowed_destination_addresses": ["suedeadelaide@gmail.com"]
+    }
+  ],
+  "triggers": { "crons": ["*/15 * * * *"] },
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "invocation_logs": true },

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "purpose": "Staging booking submissions only. No publication authority or wildcard creator grant. Contains no credential material.",
+  "runtimeSecrets": [],
+  "principals": [
+    {
+      "id": "public-contact-booking",
+      "principalName": "thot-os-public-contact",
+      "secretName": "BOOKING_SERVICE_TOKEN",
+      "receiver": "public-links-control",
+      "callerComponent": "publicContact",
+      "capabilities": [
+        "booking.enquiry.submit"
+      ]
+    }
+  ]
+}

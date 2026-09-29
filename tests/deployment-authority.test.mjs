@@ -21,6 +21,7 @@ function fixtureRegistry() {
           r2: ["thot-os-media-staging"],
           kv: ["kv-staging"],
           queues: ["thot-os-jobs-staging"],
+          rateLimits: ["6201"],
           workers: { web: "thot-os-staging-web" },
         },
         components: {
@@ -36,6 +37,7 @@ function fixtureRegistry() {
               kv: ["KV"],
               images: ["IMAGES"],
               queues: ["JOBS"],
+              rateLimits: ["BOOKING_RATE_LIMITER"],
               services: [],
             },
             resources: {
@@ -44,6 +46,7 @@ function fixtureRegistry() {
               kv: ["kv-staging"],
               images: ["IMAGES"],
               queues: ["thot-os-jobs-staging"],
+              rateLimits: ["6201"],
               services: {},
             },
           },
@@ -58,6 +61,7 @@ function fixtureRegistry() {
           r2: ["thot-os-media-production"],
           kv: ["kv-production"],
           queues: ["thot-os-jobs-production"],
+          rateLimits: ["6202"],
           workers: { web: "thot-os-production-web" },
         },
         components: {
@@ -73,6 +77,7 @@ function fixtureRegistry() {
               kv: ["KV"],
               images: ["IMAGES"],
               queues: ["JOBS"],
+              rateLimits: ["BOOKING_RATE_LIMITER"],
               services: [],
             },
             resources: {
@@ -80,6 +85,7 @@ function fixtureRegistry() {
               r2: ["thot-os-media-production"],
               kv: ["kv-production"],
               queues: ["thot-os-jobs-production"],
+              rateLimits: ["6202"],
               services: {},
             },
           },
@@ -99,8 +105,42 @@ function fixtureConfig({ environment = "staging", secretNames } = {}) {
     kv_namespaces: [{ binding: "KV", id: production ? "kv-production" : "kv-staging" }],
     images: { binding: "IMAGES" },
     queues: { producers: [{ binding: "JOBS", queue: production ? "thot-os-jobs-production" : "thot-os-jobs-staging" }] },
+    ratelimits: [{ name: "BOOKING_RATE_LIMITER", namespace_id: production ? "6202" : "6201", simple: { limit: 5, period: 60 } }],
     services: [],
     secrets: { required: secretNames ?? [production ? "PRODUCTION_KEY" : "STAGING_KEY"] },
+  };
+}
+
+function publicContactFixture() {
+  const registry = fixtureRegistry();
+  const staging = registry.environments.staging;
+  staging.resources.kv.push("contact-kv");
+  staging.resources.analytics = ["contact-events"];
+  staging.resources.workers.control = "control-worker";
+  staging.components.publicContact = {
+    service: "thot-os-public-contact",
+    publicHostname: "booking-staging.thathuboverthere.com",
+    config: "contact.jsonc",
+    worker: "contact-worker",
+    deployable: true,
+    requiredSecrets: ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"],
+    bindings: { analytics: ["CONTACT_EVENTS"], kv: ["CONTACT_PROFILES"], rateLimits: ["BOOKING_RATE_LIMITER"], services: ["PUBLIC_LINKS_CONTROL"] },
+    resources: { d1: [], r2: [], queues: [], kv: ["contact-kv"], analytics: ["contact-events"], rateLimits: ["6201"], services: { PUBLIC_LINKS_CONTROL: "control-worker" } },
+  };
+  return {
+    registry,
+    config: {
+      name: "contact-worker",
+      account_id: "account-staging",
+      workers_dev: false,
+      preview_urls: false,
+      kv_namespaces: [{ binding: "CONTACT_PROFILES", id: "contact-kv" }],
+      analytics_engine_datasets: [{ binding: "CONTACT_EVENTS", dataset: "contact-events" }],
+      services: [{ binding: "PUBLIC_LINKS_CONTROL", service: "control-worker" }],
+      ratelimits: [{ name: "BOOKING_RATE_LIMITER", namespace_id: "6201", simple: { limit: 5, period: 60 } }],
+      vars: { TURNSTILE_SITE_KEY: "0x4AAAAAAFI459ZZKtJAgrMg", TURNSTILE_EXPECTED_HOSTNAME: "booking-staging.thathuboverthere.com" },
+      secrets: { required: ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"] },
+    },
   };
 }
 
@@ -221,4 +261,33 @@ test("missing Wrangler configuration fails closed", () => {
   });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /Missing Wrangler configuration/);
+});
+
+test("public-contact permits only its approved hostname and rejects private data bindings", () => {
+  const { registry, config } = publicContactFixture();
+  assert.equal(validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config }).ok, true);
+  assert.equal(validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, routes: [{ pattern: "booking-staging.thathuboverthere.com", custom_domain: true }] } }).ok, true);
+  const routeResult = validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, routes: [{ pattern: "other.example.com", custom_domain: true }] } });
+  assert.equal(routeResult.ok, false);
+  assert.match(routeResult.errors.join("\n"), /approved staging custom hostname/);
+
+  const dataResult = validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, d1_databases: [{ binding: "DB", database_name: "thot-os-staging" }] } });
+  assert.equal(dataResult.ok, false);
+  assert.match(dataResult.errors.join("\n"), /must not bind D1 or R2/);
+
+  const kvResult = validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, kv_namespaces: [{ binding: "CONTACT_PROFILES", id: "kv-staging" }] } });
+  assert.equal(kvResult.ok, false);
+  assert.match(kvResult.errors.join("\n"), /dedicated CONTACT_PROFILES/);
+});
+
+test("public-contact rejects an unowned or altered rate-limit contract", () => {
+  const { registry, config } = publicContactFixture();
+  const result = validateDeployment({
+    registry,
+    environmentName: "staging",
+    componentName: "publicContact",
+    config: { ...config, ratelimits: [{ name: "BOOKING_RATE_LIMITER", namespace_id: "6202", simple: { limit: 6, period: 60 } }] },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /owned BOOKING_RATE_LIMITER contract/);
 });

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "activationId": "staging-booking-adelaide-20260929",
+  "environment": "staging",
+  "operatorIdentity": "ATLAS-user-approved-staging-booking",
+  "expected": {
+    "databaseName": "thot-os-staging",
+    "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+    "expandMigrations": [
+      "0028_migration_ledger.sql",
+      "0029_service_principal_capabilities.sql",
+      "0030_canonical_control_plane.sql",
+      "0031_service_auth_activation_support.sql"
+    ],
+    "compatibilityMigrations": [
+      "0032_service_auth_compatibility.sql"
+    ],
+    "postCompatibilityMigrations": [
+      "0033_tenant_integrity_and_quarantine.sql",
+      "0034_public_profiles_and_approved_links.sql",
+      "0035_delivery_outbox_and_metric_observations.sql",
+      "0036_public_profile_authoring_guards.sql",
+      "0037_instagram_analytics_collection_runs.sql",
+      "0038_instagram_analytics_metric_coverage.sql",
+      "0039_production_environment_audit_contract.sql",
+      "0040_creator_profile_interactions.sql",
+      "0041_creator_profile_appearance.sql",
+      "0042_creator_profile_image_derivatives.sql",
+      "0043_creator_profile_projection_delivery.sql",
+      "0044_onlyfans_upload_bridge.sql",
+      "0045_onlyfans_authorized_delivery.sql",
+      "0046_onlyfans_sequential_batches.sql",
+      "0047_onlyfans_supervised_delivery.sql",
+      "0048_onlyfans_grouped_message_delivery.sql",
+      "0044_creator_r2_library.sql",
+      "0045_finished_media_uploads.sql",
+      "0049_creator_onboarding_access_vault.sql",
+      "0050_r2_native_source_media.sql",
+      "0051_r2_source_media_hardening.sql",
+      "0052_creator_scoped_r2_readiness.sql",
+      "0053_native_asset_authority.sql",
+      "0054_native_video_intake.sql",
+      "0055_provider_connection_account_scope.sql",
+      "0056_creator_invitations.sql",
+      "0057_instagram_account_scoped_analytics.sql",
+      "0058_fansly_claim_recovery.sql",
+      "0059_instagram_message_sync_reliability.sql",
+      "0060_instagram_reply_media.sql",
+      "0061_creator_booking_module.sql",
+      "0062_booking_delivery_evidence.sql"
+    ]
+  },
+  "grants": [
+    {
+      "principalName": "thot-os-public-contact",
+      "creatorId": "adelaide",
+      "capabilities": [
+        "booking.enquiry.submit"
+      ]
+    }
+  ]
+}

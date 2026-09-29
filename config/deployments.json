@@ -40,8 +40,9 @@
           "thot-os-preview-staging",
           "thot-os-preview-dlq-staging"
         ],
-        "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a"],
-        "analytics": ["thot-os-public-link-events-staging", "thot-os-adult-events-staging"],
+        "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a", "57d716b2562b4bb989e62482df6f6b19"],
+        "analytics": ["thot-os-public-link-events-staging", "thot-os-adult-events-staging", "thot-os-booking-events-staging"],
+        "rateLimits": ["6201"],
         "workers": {
           "web": "thot-os-staging",
           "instagram": "thot-os-instagram-scheduler-staging",
@@ -51,7 +52,8 @@
           "publicLinks": "thot-os-public-links-staging",
           "publicMedia": "thot-os-public-media-staging",
           "publicLinksControl": "thot-os-public-links-control-staging",
-          "adultGateway": "thot-os-adult-gateway-staging"
+          "adultGateway": "thot-os-adult-gateway-staging",
+          "publicContact": "thot-os-public-contact-staging"
         }
       },
       "components": {
@@ -193,9 +195,33 @@
             "d1": ["thot-os-staging"],
             "r2": ["thot-os-media-staging", "thot-os-public-media-staging", "thot-os-adult-media-staging"],
             "queues": [],
-            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a"],
+            "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a", "57d716b2562b4bb989e62482df6f6b19"],
             "analytics": [],
             "services": {}
+          }
+        },
+        "publicContact": {
+          "service": "thot-os-public-contact",
+          "publicHostname": "booking-staging.thathuboverthere.com",
+          "config": "cloudflare/thot-os-public-contact/wrangler.jsonc",
+          "directory": "cloudflare/thot-os-public-contact",
+          "worker": "thot-os-public-contact-staging",
+          "deployable": true,
+          "requiredSecrets": ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"],
+          "bindings": {
+            "analytics": ["CONTACT_EVENTS"],
+            "kv": ["CONTACT_PROFILES"],
+            "rateLimits": ["BOOKING_RATE_LIMITER"],
+            "services": ["PUBLIC_LINKS_CONTROL"]
+          },
+          "resources": {
+            "d1": [],
+            "r2": [],
+            "queues": [],
+            "kv": ["57d716b2562b4bb989e62482df6f6b19"],
+            "analytics": ["thot-os-booking-events-staging"],
+            "rateLimits": ["6201"],
+            "services": { "PUBLIC_LINKS_CONTROL": "thot-os-public-links-control-staging" }
           }
         },
         "adultGateway": {
