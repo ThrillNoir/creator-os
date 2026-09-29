@@ -116,3 +116,28 @@ test("read-only activation backup verifies export migrations and leaves only sec
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("local export replay permits forward foreign keys but rejects orphaned rows", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "thot-os-activation-backup-test-"));
+  const exportPath = path.join(directory, "staging-d1.sql");
+  try {
+    writeFileSync(exportPath, [
+      "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id));",
+      "INSERT INTO child (parent_id) VALUES (1);",
+      "CREATE TABLE parent (id INTEGER PRIMARY KEY);",
+      "INSERT INTO parent (id) VALUES (1);",
+      migrationExport(["0001_initial"]),
+    ].join("\n"));
+    assert.deepEqual(migrationNamesFromExport(exportPath), ["0001_initial"]);
+
+    writeFileSync(exportPath, [
+      "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id));",
+      "INSERT INTO child (parent_id) VALUES (1);",
+      "CREATE TABLE parent (id INTEGER PRIMARY KEY);",
+      migrationExport(["0001_initial"]),
+    ].join("\n"));
+    assert.throws(() => migrationNamesFromExport(exportPath), /canonical migration history/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

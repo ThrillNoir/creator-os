@@ -95,7 +95,10 @@ export function migrationNamesFromExport(exportPath, { DatabaseImpl = Database }
   let database;
   try {
     database = new DatabaseImpl(parsePath);
-    database.exec(readFileSync(exportPath, "utf8"));
+    database.pragma("foreign_keys = OFF");
+    database.transaction(() => database.exec(readFileSync(exportPath, "utf8")))();
+    const quickCheck = database.prepare("PRAGMA quick_check").all();
+    if (database.prepare("PRAGMA foreign_key_check").all().length > 0 || quickCheck.length !== 1 || quickCheck[0].quick_check !== "ok") throw new Error("invalid export integrity");
     const rows = database.prepare("SELECT id, name FROM d1_migrations ORDER BY id").all();
     if (!rows.every((row, index) => Number.isInteger(row.id) && row.id > 0 && (index === 0 || row.id > rows[index - 1].id) && typeof row.name === "string" && row.name.length > 0)) throw new Error("invalid migrations");
     return rows.map((row) => row.name);

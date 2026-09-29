@@ -18,7 +18,7 @@
     "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
     "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
     "BOOKING_ACTION_BASE_URL": "https://booking-staging.thathuboverthere.com",
-    "BOOKING_ENQUIRIES_ENABLED": "false"
+    "BOOKING_ENQUIRIES_ENABLED": "true"
   },
   "d1_databases": [
     {
