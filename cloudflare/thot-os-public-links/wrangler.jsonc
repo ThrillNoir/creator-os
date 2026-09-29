@@ -16,7 +16,8 @@
   "vars": {
     "PUBLIC_MEDIA_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
     "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
-    "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com"
+    "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
+    "BOOKING_ACTION_BASE_URL": "https://booking-staging.thathuboverthere.com"
   },
   "assets": {
     "directory": "./assets",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import worker from "../src/index.ts";
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
@@ -36,6 +37,7 @@ const snapshot = {
   creator: { slug: "adelaide", displayName: "Adelaide <safe>", headline: "Creator", bio: "A public profile" },
   links: [{ id: "official", label: "Official <site>", destinationUrl: "https://example.com/path?source=profile", destinationHost: "example.com" }],
 };
+const stagingVars = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")).vars;
 
 test("public profiles render an approved KV projection without exposing source markup", async () => {
   const { env, events } = environment(snapshot);
@@ -132,6 +134,18 @@ test("v2 interaction actions use the exact configured safe friendly entrance", a
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { SAFE_PUBLIC_PROFILE_BASE_URL: "https://links.example", ADULT_GATEWAY_BASE_URL: "https://adult.example" }).env)).status, 404);
   v2.actions[0].href = "https://links.example/adelaide/more";
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2).env)).status, 404);
+});
+
+test("booking actions render only for the configured staging booking origin", async () => {
+  const v2 = structuredClone(snapshot);
+  v2.schemaVersion = 2;
+  v2.actions = [{ id: "book", label: "Book Adelaide", href: "https://booking-staging.thathuboverthere.com/book/adelaide" }];
+  const response = await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, stagingVars).env);
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /https:\/\/booking-staging\.thathuboverthere\.com\/book\/adelaide/);
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { ...stagingVars, BOOKING_ACTION_BASE_URL: undefined }).env)).status, 404);
+  v2.actions[0].href = "https://booking.example/book/adelaide";
+  assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, stagingVars).env)).status, 404);
 });
 
 test("friendly adult entrances use the approved snapshot and an environment-owned gateway destination", async () => {

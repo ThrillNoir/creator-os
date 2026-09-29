@@ -11,6 +11,7 @@ test("staging public links owns the safe hostname and uses the protected gateway
     PUBLIC_MEDIA_BASE_URL: "https://public-profile-staging.thathuboverthere.com",
     SAFE_PUBLIC_PROFILE_BASE_URL: "https://public-profile-staging.thathuboverthere.com",
     ADULT_GATEWAY_BASE_URL: "https://more-staging.thathuboverthere.com",
+    BOOKING_ACTION_BASE_URL: "https://booking-staging.thathuboverthere.com",
   });
   assert.equal(config.d1_databases, undefined);
   assert.deepEqual(config.r2_buckets ?? [], []);
