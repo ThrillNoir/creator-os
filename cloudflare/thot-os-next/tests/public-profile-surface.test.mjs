@@ -159,6 +159,21 @@ test("public-profile save validation returns structured field errors without lea
   assert.match(adultEditor, /aria-invalid/);
 });
 
+test("booking checksum binds private settings without changing legacy profile checksums", async () => {
+  const actions = await source("src/app/actions.ts");
+  const body = actions.slice(actions.indexOf("async function publicProfileChecksum"), actions.indexOf("async function bookingChecksumForVersion"));
+  const { publicProfileChecksum, bookingAwarePublicProfileChecksum } = new Function(`${stripTypeScriptTypes(body)}; return { publicProfileChecksum, bookingAwarePublicProfileChecksum };`)();
+  const content = { displayName: "Alex", headline: "Events", bio: "Available for events", links: [{ label: "Site", destinationUrl: "https://example.com", destinationHost: "example.com", sortOrder: 0 }] };
+  const config = { enabled: true, label: "Event enquiry", rules: "Please confirm event details.", wear: [{ id: "formal", label: "Formal", description: "" }], extras: [] };
+  const contacts = [{ channel: "sms", value: "+61400000000" }, { channel: "email", value: "bookings@example.com" }];
+  const legacy = await publicProfileChecksum(content);
+  assert.equal(await bookingAwarePublicProfileChecksum(content), legacy);
+  const bound = await bookingAwarePublicProfileChecksum(content, { config, contacts });
+  assert.equal(await bookingAwarePublicProfileChecksum(content, { config, contacts: contacts.slice().reverse() }), bound);
+  assert.notEqual(await bookingAwarePublicProfileChecksum(content, { config, contacts: [{ ...contacts[0], value: "+61400000001" }, contacts[1]] }), bound);
+  assert.notEqual(await bookingAwarePublicProfileChecksum(content, { config: { ...config, rules: "Updated event details." }, contacts }), bound);
+});
+
 test("public profile writer keeps single-hyphen input while rejecting reserved URLs", async () => {
   const actions = await source("src/app/actions.ts");
   const body = actions.slice(actions.indexOf("const publicProfileSlug ="), actions.indexOf("function submittedPublicProfileDraftValues"));

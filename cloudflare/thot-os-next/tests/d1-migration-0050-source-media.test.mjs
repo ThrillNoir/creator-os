@@ -27,7 +27,7 @@ test("0050 through 0054 keep source ingestion, native authority, video intake, a
     await mkdir(migrations);
     for (const name of (await readdir(migrationsRoot)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort()) await copyFile(path.join(migrationsRoot, name), path.join(migrations, name));
     await writeFile(path.join(root, "wrangler.jsonc"), JSON.stringify({ name: "source-media-test", compatibility_date: "2026-08-28", d1_databases: [{ binding: "DB", database_name: "source-media-test", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "./migrations" }] }));
-    const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "source-media-test", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" } });
+    const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "source-media-test", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" }, maxBuffer: 16 * 1024 * 1024 });
     assert.equal(replay.status, 0, `${replay.stdout}\n${replay.stderr}`);
     db = new Database(await findDatabase(state));
     db.prepare("INSERT INTO creators (id,name,slug,initials) VALUES ('second','Second','second','S')").run();

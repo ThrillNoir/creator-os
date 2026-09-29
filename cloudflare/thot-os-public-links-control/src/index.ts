@@ -1,4 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowStep } from "cloudflare:workers";
+import { validateBookingConfig, type BookingConfig } from "../../shared/booking-contract.ts";
+import { handleBooking, purgeBookingReceipts } from "./booking.ts";
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { publicationIsAllowed, publicationPolicy } from "./publication-policy.ts";
@@ -10,6 +12,7 @@ type AdultPublishParams = PublishParams;
 type AdultWithdrawParams = AdultPublishParams;
 
 type ProfileRow = {
+  booking?: BookingConfig;
   profile_id: string;
   creator_id: string;
   slug: string;
@@ -83,8 +86,10 @@ type PublicProfileSnapshot = {
 };
 
 type ContactProfileSnapshot = {
-  schemaVersion: 1;
-  creator: { slug: string; displayName: string };
+  schemaVersion: 2;
+  versionId: string;
+  config: BookingConfig;
+  creator: { id: string; slug: string; displayName: string };
   channels: Partial<Record<"sms" | "email", string>>;
 };
 
@@ -269,6 +274,8 @@ async function loadApprovedProfile(env: Env, params: PublishParams) {
       AND d.derivative_kind='display' AND d.content_type='image/webp'
       AND u.surface='public_sfw' AND u.image_role=a.image_role AND u.status='processed'
     ORDER BY CASE a.image_role WHEN 'background' THEN 0 ELSE 1 END`).bind(profile.creator_id, profile.version_id).all<SfwMediaRow>();
+  const booking = await env.DB.prepare("SELECT config_json FROM creator_booking_configs WHERE creator_id=? AND profile_version_id=?").bind(profile.creator_id, profile.version_id).first<{ config_json: string }>();
+  if (booking) profile.booking = validateBookingConfig(JSON.parse(booking.config_json));
   return { profile, links: links.results, contacts: contacts.results, media: media.results };
 }
 
@@ -299,7 +306,7 @@ async function publicActions(env: Env, profile: ProfileRow, contacts: ContactRow
   const actions: PublicProfileSnapshot["actions"] = [];
   const bookingHref = configuredActionHref(env.BOOKING_ACTION_BASE_URL, "book", profile.slug);
   // A contact action requires both a configured route and a protected KV projection.
-  if (bookingHref && env.CONTACT_PROFILES && contacts.length > 0) actions.push({ id: "book", label: `Book ${profile.display_name}`, href: bookingHref });
+  if (env.BOOKING_ENQUIRIES_ENABLED === "true" && bookingHref && env.CONTACT_PROFILES && profile.booking?.enabled && contacts.some((item) => item.channel === "sms") && contacts.some((item) => item.channel === "email")) actions.push({ id: "book", label: profile.booking.label, href: bookingHref });
   const adultHref = configuredFriendlyMoreHref(env.SAFE_PUBLIC_PROFILE_BASE_URL, profile.slug);
   if (includeAdultAction && adultHref && await adultProjectionIsEligible(env, profile.creator_id)) actions.push({ id: "more", label: `More from ${profile.display_name}`, href: adultHref });
   return actions;
@@ -360,13 +367,13 @@ async function writeContactProjection(env: Env, profile: ProfileRow, contacts: C
   if (!env.CONTACT_PROFILES) return { configured: false };
   const key = contactSnapshotKey(profile.slug);
   const bookingHref = configuredActionHref(env.BOOKING_ACTION_BASE_URL, "book", profile.slug);
-  if (!bookingHref || !contacts.length) {
+  if (env.BOOKING_ENQUIRIES_ENABLED !== "true" || !bookingHref || !profile.booking?.enabled || !contacts.some((item) => item.channel === "sms") || !contacts.some((item) => item.channel === "email")) {
     await env.CONTACT_PROFILES.delete(key);
     return { configured: false, key };
   }
   const channels: ContactProfileSnapshot["channels"] = {};
   for (const contact of contacts) channels[contact.channel] = contact.contact_value;
-  await env.CONTACT_PROFILES.put(key, JSON.stringify({ schemaVersion: 1, creator: { slug: profile.slug, displayName: profile.display_name }, channels } satisfies ContactProfileSnapshot));
+  await env.CONTACT_PROFILES.put(key, JSON.stringify({ schemaVersion: 2, versionId: profile.version_id, config: profile.booking, creator: { id: profile.creator_id, slug: profile.slug, displayName: profile.display_name }, channels } satisfies ContactProfileSnapshot));
   return { configured: true, key };
 }
 
@@ -772,8 +779,10 @@ function routePublicationPolicy(env: Env, surface: "public" | "adult") {
 }
 
 export default {
+  async scheduled(_event: ScheduledController, env: Env) { await purgeBookingReceipts(env); },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/booking/")) return handleBooking(request, env);
     const route = routes[url.pathname as keyof typeof routes];
     if (request.method !== "POST" || !route) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
     const params = parsePublishParams(await request.clone().json().catch(() => null));
@@ -793,6 +802,10 @@ export default {
     }
     const instanceId = `${route.prefix}-${params.versionId}`;
     try {
+      if (url.pathname === "/withdraw" && env.BOOKING_ENQUIRIES_ENABLED === "true") {
+        const current = await loadActiveProfileForWithdrawal(env, params);
+        await recordPublicWithdrawalIntent(env, current, publicSnapshotKey(current.slug));
+      }
       const workflow = env[route.workflow];
       if (!workflow) throw new Error("The requested release workflow is not configured.");
       const instance = await workflow.create({ id: instanceId, params });

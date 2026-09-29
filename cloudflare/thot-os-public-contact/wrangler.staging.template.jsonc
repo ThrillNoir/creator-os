@@ -10,6 +10,8 @@
   "preview_urls": false,
   "kv_namespaces": [{ "binding": "CONTACT_PROFILES", "id": "REQUIRES_APPROVED_STAGING_KV_NAMESPACE" }],
   "analytics_engine_datasets": [{ "binding": "CONTACT_EVENTS", "dataset": "REQUIRES_APPROVED_STAGING_DATASET" }],
+  "services": [{ "binding": "PUBLIC_LINKS_CONTROL", "service": "REQUIRES_APPROVED_STAGING_PUBLIC_LINKS_CONTROL" }],
+  "ratelimits": [{ "binding": "BOOKING_RATE_LIMITER", "namespace_id": "REQUIRES_APPROVED_STAGING_RATE_LIMITER", "simple": { "limit": 5, "period": 60 } }],
   "vars": { "TURNSTILE_SITE_KEY": "REQUIRES_APPROVED_STAGING_VALUE", "TURNSTILE_EXPECTED_HOSTNAME": "REQUIRES_APPROVED_HOSTNAME" },
-  "secrets": { "required": ["TURNSTILE_SECRET"] }
+  "secrets": { "required": ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"] }
 }

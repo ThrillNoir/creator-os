@@ -354,5 +354,17 @@
       "sha256": "9089c2549dfe5ee3794c7a709ccb579cb073245c5bc5ef5e9adfbcaedbb42ca9",
       "purpose": "Applied bounded staging migration: immutable creator-scoped Instagram reply media intents and confirmed attachment receipts."
     }
+  ],
+  "pendingMigrations": [
+    {
+      "name": "0061_creator_booking_module.sql",
+      "sha256": "e61d9fa6edd0ec29852d11b8cc524295d1c96ee9a7ee36c16238f064d8541044",
+      "purpose": "Proposed: version-bound creator booking settings; not applied remotely."
+    },
+    {
+      "name": "0062_booking_delivery_evidence.sql",
+      "sha256": "5e4ddd0705b8ac5255ab540dd18d0aaaf783cca4b36e20e7c5700d76434c10ea",
+      "purpose": "Proposed: expiring payload-free enquiry receipts; not applied remotely."
+    }
   ]
 }

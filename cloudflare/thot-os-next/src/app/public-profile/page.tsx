@@ -9,11 +9,13 @@ import Link from "next/link";
 import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
 import { safePublicProfileUrl } from "@/lib/profile-public-url";
+import { disabledBookingConfig, validateBookingConfig, type BookingConfig } from "../../../../shared/booking-contract.ts";
 
 type Profile = { id: string; slug: string; status: string; published_version_id: string | null };
 type Version = { id: string; version_number: number; display_name: string; headline: string; bio: string; status: string; approved_by: string | null; approved_at: string | null; created_at: string };
 type Link = { id: string; profile_version_id: string; label: string; destination_url: string; sort_order: number; stable_link_id: string | null };
 type Contact = { profile_version_id: string; channel: "sms" | "email"; contact_value: string };
+type BookingConfigRow = { profile_version_id: string; config_json: string };
 type Publication = { id: string; version_id: string; status: string; public_snapshot_key: string; created_at: string };
 type AppearanceRow = { profile_version_id: string; theme_key: string; button_style: string; background_mode: string; background_color: string; primary_color: string; text_color: string; card_color: string; radius_scale: string };
 type ImageRow = { id: string; image_role: "avatar" | "background"; profile_version_id: string };
@@ -49,8 +51,9 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const creatorId = context.creator.creator_id;
   const env = cloudflareEnv();
   const DB = env.DB;
+  const canEdit = roleCan(context.creator.role, "mutate");
   const publishingConfigured = typeof env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN === "string" && env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN.length >= 40;
-  const [creator, profile, versions, links, contacts, publications, appearances, images] = await Promise.all([
+  const [creator, profile, versions, links, contacts, bookingConfigs, publications, appearances, images] = await Promise.all([
     DB.prepare("SELECT slug FROM creators WHERE id=?").bind(creatorId).first<{ slug: string }>(),
     DB.prepare("SELECT id,slug,status,published_version_id FROM creator_public_profiles WHERE creator_id=?").bind(creatorId).first<Profile>(),
     DB.prepare(`SELECT id,version_number,display_name,headline,bio,status,approved_by,approved_at,created_at
@@ -59,7 +62,8 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
       FROM creator_public_links l
       LEFT JOIN creator_public_link_revisions r ON r.creator_id=l.creator_id AND r.profile_version_id=l.profile_version_id AND r.sort_order=l.sort_order
       WHERE l.creator_id=? ORDER BY l.profile_version_id,l.sort_order`).bind(creatorId).all<Link>(),
-    DB.prepare("SELECT profile_version_id,channel,contact_value FROM creator_public_contact_methods WHERE creator_id=? AND enabled=1").bind(creatorId).all<Contact>(),
+    canEdit ? DB.prepare("SELECT profile_version_id,channel,contact_value FROM creator_public_contact_methods WHERE creator_id=? AND enabled=1").bind(creatorId).all<Contact>() : Promise.resolve({ results: [] as Contact[] }),
+    canEdit ? DB.prepare("SELECT profile_version_id,config_json FROM creator_booking_configs WHERE creator_id=?").bind(creatorId).all<BookingConfigRow>() : Promise.resolve({ results: [] as BookingConfigRow[] }),
     DB.prepare(`SELECT id,version_id,status,public_snapshot_key,created_at
       FROM creator_public_profile_publications WHERE creator_id=? ORDER BY created_at DESC LIMIT 12`).bind(creatorId).all<Publication>(),
     DB.prepare(`SELECT profile_version_id,theme_key,button_style,background_mode,background_color,primary_color,text_color,card_color,radius_scale
@@ -67,7 +71,6 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
     DB.prepare(`SELECT id,image_role,public_profile_version_id AS profile_version_id FROM creator_profile_image_attachments
       WHERE creator_id=? AND surface='public_sfw' AND status='attached'`).bind(creatorId).all<ImageRow>(),
   ]);
-  const canEdit = roleCan(context.creator.role, "mutate");
   const canPublish = canEdit;
   const draft = versions.results.find((version) => version.status === "draft") ?? null;
   const published = profile?.published_version_id ? versions.results.find((version) => version.id === profile.published_version_id) ?? null : null;
@@ -80,6 +83,9 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const authoringContacts = authoring ? contacts.results.filter((contact) => contact.profile_version_id === authoring.id) : [];
   const phone = authoringContacts.find((contact) => contact.channel === "sms")?.contact_value ?? "";
   const email = authoringContacts.find((contact) => contact.channel === "email")?.contact_value ?? "";
+  const authoringBookingConfig: BookingConfig = authoring
+    ? (() => { const row = bookingConfigs.results.find((config) => config.profile_version_id === authoring.id); return row ? validateBookingConfig(JSON.parse(row.config_json)) : disabledBookingConfig(); })()
+    : disabledBookingConfig();
   const slots = Array.from({ length: Math.max(4, Math.min(8, authoringLinks.length + 1)) }, (_, index) => authoringLinks[index] ?? null);
   const notice = query.notice ? notices[query.notice] : null;
   const defaultSlug = profile?.slug ?? creator?.slug ?? "creator";
@@ -93,6 +99,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Save changes privately, preview the page, then publish when it is ready.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Saved" : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
       {publicProfileUrl && <CopyProfileLink title="Your link for bio" detail="Use this safe public page in Instagram, TikTok, X, and other social bios." url={publicProfileUrl} />}
       {canEdit ? <PublicProfileEditor defaultSlug={defaultSlug} displayName={authoring?.display_name ?? context.creator.creator_name} headline={authoring?.headline ?? ""} bio={authoring?.bio ?? ""} phone={phone} email={email}
+        bookingConfig={authoringBookingConfig}
         links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
         appearance={authoringAppearance} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} canPublish={canPublish} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} slugLocked={Boolean(profile?.published_version_id)} />
         : <div className="empty"><b>Read-only public profile view</b><span>Your role can inspect profile history but cannot alter text, destinations, approvals, or publication.</span></div>}

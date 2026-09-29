@@ -21,7 +21,7 @@ async function replay(through) {
   await mkdir(migrations);
   for (const name of migrationNames.filter((name) => name <= through)) await copyFile(path.join(migrationsRoot, name), path.join(migrations, name));
   await writeFile(path.join(root, "wrangler.jsonc"), JSON.stringify({ name: "thot-os-expand-boundary", compatibility_date: "2026-08-08", d1_databases: [{ binding: "DB", database_name: "thot-os-expand-boundary", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "./migrations" }] }));
-  const result = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-expand-boundary", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" } });
+  const result = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-expand-boundary", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" }, maxBuffer: 16 * 1024 * 1024 });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const find = async (directory) => {
     for (const item of await readdir(directory, { withFileTypes: true })) {

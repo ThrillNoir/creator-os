@@ -13,6 +13,7 @@ import { ensureConnectorServiceGrants } from "@/lib/connector-service-grants";
 import { approvedHttpsDestination } from "@/lib/profile-link-input";
 import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
 import { isPublicCreatorSlug } from "../../../shared/public-profile-slug.ts";
+import { validateBookingConfig, type BookingConfig } from "../../../shared/booking-contract.ts";
 
 function values(formData: FormData, key: string) {
   return formData.getAll(key).map(String).map((value) => value.trim()).filter(Boolean);
@@ -51,6 +52,7 @@ export type PublicProfileDraftValues = {
   bio: string;
   bookingPhone: string;
   bookingEmail: string;
+  bookingConfig: string;
   linkLabels: string[];
   linkDestinations: string[];
   linkStableIds: string[];
@@ -126,6 +128,7 @@ function submittedPublicProfileDraftValues(formData: FormData): PublicProfileDra
     bio: String(formData.get("bio") ?? ""),
     bookingPhone: String(formData.get("bookingPhone") ?? ""),
     bookingEmail: String(formData.get("bookingEmail") ?? ""),
+    bookingConfig: String(formData.get("bookingConfig") ?? ""),
     linkLabels: formData.getAll("linkLabel").map(String),
     linkDestinations: formData.getAll("linkDestination").map(String),
     linkStableIds: formData.getAll("linkStableId").map(String),
@@ -143,6 +146,7 @@ type ValidPublicProfileDraft = {
   bio: string;
   links: PublicProfileLinkInput[];
   contacts: PublicContactInput[];
+  bookingConfig: BookingConfig;
   appearance: ReturnType<typeof publicProfileAppearance>;
 };
 
@@ -164,6 +168,7 @@ function validatePublicProfileDraft(formData: FormData, values: PublicProfileDra
   const bio = validate("bio", () => publicText(values.bio, 2000, "bio"));
   const phone = validate("bookingPhone", () => publicText(values.bookingPhone, 20, "phone number", { collapseWhitespace: true }));
   const email = validate("bookingEmail", () => publicText(values.bookingEmail, 254, "email address", { collapseWhitespace: true }).toLowerCase());
+  const bookingConfig = validate("bookingConfig", () => validateBookingConfig(JSON.parse(values.bookingConfig)));
   if (phone && !/^\+[1-9]\d{5,14}$/.test(phone)) fieldErrors.bookingPhone = "Use an international phone number, for example +61400000000.";
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fieldErrors.bookingEmail = "Enter one valid email address.";
   const labels = values.linkLabels.map((value) => value.replace(/\s+/g, " ").trim());
@@ -190,9 +195,10 @@ function validatePublicProfileDraft(formData: FormData, values: PublicProfileDra
     });
   }
   const appearance = validate("appearance", () => publicProfileAppearance(formData));
-  if (Object.keys(fieldErrors).length || !slug || requestedDisplayName === null || headline === null || bio === null || phone === null || email === null || !appearance) return { error: validationError(values, fieldErrors) };
+  if (bookingConfig?.enabled && (!phone || !email)) fieldErrors.bookingConfig = "Add both a phone number and email address before enabling booking enquiries.";
+  if (Object.keys(fieldErrors).length || !slug || requestedDisplayName === null || headline === null || bio === null || phone === null || email === null || !bookingConfig || !appearance) return { error: validationError(values, fieldErrors) };
   const contacts = [phone ? { channel: "sms" as const, value: phone } : null, email ? { channel: "email" as const, value: email } : null].filter(Boolean) as PublicContactInput[];
-  return { slug, requestedDisplayName, headline, bio, links, contacts, appearance };
+  return { slug, requestedDisplayName, headline, bio, links, contacts, bookingConfig, appearance };
 }
 
 function publicProfileAppearance(formData: FormData) {
@@ -292,6 +298,20 @@ async function publicProfileChecksum(content: { displayName: string; headline: s
   const canonical = JSON.stringify({ ...content, links: content.links.map((link) => ({ label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder })) });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function bookingAwarePublicProfileChecksum(content: Parameters<typeof publicProfileChecksum>[0], privateBooking?: { contacts: PublicContactInput[]; config: BookingConfig }) {
+  if (!privateBooking) return publicProfileChecksum(content);
+  const canonical = JSON.stringify({ ...content, links: content.links.map((link) => ({ label: link.label, destinationUrl: link.destinationUrl, destinationHost: link.destinationHost, sortOrder: link.sortOrder })), contacts: privateBooking.contacts.slice().sort((left, right) => left.channel.localeCompare(right.channel)).map((contact) => ({ channel: contact.channel, value: contact.value })), bookingConfig: privateBooking.config });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function bookingChecksumForVersion(DB: D1Database, creatorId: string, versionId: string, content: Parameters<typeof publicProfileChecksum>[0]) {
+  const config = await creatorPrepare(DB, creatorId, "SELECT config_json FROM creator_booking_configs WHERE creator_id=@creator AND profile_version_id=?").bind(versionId).first<{ config_json: string }>();
+  if (!config) return bookingAwarePublicProfileChecksum(content);
+  const contacts = await creatorPrepare(DB, creatorId, "SELECT channel,contact_value FROM creator_public_contact_methods WHERE creator_id=@creator AND profile_version_id=? AND enabled=1 ORDER BY channel ASC").bind(versionId).all<{ channel: "sms" | "email"; contact_value: string }>();
+  return bookingAwarePublicProfileChecksum(content, { contacts: contacts.results.map((contact) => ({ channel: contact.channel, value: contact.contact_value })), config: validateBookingConfig(JSON.parse(config.config_json)) });
 }
 
 function submittedPublicProfileVersionId(formData: FormData) {
@@ -1299,9 +1319,9 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
   const values = submittedPublicProfileDraftValues(formData);
   const validated = validatePublicProfileDraft(formData, values);
   if ("error" in validated) return validated.error;
-  const { slug, requestedDisplayName, headline, bio, links, contacts, appearance } = validated;
+  const { slug, requestedDisplayName, headline, bio, links, contacts, bookingConfig, appearance } = validated;
   const displayName = requestedDisplayName || identity.creator.creator_name;
-  const checksum = await publicProfileChecksum({ displayName, headline, bio, links });
+  const checksum = await bookingAwarePublicProfileChecksum({ displayName, headline, bio, links }, { contacts, config: bookingConfig });
   const { DB } = cloudflareEnv();
   const [profile, draft, nextVersion] = await Promise.all([
     creatorPrepare(DB, creatorId, "SELECT id,slug,published_version_id FROM creator_public_profiles WHERE creator_id=@creator LIMIT 1")
@@ -1324,6 +1344,7 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
       creatorPrepare(DB, creatorId, "DELETE FROM creator_public_links WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
       creatorPrepare(DB, creatorId, "DELETE FROM creator_public_link_revisions WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
       creatorPrepare(DB, creatorId, "DELETE FROM creator_public_contact_methods WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_booking_configs WHERE creator_id=@creator AND profile_version_id=?").bind(versionId),
       creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
         SET display_name=?,headline=?,bio=?,avatar_media_id=NULL,content_checksum=?
         WHERE id=? AND profile_id=? AND creator_id=@creator AND status='draft'`)
@@ -1353,6 +1374,8 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
     ...contacts.map((contact) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_contact_methods
       (id,creator_id,profile_version_id,channel,contact_value,enabled)
       VALUES (?,@creator,?,?,?,1)`).bind(crypto.randomUUID(), versionId, contact.channel, contact.value)),
+    creatorPrepare(DB, creatorId, `INSERT INTO creator_booking_configs (profile_version_id,creator_id,config_json,updated_at)
+      VALUES (?,@creator,?,CURRENT_TIMESTAMP)`).bind(versionId, JSON.stringify(bookingConfig)),
     identityAuditStatement(DB, actor, draft ? "public_profile_draft_updated" : "public_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contactChannels: contacts.map((contact) => contact.channel), contentChecksum: checksum, appearance: appearance.themeKey, publicSurface: true }),
   ];
   try {
@@ -1382,7 +1405,7 @@ export async function approvePublicProfileVersionAction(formData: FormData) {
     if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes approval validation. Update the draft first.");
     return { label: link.label, ...destination, sortOrder: link.sort_order };
   });
-  const checksum = await publicProfileChecksum({ displayName: version.display_name, headline: version.headline, bio: version.bio, links });
+  const checksum = await bookingChecksumForVersion(DB, creatorId, version.id, { displayName: version.display_name, headline: version.headline, bio: version.bio, links });
   if (checksum !== version.content_checksum) throw new Error("The profile content changed outside the approved draft workflow. Save the draft again before approving it.");
   const approved = await creatorPrepare(DB, creatorId, `UPDATE creator_public_profile_versions
     SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_note=?
@@ -1410,7 +1433,7 @@ export async function publishPublicProfileAction(formData: FormData) {
     if (destination.destinationUrl !== link.destination_url || destination.destinationHost !== link.destination_host) throw new Error("A saved public destination no longer passes publication validation. Save the profile again before publishing.");
     return { label: link.label, ...destination, sortOrder: link.sort_order };
   });
-  const checksum = await publicProfileChecksum({ displayName: version.display_name, headline: version.headline, bio: version.bio, links });
+  const checksum = await bookingChecksumForVersion(env.DB, creatorId, version.id, { displayName: version.display_name, headline: version.headline, bio: version.bio, links });
   if (checksum !== version.content_checksum) throw new Error("The profile changed outside the saved workflow. Save it again before publishing.");
   if (version.status === "draft") {
     const [approved] = await env.DB.batch([

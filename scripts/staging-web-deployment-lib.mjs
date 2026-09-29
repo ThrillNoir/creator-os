@@ -11,11 +11,12 @@ export const stagingDeploymentWorkers = Object.freeze({
   publicLinks: "thot-os-public-links-staging",
   publicMedia: "thot-os-public-media-staging",
   publicLinksControl: "thot-os-public-links-control-staging",
+  publicContact: "thot-os-public-contact-staging",
 });
 
 // Public Workers already use the web package's pinned compiler in their scripts.
 export function stagingToolchainDirectory(registry, component) {
-  const owner = component === "publicLinks" || component === "publicLinksControl" || component === "publicMedia" ? "web" : component;
+  const owner = ["publicLinks", "publicLinksControl", "publicMedia", "publicContact"].includes(component) ? "web" : component;
   return registry.environments.staging.components[owner].directory;
 }
 

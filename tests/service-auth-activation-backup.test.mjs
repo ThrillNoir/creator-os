@@ -75,6 +75,7 @@ test("backup command is staging-only, rejects repository destinations, and expor
     assert.throws(() => assertSecureExternalBackupDirectory(root), /non-repository/i);
     assert.equal(assertApprovedActivationPlan(plan(), activation, registry), true);
     assert.deepEqual(parseArgs(["--environment", "staging", "--approved-plan", "/safe/plan.json", "--output-dir", directory]), { environment: "staging", approvedPlan: "/safe/plan.json", outputDir: directory });
+    assert.deepEqual(parseArgs(["--environment", "staging", "--activation", "config/booking-activation.json", "--approved-plan", "/safe/plan.json", "--output-dir", directory]), { environment: "staging", activation: path.resolve("config/booking-activation.json"), approvedPlan: "/safe/plan.json", outputDir: directory });
     const calls = [];
     runReadOnlyD1Export({ registry, databaseName: activation.expected.databaseName, outputPath: path.join(directory, "staging-d1.sql"), execFileSyncImpl: (command, args, options) => calls.push({ command, args, options }) });
     assert.equal(calls.length, 1);

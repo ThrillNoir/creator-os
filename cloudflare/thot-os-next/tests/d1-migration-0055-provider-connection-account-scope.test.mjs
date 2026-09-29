@@ -37,7 +37,7 @@ test("0055 scopes provider connections and attempts to operational accounts", as
       d1_databases: [{ binding: "DB", database_name: "thot-os-0055-local", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "./migrations" }],
     }));
     const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-0055-local", "--local", "--persist-to", state], {
-      cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" },
+      cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" }, maxBuffer: 16 * 1024 * 1024,
     });
     assert.equal(replay.status, 0, `${replay.stdout}\n${replay.stderr}`);
     const databasePath = await findDatabase(state);

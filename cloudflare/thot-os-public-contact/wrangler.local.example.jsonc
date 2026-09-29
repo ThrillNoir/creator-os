@@ -9,9 +9,11 @@
   "preview_urls": false,
   "kv_namespaces": [{ "binding": "CONTACT_PROFILES", "id": "LOCAL_CONTACT_PROFILES_ONLY" }],
   "analytics_engine_datasets": [{ "binding": "CONTACT_EVENTS", "dataset": "LOCAL_CONTACT_EVENTS_ONLY" }],
+  "services": [{ "binding": "PUBLIC_LINKS_CONTROL", "service": "REQUIRES_LOCAL_PUBLIC_LINKS_CONTROL" }],
+  "ratelimits": [{ "binding": "BOOKING_RATE_LIMITER", "namespace_id": "LOCAL_BOOKING_RATE_LIMITER_ONLY", "simple": { "limit": 5, "period": 60 } }],
   "vars": {
     "TURNSTILE_SITE_KEY": "REQUIRES_LOCAL_VALUE",
     "TURNSTILE_EXPECTED_HOSTNAME": "localhost"
   },
-  "secrets": { "required": ["TURNSTILE_SECRET"] }
+  "secrets": { "required": ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"] }
 }

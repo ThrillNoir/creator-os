@@ -46,6 +46,7 @@ test("full replay through the explicit compatibility boundary accepts both scope
       cwd: local.root,
       encoding: "utf8",
       env: { ...process.env, CI: "1", NO_COLOR: "1" },
+      maxBuffer: 16 * 1024 * 1024,
     });
     assert.equal(replay.status, 0, `${replay.stdout}\n${replay.stderr}`);
     const file = await databasePath(local.state);

@@ -31,3 +31,26 @@ test("service-principal provisioning plans require explicit, allowed creator cap
 test("service-principal tooling refuses apply mode", () => {
   assert.throws(() => parseServicePrincipalPlanArguments(["--environment", "staging", "--apply"]), /plan-only/i);
 });
+
+test("service-principal plans assign each credential to its caller component and reject a foreign owner", async () => {
+  const [contract, registry] = await Promise.all([readJson("config/service-principals.json"), readJson("config/deployments.json")]);
+  const bookingContract = structuredClone(contract);
+  bookingContract.principals.push({
+    id: "booking-public-contact",
+    principalName: "thot-os-booking-public-contact",
+    secretName: "INTERNAL_BOOKING_CONTACT_TOKEN",
+    callerComponent: "publicContact",
+    receiver: "public-contact",
+    capabilities: ["booking.contact.read"],
+  });
+  const bookingRegistry = structuredClone(registry);
+  bookingRegistry.environments.staging.components.publicContact = {
+    config: "cloudflare/public-contact/wrangler.jsonc",
+    requiredSecrets: ["INTERNAL_BOOKING_CONTACT_TOKEN"],
+  };
+  const plan = buildServicePrincipalPlan({ environment: "staging", contract: bookingContract, registry: bookingRegistry });
+  assert.deepEqual(plan.principalSecretRequirements.publicContact, ["INTERNAL_BOOKING_CONTACT_TOKEN"]);
+  const foreignOwner = structuredClone(bookingRegistry);
+  foreignOwner.environments.staging.components.web.requiredSecrets.push("INTERNAL_BOOKING_CONTACT_TOKEN");
+  assert.throws(() => buildServicePrincipalPlan({ environment: "staging", contract: bookingContract, registry: foreignOwner }), /non-owner component web/i);
+});

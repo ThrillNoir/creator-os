@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, sha256, withActivationStatus } from "./service-auth-activation-lib.mjs";
+import { assertApplyGates, assertPrincipalSecretOwnership, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, sha256, withActivationStatus } from "./service-auth-activation-lib.mjs";
 import { createStructuredD1ReadClient } from "./cloudflare-d1-read.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,6 +28,7 @@ export function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--environment") options.environment = argv[++i];
     else if (arg === "--activation") options.activation = path.resolve(argv[++i]);
+    else if (arg === "--contract") options.contract = path.resolve(argv[++i]);
     else if (arg === "--plan") setMode("plan");
     else if (arg === "--apply") setMode("apply");
     else if (arg === "--status") setMode("status");
@@ -228,8 +229,8 @@ function readWorkerVersionMetadata(registry, config, versionId, runMetadataRead)
   return parseWorkerVersionSecretMetadataJson(runMetadataRead(["versions", "view", versionId, "--json", "--config", config], registry), versionId);
 }
 
-function captureWorkerVersionState(registry, runMetadataRead) {
-  const config = workerMetadataConfig(registry);
+function captureWorkerVersionState(registry, component, runMetadataRead) {
+  const config = workerMetadataConfig(registry, component);
   const versions = parseWorkerVersionsJson(runMetadataRead(["versions", "list", "--json", "--config", config], registry));
   const deployment = parseDeploymentStatusJson(runMetadataRead(["deployments", "status", "--json", "--config", config], registry));
   return { config, versions, deployment };
@@ -247,15 +248,22 @@ export function captureWorkerMetadata(registry, componentOrRead = "web", maybeRe
   return { latestVersionId: versions.latestVersionId, versionIds: versions.versionIds, deployment, latestSecretVersion };
 }
 
+export function captureActivationWorkerMetadata(plan, registry, captureMetadata = captureWorkerMetadata) {
+  if (plan?.unsupportedCallerComponents?.length) return null;
+  return captureMetadata(registry, plan?.callerComponent ?? "web");
+}
+
 /**
  * Verifies the exact unpublished version acknowledged by `versions secret
  * bulk`. This deliberately does not infer the staged version from list order.
  */
-export function captureStagedWorkerMetadata(before, registry, stagedVersionId, runMetadataRead = runWranglerMetadataRead) {
+export function captureStagedWorkerMetadata(before, registry, stagedVersionId, componentOrRead = "web", maybeRead = runWranglerMetadataRead) {
   if (!before || !Array.isArray(before.versionIds)) throw new Error("Worker secret staging requires a complete baseline version inventory.");
+  const component = typeof componentOrRead === "string" ? componentOrRead : "web";
+  const runMetadataRead = typeof componentOrRead === "function" ? componentOrRead : maybeRead;
   const expectedVersionId = nonEmptyMetadataString(stagedVersionId, "staged version id");
   if (before.versionIds.includes(expectedVersionId)) throw new Error("Wrangler acknowledged a Worker version that already existed before secret staging.");
-  const { config, versions, deployment } = captureWorkerVersionState(registry, runMetadataRead);
+  const { config, versions, deployment } = captureWorkerVersionState(registry, component, runMetadataRead);
   if (!versions.versionIds.includes(expectedVersionId)) throw new Error("Wrangler acknowledged Worker secret staging, but its version is absent from the verified version inventory.");
   const versionMetadata = readWorkerVersionMetadata(registry, config, expectedVersionId, runMetadataRead);
   const trafficPercentage = deployment.versions.find((entry) => entry.versionId === expectedVersionId)?.percentage ?? 0;
@@ -500,8 +508,12 @@ function secretPayload(plan, credentials) {
  * secret file or command-line secret value is created.
  */
 export function stageWebSecrets(plan, registry, credentials, runMutation = runWranglerMutation) {
+  const callerComponents = [...new Set(plan.principals.map((principal) => principal.callerComponent ?? "web"))];
+  if (callerComponents.length !== 1) throw new Error("Web secret staging refuses mixed caller-component credentials.");
+  const callerComponent = callerComponents[0];
   const input = JSON.stringify(secretPayload(plan, credentials));
-  const stdout = runMutation(["versions", "secret", "bulk", "--config", registry.environments.staging.components.web.config], registry, { input, captureStdout: true });
+  const config = workerMetadataConfig(registry, callerComponent);
+  const stdout = runMutation(["versions", "secret", "bulk", "--config", config], registry, { input, captureStdout: true });
   const secretNames = plan.principals.map((principal) => principal.secretName);
   const match = /^✨ Success! Created version ([a-f0-9-]+) with (\d+) secrets\.$/mi.exec(String(stdout));
   if (!match || Number(match[2]) !== secretNames.length) throw new Error("Wrangler secret staging did not return a verifiable version acknowledgement.");
@@ -583,6 +595,10 @@ export function applyActivation({
   executeD1 = d1Execute,
   writeReceipt = writeActivationReceipt,
 }) {
+  assertPrincipalSecretOwnership(plan, registry);
+  const callerComponents = [...new Set(plan.principals.map((principal) => principal.callerComponent ?? "web"))];
+  if (callerComponents.length !== 1) throw new Error(`Activation apply does not support mixed caller components: ${callerComponents.join(", ")}.`);
+  const callerComponent = callerComponents[0];
   let credentials = {};
   let workerSecretMetadata;
   let secretsMayBeStaged = false;
@@ -590,7 +606,7 @@ export function applyActivation({
   let activationFailureCategory = "UNKNOWN_MUTATION_FAILURE";
   try {
     preflightD1Mutation(registry, activation);
-    const workerMetadataBefore = captureMetadata(registry);
+    const workerMetadataBefore = captureMetadata === captureWorkerMetadata ? captureMetadata(registry, callerComponent) : captureMetadata(registry);
     credentials = generateCredentials(plan);
     secretsMayBeStaged = true;
     const stagedSecrets = stageSecrets(plan, registry, credentials);
@@ -599,14 +615,14 @@ export function applyActivation({
       throw new Error("Worker secret staging did not acknowledge every approved secret destination.");
     }
     const workerMetadataAfter = captureStagedMetadata
-      ? captureStagedMetadata(workerMetadataBefore, registry, stagedSecrets.stagedVersionId)
+      ? captureStagedMetadata(workerMetadataBefore, registry, stagedSecrets.stagedVersionId, callerComponent)
       : captureMetadata === captureWorkerMetadata
-        ? captureStagedWorkerMetadata(workerMetadataBefore, registry, stagedSecrets.stagedVersionId)
+        ? captureStagedWorkerMetadata(workerMetadataBefore, registry, stagedSecrets.stagedVersionId, callerComponent)
         : captureMetadata(registry);
     workerSecretMetadata = compareMetadata(workerMetadataBefore, workerMetadataAfter, expectedSecretNames);
     d1MayHaveBeenAttempted = true;
     executeD1(registry, activation.expected.databaseName, activationSql({ plan, activation, credentials, backupReceipt }));
-    const receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "D1_ACTIVE", principalCount: plan.principals.length, secretNames: plan.principals.map((entry) => entry.secretName), creatorGrantCount: plan.grants.length, d1CredentialHashesInstalled: plan.principals.length, secretValuesPersistedLocally: false, workerSecretMetadata, nextStep: "Deploy compatible receivers, route the staged Web version, then run protected no-op probes." });
+    const receipt = redactActivationReceipt({ releaseAttemptId, activationId: plan.activationId, environment: "staging", result: "D1_ACTIVE", principalCount: plan.principals.length, secretNames: plan.principals.map((entry) => entry.secretName), creatorGrantCount: plan.grants.length, d1CredentialHashesInstalled: plan.principals.length, secretValuesPersistedLocally: false, workerSecretMetadata, ...(callerComponent === "web" ? {} : { callerComponent }), nextStep: callerComponent === "web" ? "Deploy compatible receivers, route the staged Web version, then run protected no-op probes." : `Deploy compatible receivers, route the staged ${callerComponent} version, then run protected no-op probes.` });
     writeReceipt(output, receipt);
     return receipt;
   } catch (error) {
@@ -696,13 +712,18 @@ function assertApprovedPlanIdentity(approvedPlan, activation, registry) {
   if (registry?.environments?.staging?.resources?.d1?.[activation.expected.databaseName]?.id !== activation.expected.databaseId) throw new Error("Activation D1 identity does not match the deployment registry.");
 }
 
+export function assertApprovedPlanMatchesCurrent(approvedPlan, currentPlan) {
+  if (planDigest(approvedPlan) !== planDigest(currentPlan)) throw new Error("Approved plan does not match the current contract, migration, Git, or activation status.");
+  return true;
+}
+
 function writeSafeJson(output, value) {
   const safe = redactActivationReceipt(value);
   if (output) writeFileSync(output, `${JSON.stringify(safe, null, 2)}\n`, { mode: 0o600 });
   return safe;
 }
 
-function usage() { return "Usage: npm run services:activate -- --environment staging --activation <approved activation json> [--plan|--status|--mutation-preflight|--write-authorization-preflight|--apply|--revoke]. Plan, status, and mutation-preflight are read-only; write-authorization-preflight executes one verified zero-effect UPDATE."; }
+function usage() { return "Usage: npm run services:activate -- --environment staging --activation <approved activation json> [--contract <service-principal contract>] [--plan|--status|--mutation-preflight|--write-authorization-preflight|--apply|--revoke]. Plan, status, and mutation-preflight are read-only; write-authorization-preflight executes one verified zero-effect UPDATE."; }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
@@ -711,7 +732,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else {
       if (options.environment !== "staging") throw new Error("An explicit staging environment is required.");
       const activation = readJson(options.activation ?? defaults.activation);
-      const contract = readJson(defaults.contract);
+      const contract = readJson(options.contract ?? defaults.contract);
       const registry = readJson(defaults.registry);
       const d1Client = createActivationD1ReadClient();
       const observedMigrations = await d1Migrations(registry, activation, d1Client);
@@ -721,13 +742,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       if (options.mode === "plan") {
         console.log(JSON.stringify(writeSafeJson(options.output, plan), null, 2));
       } else if (options.mode === "status") {
+        const workerMetadata = captureActivationWorkerMetadata(statusPlan, registry);
         const status = writeSafeJson(options.output, {
           schemaVersion: 1,
           mode: "status",
           activationId: activation.activationId,
           environment: "staging",
           d1ActivationStatus,
-          workerMetadata: captureWorkerMetadata(registry),
+          ...(workerMetadata ? { workerMetadata } : {}),
         });
         console.log(JSON.stringify(status, null, 2));
       } else if (options.mode === "mutation-preflight") {
@@ -744,6 +766,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         if (!options.approvedPlan || !options.output) throw new Error(`${options.mode === "revoke" ? "Revoke" : "Apply"} requires --approved-plan and redacted --output receipt paths.`);
         const approvedPlan = readJson(options.approvedPlan);
         if (planDigest(approvedPlan) !== approvedPlan.planSha256) throw new Error("Approved plan checksum is invalid.");
+        assertApprovedPlanMatchesCurrent(approvedPlan, plan);
         assertApprovedPlanIdentity(approvedPlan, activation, registry);
         if (!sameStatusObservation(approvedPlan.activationStatus, d1ActivationStatus)) throw new Error("ACTIVATION_STATE_CONFLICT: current structured D1 activation state differs from the approved plan.");
         if (JSON.stringify(observedMigrations) !== JSON.stringify(approvedPlan.observedMigrations)) throw new Error("Activation requires the exact D1 migration state captured by the approved plan.");

@@ -31,6 +31,7 @@ export function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     if (["--environment", "--approved-plan", "--output-dir"].includes(option)) options[option.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = argv[++index];
+    else if (option === "--activation") options.activation = path.resolve(argv[++index]);
     else if (option === "--help") options.help = true;
     else throw new Error(`Unknown argument: ${option}`);
   }
@@ -38,7 +39,7 @@ export function parseArgs(argv) {
 }
 
 export function usage() {
-  return "Usage: npm run services:activation-backup -- --environment staging --approved-plan <absolute plan.json> --output-dir <absolute secure backup directory>";
+  return "Usage: npm run services:activation-backup -- --environment staging --approved-plan <absolute plan.json> --output-dir <absolute secure backup directory> [--activation <activation manifest>]";
 }
 
 function inside(candidate, parent) {
@@ -158,7 +159,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else {
       if (options.environment !== "staging" || !options.approvedPlan || !options.outputDir) throw new Error(usage());
       if (!path.isAbsolute(options.approvedPlan)) throw new Error("Approved activation plan must be an absolute path.");
-      const activation = json(activationPath, "Activation manifest");
+      const activation = json(options.activation ?? activationPath, "Activation manifest");
       const registry = json(registryPath, "Deployment registry");
       const plan = json(options.approvedPlan, "Approved activation plan");
       const result = await createActivationBackup({ plan, activation, registry, outputDirectory: options.outputDir });

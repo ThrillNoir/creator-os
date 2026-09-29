@@ -21,6 +21,33 @@ export function sha256Bytes(value) {
 export const ACTIVATION_BACKUP_MAX_AGE_MS = 15 * 60 * 1000;
 const SHA256 = /^[a-f0-9]{64}$/;
 
+export function principalCallerComponent(principal) {
+  const callerComponent = principal?.callerComponent ?? "web";
+  if (typeof callerComponent !== "string" || !/^[a-z][a-z0-9_-]{0,79}$/i.test(callerComponent)) throw new Error("Service principal caller component is invalid.");
+  return callerComponent;
+}
+
+export function principalSecretRequirements(principals) {
+  const requirements = {};
+  for (const principal of principals) (requirements[principalCallerComponent(principal)] ??= []).push(principal.secretName);
+  for (const secretNames of Object.values(requirements)) secretNames.sort();
+  return requirements;
+}
+
+export function assertPrincipalSecretOwnership(contract, registry) {
+  const components = registry?.environments?.staging?.components;
+  if (!components || typeof components !== "object") throw new Error("Staging component metadata is missing.");
+  for (const principal of contract?.principals ?? []) {
+    const callerComponent = principalCallerComponent(principal);
+    const owner = components[callerComponent];
+    if (!owner || !Array.isArray(owner.requiredSecrets) || !owner.requiredSecrets.includes(principal.secretName)) throw new Error(`Service principal secret ${principal.secretName} is not required by caller component ${callerComponent}.`);
+    for (const [componentName, component] of Object.entries(components)) {
+      if (componentName !== callerComponent && Array.isArray(component?.requiredSecrets) && component.requiredSecrets.includes(principal.secretName)) throw new Error(`Service principal secret ${principal.secretName} is also required by non-owner component ${componentName}.`);
+    }
+  }
+  return principalSecretRequirements(contract.principals);
+}
+
 export function registryHasProductionOperationalSurface(registry) {
   const production = registry?.environments?.production;
   if (!production?.provisioned && !production?.deployable) return false;
@@ -139,13 +166,14 @@ function normaliseActivationStatus(status = {}) {
 export function withActivationStatus(plan, status) {
   const activationStatus = normaliseActivationStatus(status);
   let blockingPrecondition = plan.compatibilityReady ? null : plan.expandReady ? "COMPATIBILITY_MIGRATION_0032_REQUIRED" : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED";
+  if (plan.unsupportedCallerComponents?.length) blockingPrecondition = "UNSUPPORTED_MIXED_CALLER_COMPONENTS";
   if (activationStatus.state === "SATISFIED") blockingPrecondition = "ACTIVATION_ALREADY_SATISFIED";
   else if (activationStatus.state === "CONFLICT") blockingPrecondition = "ACTIVATION_STATE_CONFLICT";
   else if (activationStatus.state === "REVOKED") blockingPrecondition = "ACTIVATION_ALREADY_REVOKED";
   return finalisePlan({
     ...plan,
     activationStatus,
-    activationReady: plan.compatibilityReady && activationStatus.state === "ABSENT",
+    activationReady: plan.compatibilityReady && activationStatus.state === "ABSENT" && !(plan.unsupportedCallerComponents?.length),
     blockingPrecondition,
   });
 }
@@ -157,6 +185,7 @@ export function validateActivation({ activation, contract, registry }) {
   if (!staging?.provisioned || !staging?.deployable || registryHasProductionOperationalSurface(registry)) throw new Error("Only staging may contain an operational service-auth surface; an isolated production public-links foundation is permitted.");
   const d1 = staging.resources?.d1?.[activation.expected?.databaseName];
   if (!d1 || d1.id !== activation.expected.databaseId) throw new Error("Activation D1 identity does not match the deployment registry.");
+  assertPrincipalSecretOwnership(contract, registry);
   const principals = new Map((contract?.principals ?? []).map((entry) => [entry.principalName, entry]));
   if (!principals.size || new Set([...principals.values()].map((entry) => entry.secretName)).size !== principals.size) throw new Error("Every service principal must have a distinct secret name.");
   const grants = [];
@@ -174,6 +203,9 @@ export function validateActivation({ activation, contract, registry }) {
 
 export function buildActivationPlan({ activation, contract, registry, observedMigrations, git, activationStatus }) {
   const { principals, grants } = validateActivation({ activation, contract, registry });
+  const secretRequirements = principalSecretRequirements(principals);
+  const callerComponents = Object.keys(secretRequirements);
+  const callerComponent = callerComponents.length === 1 ? callerComponents[0] : null;
   const expandMigrations = activation.expected.expandMigrations;
   const compatibilityMigrations = activation.expected.compatibilityMigrations;
   const postCompatibilityMigrations = activation.expected.postCompatibilityMigrations ?? [];
@@ -207,10 +239,11 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
     compatibilityReady,
     activationReady: compatibilityReady,
     blockingPrecondition: compatibilityReady ? null : expandReady ? "COMPATIBILITY_MIGRATION_0032_REQUIRED" : "EXPAND_MIGRATIONS_0028_THROUGH_0031_REQUIRED",
-    principals: principals.map(({ id, principalName, secretName, receiver, capabilities }) => ({ id, principalName, secretName, receiver, capabilities })),
+    principals: principals.map(({ id, principalName, secretName, receiver, capabilities, ...principal }) => ({ id, principalName, secretName, receiver, capabilities, ...(principalCallerComponent(principal) === "web" ? {} : { callerComponent: principalCallerComponent(principal) }) })),
     grants,
+    ...(callerComponent === "web" ? {} : { principalSecretRequirements: secretRequirements, ...(callerComponent ? { callerComponent } : { unsupportedCallerComponents: callerComponents }) }),
     operationsIfApplied: {
-      stagedWebSecrets: principals.map(({ secretName, principalName }) => ({ worker: "thot-os-staging", secretName, principalName })),
+      stagedWebSecrets: principals.map(({ secretName, principalName }) => callerComponent === "web" ? ({ worker: "thot-os-staging", secretName, principalName }) : ({ callerComponent, secretName, principalName })),
       d1Principals: principals.length,
       d1CredentialHashes: principals.length,
       d1CreatorCapabilityGrants: grants.length,
@@ -227,6 +260,8 @@ export function buildActivationPlan({ activation, contract, registry, observedMi
 }
 
 export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, backupReceipt, registry }) {
+  assertPrincipalSecretOwnership(plan, registry);
+  if (plan?.unsupportedCallerComponents?.length) throw new Error(`Activation apply does not support mixed caller components: ${plan.unsupportedCallerComponents.join(", ")}.`);
   if (plan?.activationStatus?.state !== "ABSENT") throw new Error(`Activation apply is blocked by ${plan?.blockingPrecondition ?? "ACTIVATION_STATE_CONFLICT"}.`);
   if (plan?.mode !== "plan" || plan.environment !== "staging" || !plan.expandReady || !plan.compatibilityReady || !plan.activationReady) throw new Error("Activation apply requires both expanded and compatibility-ready staging state.");
   if (confirmation !== activationConfirmation(plan.activationId, plan.planSha256)) throw new Error("Activation confirmation does not match the approved plan.");
@@ -237,6 +272,7 @@ export function assertApplyGates({ plan, confirmation, cleanGit, currentGit, bac
 }
 
 export function assertRevokeGates({ plan, confirmation, registry }) {
+  assertPrincipalSecretOwnership(plan, registry);
   if (plan?.mode !== "plan" || plan.environment !== "staging") throw new Error("Activation recovery is restricted to a staging plan.");
   if (confirmation !== revokeConfirmation(plan.activationId, plan.planSha256)) throw new Error("Recovery confirmation does not match the approved plan.");
   if (!["SATISFIED", "CONFLICT"].includes(plan?.activationStatus?.state) || !plan.activationStatus.activationRunPresent) {

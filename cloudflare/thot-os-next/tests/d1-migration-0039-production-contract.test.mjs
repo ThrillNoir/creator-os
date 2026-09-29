@@ -27,6 +27,7 @@ async function runMigrations(root, state) {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, CI: "1", NO_COLOR: "1" },
+    maxBuffer: 16 * 1024 * 1024,
   });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 }

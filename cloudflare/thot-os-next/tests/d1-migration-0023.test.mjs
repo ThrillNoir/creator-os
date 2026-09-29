@@ -44,6 +44,7 @@ test("fresh migrations retain device invariants and enable Composio Reddit API d
       cwd: local.root,
       encoding: "utf8",
       env: { ...process.env, CI: "1", NO_COLOR: "1" },
+      maxBuffer: 16 * 1024 * 1024,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const file = await databasePath(local.state);

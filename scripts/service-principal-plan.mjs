@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPreflight } from "./deployment-preflight.mjs";
-import { registryHasProductionOperationalSurface } from "./service-auth-activation-lib.mjs";
+import { assertPrincipalSecretOwnership, principalCallerComponent, registryHasProductionOperationalSurface } from "./service-auth-activation-lib.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultContract = path.join(projectRoot, "config/service-principals.json");
@@ -53,6 +53,7 @@ export function validateContract(contract) {
     if (!principal.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9_.-]{1,119}$/i.test(capability)) || new Set(principal.capabilities).size !== principal.capabilities.length) {
       throw new Error("Service principal capabilities must be valid and unique.");
     }
+    principalCallerComponent(principal);
     ids.add(principal.id);
     names.add(principal.principalName);
     secrets.add(principal.secretName);
@@ -67,9 +68,11 @@ export function buildServicePrincipalPlan({ environment, contract, registry, gra
   if (environment !== "staging" || contract.environment !== "staging") throw new Error("Service-principal planning is restricted to the explicit staging contract.");
   const staging = registry?.environments?.staging;
   if (!staging?.provisioned || !staging?.deployable || registryHasProductionOperationalSurface(registry)) throw new Error("Staging must be the only provisioned operational target for this plan; an isolated production public-links foundation is permitted.");
+  const secretRequirements = assertPrincipalSecretOwnership(contract, registry);
+  const hasNonWebCaller = Object.keys(secretRequirements).some((component) => component !== "web");
   const web = staging.components?.web;
   if (!web || !Array.isArray(web.requiredSecrets)) throw new Error("Canonical web deployment metadata is missing.");
-  const expectedSecrets = [...contract.principals.map((principal) => principal.secretName), ...(contract.runtimeSecrets ?? [])].sort();
+  const expectedSecrets = [...(secretRequirements.web ?? []), ...(contract.runtimeSecrets ?? [])].sort();
   const actualSecrets = [...web.requiredSecrets].sort();
   if (JSON.stringify(expectedSecrets) !== JSON.stringify(actualSecrets)) throw new Error("Canonical web secret contract does not match the service-principal contract.");
   const normalizedGrants = grants.map((grant) => parseGrant(grant, contract.principals));
@@ -80,13 +83,16 @@ export function buildServicePrincipalPlan({ environment, contract, registry, gra
     mode: "plan-only",
     environment,
     principalCount: contract.principals.length,
-    principals: contract.principals.map(({ id, principalName, secretName, receiver, capabilities }) => ({ id, principalName, secretName, receiver, capabilities })),
+    principals: contract.principals.map(({ id, principalName, secretName, receiver, capabilities, ...principal }) => ({ id, principalName, secretName, receiver, capabilities, ...(principalCallerComponent(principal) === "web" ? {} : { callerComponent: principalCallerComponent(principal) }) })),
+    ...(hasNonWebCaller ? { principalSecretRequirements: secretRequirements } : {}),
     grants: normalizedGrants,
     requiredRemoteGates: [
       "Verify the staging D1 identity and take a fresh recoverable backup/export.",
       "Apply reviewed EXPAND migrations 0028, 0029, 0030, and 0031, stop and verify the unchanged legacy trigger, then apply separately approved COMPATIBILITY migration 0032 before activation; do not remove the legacy branch.",
       "Generate one high-entropy credential per principal outside source control; do not print, commit, or place it in this plan.",
-      "Store each raw credential only as its named canonical-web Cloudflare secret and store only its SHA-256 hash in service_principal_credentials.",
+      ...(hasNonWebCaller
+        ? ["Store each raw credential only as its named registered caller-component Cloudflare secret and store only its SHA-256 hash in service_principal_credentials."]
+        : ["Store each raw credential only as its named canonical-web Cloudflare secret and store only its SHA-256 hash in service_principal_credentials."]),
       "Create only the explicitly listed creator/capability grants and append lifecycle audit receipts.",
       "Deploy the compatible web and receiver Workers as one controlled release, then test granted, missing-capability, foreign-creator, and revoked-credential cases.",
     ],

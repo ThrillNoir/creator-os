@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Execute, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertPrincipalSecretOwnership, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
+import { activationSql, applyActivation, assertApprovedPlanMatchesCurrent, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureActivationWorkerMetadata, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Execute, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -499,6 +499,76 @@ test("secret staging is an stdin-only bulk update with no secret file or command
   const source = await readFile(path.join(root, "scripts/service-auth-activate.mjs"), "utf8");
   assert.doesNotMatch(source, /web-secrets\.json|--secrets-file/);
   assert.match(source, /thot-os-service-auth-d1-/);
+});
+
+test("single non-web caller stages only its reviewed component, while mixed callers fail before apply", async () => {
+  const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const bookingContract = structuredClone(contract);
+  bookingContract.principals.forEach((principal) => { principal.callerComponent = "publicContact"; });
+  const bookingRegistry = structuredClone(registry);
+  bookingRegistry.environments.staging.components.publicContact = {
+    config: "cloudflare/public-contact/wrangler.jsonc",
+    requiredSecrets: bookingContract.principals.map((principal) => principal.secretName),
+  };
+  bookingRegistry.environments.staging.components.web.requiredSecrets = bookingContract.runtimeSecrets.slice();
+  const plan = buildActivationPlan({ activation, contract: bookingContract, registry: bookingRegistry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
+  assert.equal(plan.callerComponent, "publicContact");
+  const stalePlan = structuredClone(plan);
+  stalePlan.principals[0].callerComponent = "web";
+  assert.throws(() => assertApprovedPlanMatchesCurrent(stalePlan, plan), /current contract/i);
+  const credentials = Object.fromEntries(plan.principals.map((principal, index) => [principal.principalName, `public-contact-secret-${index}`.padEnd(48, "x")]));
+  const staged = stageWebSecrets(plan, bookingRegistry, credentials, (args) => {
+    assert.deepEqual(args.slice(-2), ["--config", "cloudflare/public-contact/wrangler.jsonc"]);
+    return "✨ Success! Created version a1111111-1111-4111-8111-111111111111 with 4 secrets.\n";
+  });
+  assert.equal(staged.secretNames.length, 4);
+  const metadataCalls = [];
+  assert.deepEqual(captureActivationWorkerMetadata(plan, bookingRegistry, (target, component) => { metadataCalls.push({ target, component }); return { versionId: "safe" }; }), { versionId: "safe" });
+  assert.equal(metadataCalls[0].component, "publicContact");
+  const receipts = [];
+  const receipt = applyActivation({
+    plan,
+    activation,
+    registry: bookingRegistry,
+    backupReceipt: { sha256: "b".repeat(64), environment: "staging", databaseId: activation.expected.databaseId },
+    output: "/non-persistent/test-receipt.json",
+    generateCredentials: () => credentials,
+    preflightD1Mutation: () => {},
+    captureMetadata: metadataSequence(plan),
+    stageSecrets: () => stagedSecretResult(plan),
+    executeD1: () => {},
+    writeReceipt: (_output, value) => receipts.push(value),
+  });
+  assert.equal(receipt.callerComponent, "publicContact");
+  assert.match(receipt.nextStep, /publicContact/);
+  assert.equal(receipts.length, 1);
+  const mixedContract = structuredClone(contract);
+  mixedContract.principals[0].callerComponent = "publicContact";
+  const mixedRegistry = structuredClone(registry);
+  mixedRegistry.environments.staging.components.publicContact = { config: "cloudflare/public-contact/wrangler.jsonc", requiredSecrets: [mixedContract.principals[0].secretName] };
+  mixedRegistry.environments.staging.components.web.requiredSecrets = mixedRegistry.environments.staging.components.web.requiredSecrets.filter((secret) => secret !== mixedContract.principals[0].secretName);
+  const mixedPlan = buildActivationPlan({ activation, contract: mixedContract, registry: mixedRegistry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
+  assert.equal(captureActivationWorkerMetadata(mixedPlan, mixedRegistry, () => { throw new Error("must not read a mixed caller Worker"); }), null);
+  let preflightCalls = 0;
+  assert.throws(() => applyActivation({ plan: mixedPlan, activation, registry: mixedRegistry, output: "/non-persistent/test-receipt.json", preflightD1Mutation: () => { preflightCalls += 1; } }), /mixed caller components/i);
+  assert.equal(preflightCalls, 0);
+});
+
+test("activation apply rejects an approved caller whose secret has moved to a non-owner component", async () => {
+  const [activation, contract, registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
+  const bookingContract = structuredClone(contract);
+  bookingContract.principals.forEach((principal) => { principal.callerComponent = "publicContact"; });
+  const bookingRegistry = structuredClone(registry);
+  bookingRegistry.environments.staging.components.publicContact = { config: "cloudflare/public-contact/wrangler.jsonc", requiredSecrets: bookingContract.principals.map((principal) => principal.secretName) };
+  bookingRegistry.environments.staging.components.web.requiredSecrets = bookingContract.runtimeSecrets.slice();
+  const plan = buildActivationPlan({ activation, contract: bookingContract, registry: bookingRegistry, observedMigrations: [...activation.expected.expandMigrations, ...activation.expected.compatibilityMigrations], git: { sha: "a".repeat(40), branch: "audit/test" } });
+  const staleRegistry = structuredClone(bookingRegistry);
+  staleRegistry.environments.staging.components.publicContact.requiredSecrets = [];
+  staleRegistry.environments.staging.components.web.requiredSecrets.push(...plan.principals.map((principal) => principal.secretName));
+  let preflightCalls = 0;
+  assert.throws(() => applyActivation({ plan, activation, registry: staleRegistry, output: "/non-persistent/test-receipt.json", preflightD1Mutation: () => { preflightCalls += 1; } }), /not required by caller component publicContact/i);
+  assert.equal(preflightCalls, 0);
+  assert.throws(() => assertPrincipalSecretOwnership(plan, staleRegistry), /not required by caller component publicContact/i);
 });
 
 test("secret-stage failure does not attempt canonical D1 activation", async () => {

@@ -34,7 +34,7 @@ test("0042 keeps profile-image originals private and only permits processed draf
       compatibility_date: "2026-08-21",
       d1_databases: [{ binding: "DB", database_name: "thot-os-profile-images-local", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "./migrations" }],
     }));
-    const result = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-profile-images-local", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" } });
+    const result = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-profile-images-local", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" }, maxBuffer: 16 * 1024 * 1024 });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const databasePath = await findDatabase(state);
     db = new Database(databasePath);

@@ -34,7 +34,7 @@ test("0043 projection deliveries cannot cross creator/profile/version scope", as
       compatibility_date: "2026-08-21",
       d1_databases: [{ binding: "DB", database_name: "thot-os-projection-delivery-local", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "./migrations" }],
     }));
-    const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-projection-delivery-local", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" } });
+    const replay = spawnSync(wrangler, ["d1", "migrations", "apply", "thot-os-projection-delivery-local", "--local", "--persist-to", state], { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1" }, maxBuffer: 16 * 1024 * 1024 });
     assert.equal(replay.status, 0, `${replay.stdout}\n${replay.stderr}`);
     const databasePath = await findDatabase(state);
     assert.ok(databasePath);
