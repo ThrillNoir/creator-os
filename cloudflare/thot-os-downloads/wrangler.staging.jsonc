@@ -7,7 +7,7 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "ENABLED": "false"
+    "ENABLED": "true"
   },
   "d1_databases": [
     {

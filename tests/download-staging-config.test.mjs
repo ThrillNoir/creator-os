@@ -13,7 +13,7 @@ test("downloads staging configuration owns only its workers.dev origin and appro
   assert.equal(config.workers_dev, true);
   assert.equal(config.preview_urls, false);
   assert.equal(config.routes, undefined);
-  assert.equal(config.vars.ENABLED, "false");
+  assert.equal(config.vars.ENABLED, "true");
   assert.deepEqual(config.d1_databases, [{ binding: "DB", database_name: "thot-os-staging", database_id: "174532e8-5ada-4e30-abba-1276b3540b3f", migrations_dir: "../thot-os-app/migrations" }]);
   assert.deepEqual(config.r2_buckets, [{ binding: "LIBRARY_MEDIA", bucket_name: "thot-os-library-media-staging" }]);
 });
