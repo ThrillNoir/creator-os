@@ -31,17 +31,18 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger records applied booking migrations", () => {
+test("reviewed staging ledger records applied booking and download migrations", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 64);
-  assert.deepEqual(ledger.migrations.slice(-2).map(({ remoteId, name }) => ({ remoteId, name })), [
+  assert.equal(ledger.migrations.length, 65);
+  assert.deepEqual(ledger.migrations.slice(-3).map(({ remoteId, name }) => ({ remoteId, name })), [
     { remoteId: 63, name: "0061_creator_booking_module.sql" },
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
+    { remoteId: 65, name: "0063_content_download_links.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0063_content_download_links.sql"]);
+  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), []);
   assert.ok(ledger.pendingMigrations.every((entry) => entry.remoteId === undefined));
   assert.deepEqual(inventory[56], {
     number: 55,

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-09-29T07:53:31.023Z",
+  "observedAt": "2026-10-05T10:03:03.159Z",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
   "migrations": [
     {
@@ -365,13 +365,13 @@
       "name": "0062_booking_delivery_evidence.sql",
       "sha256": "5e4ddd0705b8ac5255ab540dd18d0aaaf783cca4b36e20e7c5700d76434c10ea",
       "purpose": "Applied bounded staging migration: expiring payload-free enquiry receipts."
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0063_content_download_links.sql",
       "sha256": "1e6c7c22508f8eeed7a6e04b23e5b6e6cd9bcea6ea13bab50e3025d1abfa417c",
-      "purpose": "Pending local-only one-time content download links; not applied remotely."
+      "purpose": "Applied approved bounded staging migration: creator-scoped one-time video download links.",
+      "remoteId": 65
     }
-  ]
+  ],
+  "pendingMigrations": []
 }

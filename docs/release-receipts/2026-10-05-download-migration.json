@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "staging-oct5-downloads",
+  "target": {
+    "environment": "staging",
+    "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
+    "databaseName": "thot-os-staging",
+    "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
+    "migrationsDir": "../thot-os-app/migrations"
+  },
+  "git": {
+    "sha": "7e7c9b8effb7ad01e53499eeb8bce2e63b4bacd1",
+    "branch": "codex/booking-staging-release"
+  },
+  "backup": {
+    "receiptPath": "/Users/thotos/.codex/staging-release-20261005/backup/staging-d1-f02f292cbb75137d95fb63a983ca309324d5ad366eae4f9d96d3ecb7285bd329.sql.receipt.json",
+    "exportedAt": "2026-10-05T10:01:38.533Z",
+    "sqlChecksum": "1600189dc4f26cb4f7ea7ff5617ef3c3173beb0c31f7f8aac1a11194f45fc5b2",
+    "planSha256": "f02f292cbb75137d95fb63a983ca309324d5ad366eae4f9d96d3ecb7285bd329",
+    "receiptHash": "8ce6a08e11278d21a11ffdd3950d97a79855907dd0f2ca17b62f4bf872846a90"
+  },
+  "startedAt": "2026-10-05T10:02:36.640Z",
+  "planSourceSha256": "c188fe9b26c14c56a774a0475957752457e1dab03e79391dfb11f1447caaee72",
+  "mode": "APPLY",
+  "planSha256": "f02f292cbb75137d95fb63a983ca309324d5ad366eae4f9d96d3ecb7285bd329",
+  "requestedRange": {
+    "from": "0063_content_download_links.sql",
+    "through": "0063_content_download_links.sql"
+  },
+  "attempted": [
+    "0063_content_download_links.sql"
+  ],
+  "locallyConfirmed": [],
+  "remotelyConfirmed": [
+    "0063_content_download_links.sql"
+  ],
+  "confirmedNoChange": [],
+  "outcomeUnknown": [],
+  "localCommandErrors": [
+    {
+      "migration": "0063_content_download_links.sql",
+      "diagnostic": "LOCAL_COMMAND_FAILURE"
+    }
+  ],
+  "attempts": [
+    {
+      "migration": "0063_content_download_links.sql",
+      "submitted": true,
+      "localConfirmed": false,
+      "remoteOutcome": "CONFIRMED",
+      "diagnostic": "LOCAL_COMMAND_FAILURE"
+    }
+  ],
+  "failed": null,
+  "excludedPending": [],
+  "postMigrationState": [
+    "0001_adelaide_library.sql",
+    "0002_library_classification_events.sql",
+    "0003_operations_foundation.sql",
+    "0004_reddit_scheduler.sql",
+    "0005_reddit_queue_controls.sql",
+    "0006_instagram_operations.sql",
+    "0007_vault_bridge.sql",
+    "0008_reddit_native_bridge.sql",
+    "0009_unified_messages.sql",
+    "0010_telegram_connector.sql",
+    "0011_instagram_completion.sql",
+    "0012_instagram_replies.sql",
+    "0013_instagram_reply_window.sql",
+    "0014_instagram_message_subscription.sql",
+    "0015_message_attachments.sql",
+    "0016_telegram_fansly_messages.sql",
+    "0017_reddit_community_events.sql",
+    "0018_creator_identity_profiles.sql",
+    "0019_actor_role_audit.sql",
+    "0020_actor_role_contract.sql",
+    "0021_creator_dropbox_source.sql",
+    "0022_asset_preview_queue.sql",
+    "0023_fansly_account_invariant.sql",
+    "0024_finance_foundation.sql",
+    "0025_reddit_composio_native_api.sql",
+    "0026_retire_reddit_browser_bridge.sql",
+    "0027_reddit_post_flairs.sql",
+    "0028_migration_ledger.sql",
+    "0029_service_principal_capabilities.sql",
+    "0030_canonical_control_plane.sql",
+    "0031_service_auth_activation_support.sql",
+    "0032_service_auth_compatibility.sql",
+    "0033_tenant_integrity_and_quarantine.sql",
+    "0034_public_profiles_and_approved_links.sql",
+    "0035_delivery_outbox_and_metric_observations.sql",
+    "0036_public_profile_authoring_guards.sql",
+    "0037_instagram_analytics_collection_runs.sql",
+    "0038_instagram_analytics_metric_coverage.sql",
+    "0039_production_environment_audit_contract.sql",
+    "0040_creator_profile_interactions.sql",
+    "0041_creator_profile_appearance.sql",
+    "0042_creator_profile_image_derivatives.sql",
+    "0043_creator_profile_projection_delivery.sql",
+    "0044_onlyfans_upload_bridge.sql",
+    "0045_onlyfans_authorized_delivery.sql",
+    "0046_onlyfans_sequential_batches.sql",
+    "0047_onlyfans_supervised_delivery.sql",
+    "0048_onlyfans_grouped_message_delivery.sql",
+    "0044_creator_r2_library.sql",
+    "0045_finished_media_uploads.sql",
+    "0049_creator_onboarding_access_vault.sql",
+    "0050_r2_native_source_media.sql",
+    "0051_r2_source_media_hardening.sql",
+    "0052_creator_scoped_r2_readiness.sql",
+    "0053_native_asset_authority.sql",
+    "0054_native_video_intake.sql",
+    "0055_provider_connection_account_scope.sql",
+    "0056_creator_invitations.sql",
+    "0057_instagram_account_scoped_analytics.sql",
+    "0058_fansly_claim_recovery.sql",
+    "0059_instagram_message_sync_reliability.sql",
+    "0060_instagram_reply_media.sql",
+    "0061_creator_booking_module.sql",
+    "0062_booking_delivery_evidence.sql",
+    "0063_content_download_links.sql"
+  ],
+  "postStateError": null,
+  "result": "APPLIED",
+  "remoteMutation": "CONFIRMED",
+  "productionTouched": false,
+  "completedAt": "2026-10-05T10:02:41.373Z",
+  "receiptSha256": "f95129bfc5584be2896dfcf6f8b2037c2a33e0ee0aa694adb8aaf5eacdad520b"
+}
