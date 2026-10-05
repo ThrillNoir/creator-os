@@ -19,12 +19,20 @@ async function baselineSql() {
   try {
     const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
     if (ledger?.schemaVersion !== 1 || !Array.isArray(ledger.migrations) || ledger.migrations.some((entry) => !/^\d{4}_.+\.sql$/.test(entry?.name ?? ""))) throw new Error("Reviewed staging migration ledger is invalid.");
-    const names = ledger.migrations.map((entry) => entry.name);
+    // The checked-in production foundation is intentionally frozen through
+    // invitations. New staging rollout migrations must not silently advance it.
+    const lastMigration = "0056_creator_invitations.sql";
+    const boundary = ledger.migrations.findIndex((entry) => entry.name === lastMigration);
+    if (boundary !== 57 || ledger.migrations[boundary]?.remoteId !== 58) throw new Error("Production baseline boundary does not match the reviewed invitation foundation.");
+    const entries = ledger.migrations.slice(0, boundary + 1);
+    if (entries.some((entry, index) => entry.remoteId !== index + 1)) throw new Error("Production baseline provenance must be contiguous and ordered.");
+    const names = entries.map((entry) => entry.name);
     const database = new Database(path.join(root, "replay.sqlite"));
     try {
       database.exec("PRAGMA foreign_keys = ON; CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);");
-      for (const name of names) {
+      for (const [index, name] of names.entries()) {
         const source = await readFile(path.join(migrationsRoot, name), "utf8");
+        if (checksum(source) !== entries[index].sha256) throw new Error(`Production baseline migration checksum changed: ${name}`);
         database.exec(source);
         database.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(name);
       }

@@ -26,6 +26,15 @@ test("finance CSV accepts explicit net earnings and rejects ambiguous duplicate 
 2026-08-14,10.999,AUD`), /two decimal places/);
 });
 
+test("finance CSV rejects missing or blank currency instead of assuming AUD", () => {
+  assert.throws(() => normaliseFinanceCsv(`date,revenue
+2026-08-14,10`), /Row 2 needs a currency code/);
+  assert.throws(() => normaliseFinanceCsv(`date,revenue,currency
+2026-08-14,10,  `), /Row 2 needs a currency code/);
+  assert.equal(normaliseFinanceCsv(`date,revenue,currency
+2026-08-14,10,nzd`)[0].currency, "NZD");
+});
+
 test("delivery scorecard counts only verified receipts and exposes guardrails", () => {
   assert.deepEqual(calculateDeliveryScorecard({
     verifiedSocial: 8,

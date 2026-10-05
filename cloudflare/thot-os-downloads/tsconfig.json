@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "WebWorker"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "../shared/**/*.ts", "../thot-os-next/src/lib/content-download-links.ts", "../thot-os-next/src/lib/source-media-algorithms.ts", "../thot-os-next/cloudflare-env.d.ts"]
+}

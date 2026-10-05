@@ -1,0 +1,9 @@
+// Copy to wrangler.local.jsonc for local development. Do not add account or bucket IDs here.
+{
+  "name": "thot-os-downloads-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "dev": { "port": 8791 },
+  "d1_databases": [{ "binding": "DB", "database_name": "local-thot-os", "database_id": "replace-locally" }],
+  "r2_buckets": [{ "binding": "LIBRARY_MEDIA", "bucket_name": "local-library-media" }]
+}

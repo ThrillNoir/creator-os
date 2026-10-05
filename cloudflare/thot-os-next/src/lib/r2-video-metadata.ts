@@ -77,5 +77,13 @@ export async function validateR2VideoMetadata(bucket: R2Bucket, key: string, exp
     offset += header.size;
   }
   const codec = validator.finish();
-  return { byteCount: object.size, codec, detectedMime: expected.mimeType, r2Etag: object.etag, r2Version: object.version, sha256: expected.sha256 };
+  return {
+    byteCount: object.size,
+    codec,
+    detectedMime: expected.mimeType,
+    r2Etag: object.etag,
+    r2Version: object.version,
+    clientSha256: expected.sha256,
+    checksumProvenance: "client_declared" as const,
+  };
 }

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hashCanonicalJson, hashFileBytes, inventoryFromLedger, validateReleaseExportPlan } from "./bounded-d1-migrations-lib.mjs";
+import { hashCanonicalJson, hashFileBytes, inventoryFromLedger, replayD1ExportMigrationHistory, validateReleaseExportPlan } from "./bounded-d1-migrations-lib.mjs";
 import { createActivationD1ReadClient, mutationWranglerEnvironment } from "./service-auth-activate.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,14 +35,6 @@ function planFrom(file) {
   if (!file || !path.isAbsolute(file)) throw new Error("approved_plan_required");
   return JSON.parse(readFileSync(file, "utf8"));
 }
-function exportMigrationNames(exportPath) {
-  const source = readFileSync(exportPath, "utf8");
-  const matcher = /^INSERT INTO "d1_migrations" \("id","name","applied_at"\) VALUES\((\d+),'((?:[^']|'')*)','[^']*'\);$/gm;
-  const rows = []; let match;
-  while ((match = matcher.exec(source)) !== null) rows.push({ id: Number(match[1]), name: match[2].replaceAll("''", "'") });
-  if (!rows.length || rows.some((row, index) => !Number.isInteger(row.id) || row.id < 1 || (index && row.id <= rows[index - 1].id) || !/^\d{4}_.+\.sql$/.test(row.name))) throw new Error("export_migration_history_invalid");
-  return rows.map((row) => row.name);
-}
 function exportStaging(plan, output) {
   try {
     execFileSync(wrangler, ["--cwd", path.join(root, "cloudflare/thot-os-next"), "d1", "export", plan.target.databaseName, "--remote", "--skip-confirmation", "--output", output], {
@@ -65,7 +57,7 @@ async function main() {
   const before = await client.readMigrationHistory(target);
   if (hashCanonicalJson(before) !== hashCanonicalJson(plan.preMigrationState)) throw new Error("staging_migration_history_changed");
   exportStaging(plan, exportPath); chmodSync(exportPath, 0o600);
-  const exported = exportMigrationNames(exportPath); const after = await client.readMigrationHistory(target);
+  const exported = replayD1ExportMigrationHistory(exportPath); const after = await client.readMigrationHistory(target);
   if (hashCanonicalJson(exported) !== hashCanonicalJson(plan.preMigrationState) || hashCanonicalJson(after) !== hashCanonicalJson(plan.preMigrationState)) throw new Error("staging_export_history_changed");
   const receipt = { schemaVersion: 2, mode: "READ ONLY REMOTE EXPORT", target: { ...plan.target, migrations: before }, planSha256: plan.planSha256, preMigrationStateSha256: hashCanonicalJson(plan.preMigrationState), sqlChecksum: hashFileBytes(exportPath), exportedAt: new Date().toISOString() };
   writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600, flag: "wx" });

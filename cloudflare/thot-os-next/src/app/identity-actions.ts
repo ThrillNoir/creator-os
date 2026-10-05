@@ -155,14 +155,26 @@ export async function claimCreatorInvitationAction(formData: FormData) {
   if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("This invitation is invalid or expired.");
   const tokenHash = await sha256(token);
   const { DB } = cloudflareEnv();
-  const invitation = await DB.prepare("SELECT id,creator_id,invited_email FROM creator_invitations WHERE token_hash=? AND status='pending' AND unixepoch(expires_at)>unixepoch(CURRENT_TIMESTAMP)").bind(tokenHash).first<{ id: string; creator_id: string; invited_email: string }>();
+  const invitation = await DB.prepare("SELECT i.id,i.creator_id,i.invited_email FROM creator_invitations i JOIN creators c ON c.id=i.creator_id AND c.status='active' WHERE i.token_hash=? AND i.status='pending' AND unixepoch(i.expires_at)>unixepoch(CURRENT_TIMESTAMP)").bind(tokenHash).first<{ id: string; creator_id: string; invited_email: string }>();
   if (!invitation || invitation.invited_email.toLowerCase() !== identity.email) throw new Error("This invitation is not for the signed-in Access identity.");
-  await DB.batch([
-    DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) VALUES (?,?, 'active')").bind(identity.email, identity.email),
-    DB.prepare("UPDATE creator_invitations SET status='accepted',accepted_at=CURRENT_TIMESTAMP,accepted_by=? WHERE id=? AND status='pending' AND unixepoch(expires_at)>unixepoch(CURRENT_TIMESTAMP)").bind(identity.email, invitation.id),
-    DB.prepare("INSERT INTO creator_memberships (creator_id,user_email,role,status) SELECT ?,?,'creator','active' WHERE EXISTS (SELECT 1 FROM creator_invitations WHERE id=? AND status='accepted')").bind(invitation.creator_id, identity.email, invitation.id),
-    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(), invitation.creator_id, identity.email, "creator", "creator_invitation_accepted", invitation.id, JSON.stringify({ metadataOnly: true })),
+  const existingUser = await DB.prepare("SELECT status FROM users WHERE lower(email)=lower(?)").bind(identity.email).first<{ status: string }>();
+  if (existingUser?.status === "suspended") throw new Error("This THOT OS account is suspended. Contact an administrator before claiming this invitation.");
+  const claimResults = await DB.batch([
+    DB.prepare("INSERT OR IGNORE INTO users (email,display_name,status) SELECT ?,?,'active' WHERE EXISTS (SELECT 1 FROM creator_invitations i JOIN creators c ON c.id=i.creator_id WHERE i.id=? AND i.status='pending' AND unixepoch(i.expires_at)>unixepoch(CURRENT_TIMESTAMP) AND c.status='active')").bind(identity.email, identity.email, invitation.id),
+    DB.prepare("UPDATE creator_invitations SET status='accepted',accepted_at=CURRENT_TIMESTAMP,accepted_by=? WHERE id=? AND status='pending' AND unixepoch(expires_at)>unixepoch(CURRENT_TIMESTAMP) AND EXISTS (SELECT 1 FROM creators WHERE id=creator_invitations.creator_id AND status='active') AND EXISTS (SELECT 1 FROM users WHERE lower(email)=lower(?) AND status='active')").bind(identity.email, invitation.id, identity.email),
+    DB.prepare("INSERT INTO creator_memberships (creator_id,user_email,role,status) SELECT ?,?,'creator','active' WHERE EXISTS (SELECT 1 FROM creator_invitations i JOIN creators c ON c.id=i.creator_id WHERE i.id=? AND i.status='accepted' AND lower(i.accepted_by)=lower(?) AND c.status='active') AND EXISTS (SELECT 1 FROM users WHERE lower(email)=lower(?) AND status='active')").bind(invitation.creator_id, identity.email, invitation.id, identity.email, identity.email),
+    DB.prepare("INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail) SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM creator_invitations i JOIN creators c ON c.id=i.creator_id WHERE i.id=? AND i.status='accepted' AND lower(i.accepted_by)=lower(?) AND c.status='active')").bind(crypto.randomUUID(), invitation.creator_id, identity.email, "creator", "creator_invitation_accepted", invitation.id, JSON.stringify({ metadataOnly: true }), invitation.id, identity.email),
   ]);
+  if (!Number(claimResults[1]?.meta?.changes ?? 0)) {
+    const [user, currentInvitation, membership] = await Promise.all([
+      DB.prepare("SELECT status FROM users WHERE lower(email)=lower(?)").bind(identity.email).first<{ status: string }>(),
+      DB.prepare("SELECT status,accepted_by FROM creator_invitations WHERE id=?").bind(invitation.id).first<{ status: string; accepted_by: string | null }>(),
+      DB.prepare("SELECT status FROM creator_memberships WHERE creator_id=? AND lower(user_email)=lower(?)").bind(invitation.creator_id, identity.email).first<{ status: string }>(),
+    ]);
+    if (user?.status === "suspended") throw new Error("This THOT OS account is suspended. Contact an administrator before claiming this invitation.");
+    if (currentInvitation?.status === "accepted" && currentInvitation.accepted_by?.toLowerCase() === identity.email && membership?.status === "active") redirect("/onboarding");
+    throw new Error("This invitation is invalid, expired, or already claimed.");
+  }
   redirect("/onboarding");
 }
 

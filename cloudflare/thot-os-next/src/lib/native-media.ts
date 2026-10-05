@@ -46,8 +46,11 @@ export async function createNativeImagePreview(input: {
   sourceSha256: string;
 }) {
   const source = await input.libraryMedia.get(input.objectKey, { onlyIf: { etagMatches: input.expectedEtag } });
-  if (!source || !("body" in source)) throw new Error("source_object_changed_during_preview");
-  const sourceBytes = new Uint8Array(await source.arrayBuffer());
+  // Read the stream once. Inspecting a proxied R2 body's property and then
+  // calling arrayBuffer() can consume it twice in local OpenNext bindings.
+  const sourceBody = (source as R2ObjectBody | null)?.body;
+  if (!sourceBody) throw new Error("source_object_changed_during_preview");
+  const sourceBytes = new Uint8Array(await new Response(sourceBody).arrayBuffer());
   if (!sourceBytes.byteLength) throw new Error("source_object_missing");
   const transformed = await input.images.input(byteStream(sourceBytes))
     .transform({ width: 720, height: 720, fit: "scale-down" })

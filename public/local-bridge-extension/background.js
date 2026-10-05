@@ -319,7 +319,7 @@ const processVaultQueue=async(tabId,url)=>{
   if(!vaultPlatformForUrl(url))return {ok:false,state:"wrong_page",error:"Open the Fansly vault first."};
   if(vaultUploadRunning)return {ok:false,state:"busy",error:"A vault upload is already in progress."};
   vaultUploadRunning=true;
-  let config,job;
+  let config,job,uploadStarted=false;
   try{
     const prepared=await chrome.scripting.executeScript({target:{tabId},func:prepareFanslyVault});
     const preparation=prepared?.[0]?.result??{ready:false,error:"The Fansly preparation step did not return a result."};
@@ -328,25 +328,33 @@ const processVaultQueue=async(tabId,url)=>{
     const response=await bridgeRequest(config,"/jobs/claim",{headers:{"x-thot-os-vault-client":"explicit-v4"}});
     if(response.status===401){await removeStoredBridge();return {ok:false,state:"unpaired",error:"This Chrome profile must be paired again."};}
     if(!response.ok)return {ok:false,state:"bridge_error",error:`THOT OS returned ${response.status}.`};
-    job=(await response.json()).job;
-    if(!job)return {ok:true,state:"empty"};
+    const queue=await response.json();
+    job=queue.job;
+    if(!job)return queue.reconciliationRequired
+      ?{ok:false,state:"uncertain",error:"A previous upload may have completed without a receipt. Verify Fansly’s vault before asking an administrator to reconcile it."}
+      :{ok:true,state:"empty"};
     const baselineResults=await chrome.scripting.executeScript({target:{tabId},func:readFanslyVaultState});
     const baseline=baselineResults?.[0]?.result;
     if(!baseline)throw new Error("Fansly did not return its saved-vault baseline before attachment.");
     const download=await downloadBridgeMedia(config,job);
     let result;
     try{
+      uploadStarted=true;
       await attachLocalFileToNativeInput(tabId,download.localMediaPath);
       const executed=await chrome.scripting.executeScript({target:{tabId},func:verifyFanslyVaultAttachment,args:[job.basename,baseline]});
       result=executed?.[0]?.result??{status:"failed",error:"Fansly did not return an attachment receipt."};
-      if(result.receipt)result.receipt={...result.receipt,bytes:download.downloadBytes,nativeAttachment:true};
+      result.receipt={...(result.receipt??{}),bytes:download.downloadBytes,nativeAttachment:true,uploadStarted:true,
+        ...(result.status==="staged"?{}:{outcome:"uncertain",reconciliationRequired:true})};
     }finally{await discardBridgeDownload(download.downloadId);}
     const receiptResponse=await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:result.status,error:result.error,receipt:result.receipt})});
     if(!receiptResponse.ok)return {ok:false,state:"receipt_error",error:"The file was handled, but THOT OS could not record the result."};
-    return {ok:result.status==="staged",state:result.status,filename:job.basename,error:result.error};
+    const recorded=await receiptResponse.json().catch(()=>null);
+    if(recorded?.status==="verified")return {ok:true,state:"staged",filename:job.basename};
+    if(recorded?.status==="claimed")return {ok:false,state:"uncertain",error:"Fansly may have saved the file, but Creator OS could not verify the receipt. Check the vault before retrying."};
+    return {ok:false,state:"failed",filename:job.basename,error:result.error||"Creator OS did not verify the Fansly receipt."};
   }catch(error){
-    if(config?.token&&job?.id)await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:error instanceof Error?error.message:String(error),receipt:{url}})}).catch(()=>{});
-    return {ok:false,state:"failed",error:error instanceof Error?error.message:String(error)};
+    if(config?.token&&job?.id)await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:error instanceof Error?error.message:String(error),receipt:{url,uploadStarted,outcome:uploadStarted?"uncertain":"failed",reconciliationRequired:uploadStarted}})}).catch(()=>{});
+    return {ok:false,state:uploadStarted?"uncertain":"failed",error:uploadStarted?"The upload outcome is uncertain. Verify Fansly’s vault before retrying.":error instanceof Error?error.message:String(error)};
   }finally{vaultUploadRunning=false;}
 };
 

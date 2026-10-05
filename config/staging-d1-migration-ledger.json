@@ -367,5 +367,11 @@
       "purpose": "Applied bounded staging migration: expiring payload-free enquiry receipts."
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0063_content_download_links.sql",
+      "sha256": "1e6c7c22508f8eeed7a6e04b23e5b6e6cd9bcea6ea13bab50e3025d1abfa417c",
+      "purpose": "Pending local-only one-time content download links; not applied remotely."
+    }
+  ]
 }

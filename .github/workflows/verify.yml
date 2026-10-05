@@ -35,12 +35,27 @@ jobs:
       # Root preflight tests validate compatibility against the canonical app's
       # pinned Wrangler/workerd runtime, so install that dependency tree first.
       - run: npm ci --prefix cloudflare/thot-os-next
+      # Check committed Worker bindings before any build can regenerate them.
+      - name: Check generated Worker types
+        run: |
+          for worker in instagram-scheduler reddit-scheduler telegram-bridge vault-bridge thot-os-public-links thot-os-public-media thot-os-public-links-control; do
+            (
+              cd "cloudflare/$worker"
+              ../thot-os-next/node_modules/.bin/wrangler types --check worker-configuration.d.ts
+            )
+          done
+          (
+            cd cloudflare/thot-os-next
+            node_modules/.bin/wrangler types --env-interface CloudflareEnv --check cloudflare-env.d.ts
+          )
       - run: npm run lint
       - run: npm test
       # Static only: validates the committed deployment registry against Wrangler
       # configuration without authenticating to or changing Cloudflare.
       - run: npm run deployment:preflight -- --environment staging --all
-      - run: npx tsc --noEmit
+      # The root Next config belongs to the retired SQLite runtime. Compile
+      # the canonical application with its installed, pinned compiler instead.
+      - run: npm --prefix cloudflare/thot-os-next run lint
       - run: npm run build
       - run: git diff --check
 
@@ -144,3 +159,38 @@ jobs:
           cache-dependency-path: cloudflare/vault-bridge/package-lock.json
       - run: npm ci
       - run: npm run check
+
+
+  public-workers:
+    name: Worker - ${{ matrix.worker }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        worker:
+          - thot-os-public-links
+          - thot-os-public-media
+          - thot-os-public-links-control
+          - thot-os-public-contact
+          - thot-os-adult-gateway
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/thot-os-next/package-lock.json
+      # Public Workers share the canonical app's pinned compiler/runtime.
+      - run: npm ci --prefix cloudflare/thot-os-next
+      # Contact/adult gateway currently maintain hand-written Env contracts;
+      # their check scripts compile those contracts rather than Wrangler output.
+      - name: Check generated Worker bindings
+        if: matrix.worker != 'thot-os-public-contact' && matrix.worker != 'thot-os-adult-gateway'
+        working-directory: cloudflare/${{ matrix.worker }}
+        run: ../thot-os-next/node_modules/.bin/wrangler types --check worker-configuration.d.ts
+      - run: npm --prefix cloudflare/${{ matrix.worker }} run check
+      - run: npm --prefix cloudflare/${{ matrix.worker }} test
+      - run: git diff --check

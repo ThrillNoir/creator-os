@@ -12,6 +12,7 @@ import { fetchInternalService } from "@/lib/internal-service";
 import { ensureConnectorServiceGrants } from "@/lib/connector-service-grants";
 import { approvedHttpsDestination } from "@/lib/profile-link-input";
 import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
+import { canRetryVaultJob } from "@/lib/vault-job-status";
 import { isPublicCreatorSlug } from "../../../shared/public-profile-slug.ts";
 import { validateBookingConfig, type BookingConfig } from "../../../shared/booking-contract.ts";
 
@@ -456,7 +457,8 @@ export async function confirmFanslyIdentityAction(formData: FormData) {
 export async function saveAssetAttributesAction(formData: FormData) {
   const identity = await requireCreatorContext("mutate");
   const creatorId = identity.creator.creator_id;
-  const assetIds = [...new Set(values(formData, "assetId"))].slice(0, 50);
+  const assetIds = [...new Set(values(formData, "assetId"))];
+  if (assetIds.length > 50) throw new Error("Select no more than 50 assets. No attributes were changed.");
   if (!assetIds.length) throw new Error("Select at least one asset.");
 
   const safetyValue = String(formData.get("safety") ?? "");
@@ -1131,8 +1133,10 @@ export async function retryFanslyVaultJobAction(formData: FormData) {
   const jobId = String(formData.get("jobId") ?? "");
   const actor = identity.email;
   const { DB } = cloudflareEnv();
-  const updated = await creatorPrepare(DB, creatorId, "UPDATE vault_upload_jobs SET status='approved',claimed_at=NULL,completed_at=NULL,error=NULL,receipt='{}',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='fansly' AND status='failed'").bind(jobId).run();
-  if (!updated.meta?.changes) throw new Error("Only a failed Fansly upload can be retried.");
+  const job = await creatorPrepare(DB, creatorId, "SELECT status,receipt FROM vault_upload_jobs WHERE id=? AND creator_id=@creator AND platform='fansly'").bind(jobId).first<{ status: string; receipt: string }>();
+  if (!job || !canRetryVaultJob(job.status, job.receipt)) throw new Error("Only a certain failed Fansly upload can be retried. Uncertain outcomes must be reconciled first.");
+  const updated = await creatorPrepare(DB, creatorId, "UPDATE vault_upload_jobs SET status='approved',claimed_at=NULL,completed_at=NULL,error=NULL,receipt='{}',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=@creator AND platform='fansly' AND status='failed' AND receipt=?").bind(jobId, job.receipt).run();
+  if (!updated.meta?.changes) throw new Error("The Fansly upload changed while retry was being approved. Refresh and review its current receipt.");
   await creatorPrepare(DB, creatorId, "INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,@creator,?,?,'retry_approved','{}')").bind(crypto.randomUUID(), jobId, actor, identity.creator.role).run();
   revalidatePath("/operations");
   redirect("/operations?platform=fansly&section=queue&saved=retry_queued");

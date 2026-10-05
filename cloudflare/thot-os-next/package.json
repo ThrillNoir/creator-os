@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1",
+    "dev": "next dev --webpack --hostname 127.0.0.1",
     "lint": "tsc --noEmit",
     "build": "next build --webpack",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",

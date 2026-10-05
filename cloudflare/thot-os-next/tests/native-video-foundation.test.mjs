@@ -38,7 +38,7 @@ test("H.264 and H.265 container fixtures are accepted only as private canonical 
   assert.throws(() => spoofedPayload.finish(), /source_media_video_codec_unsupported/);
 });
 
-test("completed multipart video verification reads metadata instead of the media payload", async () => {
+test("completed video validation checks bounded metadata and marks the uploader SHA as unverified provenance", async () => {
   const bytes = join(
     box("ftyp", encoder.encode("isom\u0000\u0000\u0000\u0000avc1mp41")),
     box("moov", encoder.encode("avc1")),
@@ -49,6 +49,7 @@ test("completed multipart video verification reads metadata instead of the media
   const multipartEtag = completedR2MultipartEtag(partEtags);
   assert.ok(multipartEtag);
   const sha256 = "a".repeat(64);
+  assert.notEqual(createHash("sha256").update(bytes).digest("hex"), sha256, "fixture checksum is intentionally false to prove server provenance");
   const metadata = {
     size: bytes.length,
     etag: multipartEtag,
@@ -68,8 +69,13 @@ test("completed multipart video verification reads metadata instead of the media
   };
   const verified = await validateR2VideoMetadata(bucket, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 });
   assert.equal(verified.codec, "h264");
+  assert.equal(verified.clientSha256, sha256);
+  assert.equal(verified.checksumProvenance, "client_declared");
+  assert.equal(Object.hasOwn(verified, "sha256"), false);
   assert.ok(ranges.reduce((total, range) => total + range.length, 0) < bytes.length / 10);
   await assert.rejects(() => validateR2VideoMetadata({ ...bucket, head: async () => ({ ...metadata, size: bytes.length - 1 }) }, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 }), /source_media_byte_mismatch/);
+  await assert.rejects(() => validateR2VideoMetadata({ ...bucket, head: async () => ({ ...metadata, etag: "different-etag" }) }, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 }), /source_media_byte_mismatch/);
+  await assert.rejects(() => validateR2VideoMetadata({ ...bucket, head: async () => ({ ...metadata, customMetadata: { ...metadata.customMetadata, expected_sha256: "b".repeat(64) } }) }, "private-key", { assetId: "asset-1", bytes: bytes.length, creatorId: "creator-1", mimeType: "video/mp4", multipartEtag, sessionId: "session-1", sha256 }), /source_media_metadata_mismatch/);
 });
 
 test("browser hashing is incremental and range parsing stays bounded", () => {
@@ -155,6 +161,9 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(finalize, /completedR2MultipartEtag/);
   assert.doesNotMatch(finalize, /hashAndValidateR2Object/);
   assert.match(finalize, /source_media_byte_mismatch/);
+  assert.match(finalize, /checksumProvenance: verified\.checksumProvenance/);
+  assert.match(finalize, /clientSha256: verified\.clientSha256/);
+  assert.match(finalize, /legacy SHA column/);
   assert.doesNotMatch(finalize, /fansly|vault/i);
   assert.match(finalize, /playback_provider='none'/);
   assert.match(download, /requireCreatorContext\("view"\)/);
@@ -211,4 +220,15 @@ test("native video routes are creator-scoped, direct-to-R2, private, and do not 
   assert.match(libraryPage, /durationMs/);
   assert.match(library, /DB\.batch/);
   assert.match(library, /getLibraryPageData/);
+});
+
+test("video catalog detail and audit label the checksum as uploader-declared", async () => {
+  const [detail, finalize] = await Promise.all([
+    source("src/app/library/[objectId]/page.tsx"),
+    source("src/app/api/source-media/videos/intents/[sessionId]/finalize/route.ts"),
+  ]);
+  assert.match(detail, /File checksum supplied by uploader; server checked size, container and storage identity\./);
+  assert.match(finalize, /checksumProvenance: verified\.checksumProvenance/);
+  assert.match(finalize, /clientSha256: verified\.clientSha256/);
+  assert.doesNotMatch(finalize, /verified\.sha256/);
 });

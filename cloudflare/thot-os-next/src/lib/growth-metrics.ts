@@ -45,6 +45,7 @@ export type GrowthInsights = {
   summary: {
     officialMedia: number;
     completeMetricMedia: number;
+    freshComparableMedia: number;
     metricCoveragePercent: number | null;
     latestObservedAt: string | null;
     confidence: InsightConfidence;
@@ -66,14 +67,23 @@ const MEANINGFUL_LIFT = 0.15;
 
 function observationTime(value: string | null | undefined) {
   if (!value) return null;
-  const normalized = value.includes("T") ? value : value.replace(" ", "T") + "Z";
+  // Accept API ISO timestamps and SQLite's `YYYY-MM-DD HH:mm:ss` form, but
+  // validate the calendar fields before Date.parse (which normalizes dates
+  // such as February 30 into March instead of rejecting them).
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})?$/i.exec(value);
+  if (!match) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction = "", zone = ""] = match;
+  const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
+  const milliseconds = Number((fraction + "000").slice(0, 3));
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(year, month - 1, day);
+  calendar.setUTCHours(hour, minute, second, milliseconds);
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day
+    || hour > 23 || minute > 59 || second > 59) return null;
+  const normalized = `${value.replace(" ", "T")}${zone ? "" : "Z"}`;
+  if (zone && !/^z$/i.test(zone) && (Number(zone.slice(1, 3)) > 23 || Number(zone.slice(4, 6)) > 59)) return null;
   const timestamp = Date.parse(normalized);
   return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function afterDays(value: string | null, days: number) {
-  const timestamp = observationTime(value);
-  return timestamp === null ? null : new Date(timestamp + days * 86_400_000).toISOString();
 }
 
 function latestByMedia(observations: InstagramOfficialObservation[]) {
@@ -113,6 +123,11 @@ function scoredMedia(observation: InstagramOfficialObservation): ScoredMedia | n
   if (views === null || views === 0 || likes === null || comments === null || saves === null || shares === null) return null;
   const weightedActions = likes + comments * 2 + saves * 3 + shares * 3;
   return { ...observation, weightedEngagementRate: weightedActions / views, format: formatLabel(observation) };
+}
+
+function hasCompleteMetrics(observation: InstagramOfficialObservation) {
+  return [observation.view_count, observation.like_count, observation.comments_count, observation.saved_count, observation.shares_count]
+    .every((value) => nonNegative(value) !== null);
 }
 
 function confidenceFor(sampleSize: number): InsightConfidence {
@@ -160,22 +175,32 @@ function evidence(input: {
 
 export function buildGrowthInsights(input: { observations: InstagramOfficialObservation[]; generatedAt?: string }): GrowthInsights {
   const generatedAt = input.generatedAt ?? new Date().toISOString();
+  const generatedTimestamp = observationTime(generatedAt);
   const official = latestByMedia(input.observations.filter((item) => item.source === "instagram_api"));
   const latest = latestObservation(official);
+  const completeMetricMedia = official.filter(hasCompleteMetrics).length;
   const scored = official.map(scoredMedia).filter((item): item is ScoredMedia => item !== null);
-  const confidence = confidenceFor(scored.length);
+  const freshness = official.map((item) => {
+    const timestamp = observationTime(item.collected_at);
+    if (timestamp === null || generatedTimestamp === null || timestamp > generatedTimestamp) return "unavailable" as const;
+    return generatedTimestamp - timestamp > STALE_AFTER_DAYS * 86_400_000 ? "stale" as const : "fresh" as const;
+  });
+  const freshComparable = scored.filter((item) => {
+    const timestamp = observationTime(item.collected_at);
+    return timestamp !== null && generatedTimestamp !== null && timestamp <= generatedTimestamp && generatedTimestamp - timestamp <= STALE_AFTER_DAYS * 86_400_000;
+  });
+  const confidence = confidenceFor(freshComparable.length);
   const latestObservedAt = latest?.collected_at ?? null;
-  const recheckAt = afterDays(latestObservedAt, RECHECK_AFTER_DAYS);
+  const recheckAt = generatedTimestamp === null ? null : new Date(generatedTimestamp + RECHECK_AFTER_DAYS * 86_400_000).toISOString();
   const recommendations: GrowthRecommendation[] = [];
-  const baseEvidence = evidence({ latest, officialMedia: official.length, completeMetricMedia: scored.length, sampleSize: scored.length });
-  const latestTimestamp = observationTime(latestObservedAt);
-  const generatedTimestamp = observationTime(generatedAt);
+  const baseEvidence = evidence({ latest, officialMedia: official.length, completeMetricMedia, sampleSize: freshComparable.length });
   const dataQuality: GrowthInsights["summary"]["dataQuality"] = !official.length
     ? ["unavailable"]
     : [
       "official",
-      ...(scored.length < official.length ? ["incomplete" as const] : []),
-      ...(latestTimestamp !== null && generatedTimestamp !== null && generatedTimestamp - latestTimestamp > STALE_AFTER_DAYS * 86_400_000 ? ["stale" as const] : []),
+      ...(completeMetricMedia < official.length ? ["incomplete" as const] : []),
+      ...(freshness.includes("stale") ? ["stale" as const] : []),
+      ...(freshness.includes("unavailable") ? ["unavailable" as const] : []),
     ];
 
   if (!official.length) {
@@ -190,24 +215,26 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
       actionBoundary: "human_review_only",
     });
   } else {
-    if (latestTimestamp !== null && generatedTimestamp !== null && generatedTimestamp - latestTimestamp > STALE_AFTER_DAYS * 86_400_000) {
+    if (freshness.includes("stale") || freshness.includes("unavailable")) {
       recommendations.push({
         id: "refresh_official_data",
         category: "data_quality",
         title: "Refresh the official Instagram observation",
-        summary: `The latest approved observation is more than ${STALE_AFTER_DAYS} days old. Refresh the verified account before using this evidence to change a content plan.`,
+        summary: freshness.includes("stale")
+          ? `At least one approved observation is more than ${STALE_AFTER_DAYS} days old. Refresh official data before using a format comparison to change a content plan.`
+          : "At least one approved observation has a missing, invalid or future collection time. Refresh official data before using it in a content comparison.",
         confidence: "strong",
         evidence: baseEvidence,
         recheckAt,
         actionBoundary: "human_review_only",
       });
     }
-    if (scored.length < official.length) {
+    if (completeMetricMedia < official.length) {
       recommendations.push({
         id: "metric_coverage",
         category: "data_quality",
         title: "Keep incomplete metrics unavailable",
-        summary: `${official.length - scored.length} official media observation${official.length - scored.length === 1 ? " is" : "s are"} missing views or one or more engagement fields. Those rows are excluded from the comparison instead of being treated as zero.`,
+        summary: `${official.length - completeMetricMedia} official media observation${official.length - completeMetricMedia === 1 ? " is incomplete" : "s are incomplete"}: views or one or more engagement fields are missing or invalid. Those rows are excluded from the comparison instead of being treated as zero.`,
         confidence: "strong",
         evidence: baseEvidence,
         recheckAt,
@@ -215,21 +242,21 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
       });
     }
 
-    if (scored.length < MINIMUM_SAMPLE) {
+    if (freshComparable.length < MINIMUM_SAMPLE) {
       recommendations.push({
         id: "insufficient_sample",
         category: "data_quality",
         title: "Collect more evidence before changing the plan",
-        summary: `${scored.length} media item${scored.length === 1 ? " has" : "s have"} a complete official metric set. At least ${MINIMUM_SAMPLE} are required before THOT OS compares formats, so no content direction is claimed yet.`,
+        summary: `${freshComparable.length} media item${freshComparable.length === 1 ? " has" : "s have"} complete metrics and positive views collected within the last ${STALE_AFTER_DAYS} days. At least ${MINIMUM_SAMPLE} fresh comparable items are required before THOT OS compares formats, so no content direction is claimed yet.`,
         confidence: "insufficient",
         evidence: baseEvidence,
         recheckAt,
         actionBoundary: "human_review_only",
       });
     } else {
-      const overallRate = scored.reduce((sum, item) => sum + item.weightedEngagementRate, 0) / scored.length;
+      const overallRate = freshComparable.reduce((sum, item) => sum + item.weightedEngagementRate, 0) / freshComparable.length;
       const formatGroups = new Map<string, ScoredMedia[]>();
-      for (const item of scored) formatGroups.set(item.format, [...(formatGroups.get(item.format) ?? []), item]);
+      for (const item of freshComparable) formatGroups.set(item.format, [...(formatGroups.get(item.format) ?? []), item]);
       const rankedFormats = [...formatGroups.entries()]
         .filter(([, items]) => items.length >= MINIMUM_FORMAT_SAMPLE)
         .map(([format, items]) => ({ format, items, rate: items.reduce((sum, item) => sum + item.weightedEngagementRate, 0) / items.length }))
@@ -237,7 +264,7 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
       const leader = rankedFormats[0];
       const lift = leader && overallRate > 0 ? leader.rate / overallRate - 1 : 0;
       if (leader && lift >= MEANINGFUL_LIFT) {
-        const recommendationConfidence = confidenceFor(scored.length);
+        const recommendationConfidence = confidenceFor(freshComparable.length);
         const id = recommendationConfidence === "early" ? "format_validation" : "format_repeat";
         recommendations.push({
           id,
@@ -245,7 +272,7 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
           title: recommendationConfidence === "early" ? `Validate the ${leader.format} signal` : `Prepare another ${leader.format} candidate for human review`,
           summary: `${leader.format} has a ${percent(leader.rate)}% weighted engagement rate across ${leader.items.length} fully observed item${leader.items.length === 1 ? "" : "s"}, compared with ${percent(overallRate)}% across the complete creator sample. This is an observed pattern, not a prediction. It never schedules, publishes or approves a post.`,
           confidence: recommendationConfidence,
-          evidence: evidence({ latest, officialMedia: official.length, completeMetricMedia: scored.length, sampleSize: leader.items.length, rate: leader.rate, comparisonRate: overallRate }),
+          evidence: evidence({ latest, officialMedia: official.length, completeMetricMedia, sampleSize: leader.items.length, rate: leader.rate, comparisonRate: overallRate }),
           recheckAt,
           actionBoundary: "human_review_only",
         });
@@ -256,7 +283,7 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
           title: "No repeatable format signal yet",
           summary: `The complete official sample does not show a format at least ${Math.round(MEANINGFUL_LIFT * 100)}% above the creator's current weighted engagement baseline. Keep collecting comparable observations instead of changing the publishing plan on weak evidence.`,
           confidence,
-          evidence: evidence({ latest, officialMedia: official.length, completeMetricMedia: scored.length, sampleSize: scored.length, rate: overallRate }),
+          evidence: evidence({ latest, officialMedia: official.length, completeMetricMedia, sampleSize: freshComparable.length, rate: overallRate }),
           recheckAt,
           actionBoundary: "human_review_only",
         });
@@ -269,8 +296,9 @@ export function buildGrowthInsights(input: { observations: InstagramOfficialObse
     metricDefinition: "Weighted engagement rate = (likes + 2 × comments + 3 × saves + 3 × shares) ÷ views. A rate is shown only when every component is returned by the official API.",
     summary: {
       officialMedia: official.length,
-      completeMetricMedia: scored.length,
-      metricCoveragePercent: official.length ? Math.round((scored.length / official.length) * 100) : null,
+      completeMetricMedia,
+      freshComparableMedia: freshComparable.length,
+      metricCoveragePercent: official.length ? Math.round((completeMetricMedia / official.length) * 100) : null,
       latestObservedAt,
       confidence,
       dataQuality,

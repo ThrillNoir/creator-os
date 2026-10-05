@@ -1,0 +1,26 @@
+{
+  "$schema": "../thot-os-next/node_modules/wrangler/config-schema.json",
+  "name": "thot-os-downloads-staging",
+  "account_id": "3e7cfa6efb7a97825f1dc24515410c63",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "thot-os-staging",
+      "database_id": "174532e8-5ada-4e30-abba-1276b3540b3f",
+      "migrations_dir": "../thot-os-app/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "LIBRARY_MEDIA",
+      "bucket_name": "thot-os-library-media-staging"
+    }
+  ]
+}

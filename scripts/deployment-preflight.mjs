@@ -137,6 +137,24 @@ function validatePublicContactConfig(errors, componentName, component, config) {
   }
 }
 
+function validateDownloadsConfig(errors, componentName, component, config) {
+  if (componentName !== "downloads") return;
+  if (config.workers_dev !== true || config.preview_urls !== false || "route" in config || "routes" in config) {
+    errors.push("downloads permits only its dedicated staging workers.dev origin, with preview URLs and custom routes disabled.");
+  }
+  const d1 = config.d1_databases ?? [];
+  const r2 = config.r2_buckets ?? [];
+  if (d1.length !== 1 || d1[0]?.binding !== "DB" || d1[0]?.database_name !== "thot-os-staging"
+    || d1[0]?.database_id !== "174532e8-5ada-4e30-abba-1276b3540b3f"
+    || r2.length !== 1 || r2[0]?.binding !== "LIBRARY_MEDIA" || r2[0]?.bucket_name !== "thot-os-library-media-staging") {
+    errors.push("downloads requires only the approved DB and LIBRARY_MEDIA staging bindings.");
+  }
+  const extraBindings = ["assets", "images", "stream", "analytics_engine_datasets", "kv_namespaces", "queues", "ratelimits", "services", "send_email"]
+    .filter((name) => (Array.isArray(config[name]) ? config[name].length > 0 : config[name] !== undefined));
+  if (extraBindings.length) errors.push(`downloads forbids additional bindings: ${extraBindings.join(", ")}.`);
+  if (!["false", "true"].includes(config.vars?.ENABLED)) errors.push("downloads requires an explicit true/false ENABLED setting.");
+}
+
 function addExactListError(errors, label, actual, expected) {
   if (!listsMatch(actual, expected)) {
     errors.push(`${label} mismatch: expected [${sorted(expected).join(", ")}], found [${sorted(actual).join(", ")}].`);
@@ -278,7 +296,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
   const component = environment.components?.[componentName];
   if (!component) return { ok: false, errors: [...errors, `Unknown component ${componentName} for ${environmentName}.`] };
   if (!environment.provisioned || !environment.deployable) errors.push(`${environmentName} is not a provisioned deployable environment.`);
-  if (!component.deployable) errors.push(`${environmentName}/${componentName} is disabled: ${component.retirement ?? "no deployment authority"}`);
+  if (!component.deployable && !component.staticPreflight) errors.push(`${environmentName}/${componentName} is disabled: ${component.retirement ?? "no deployment authority"}`);
   if (requireClean && !workingTreeClean()) errors.push("Deployment requires a clean Git working tree.");
 
   if (config) {
@@ -308,6 +326,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
     }
     validatePublicationPolicyConfig(errors, componentName, component, config);
     validatePublicContactConfig(errors, componentName, component, config);
+    validateDownloadsConfig(errors, componentName, component, config);
 
     const d1Registry = environment.resources?.d1 ?? {};
     for (const binding of resources.d1) {

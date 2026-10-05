@@ -99,6 +99,6 @@ export function PreviewProgress({ initial }: { initial: PreviewProgressState }) 
   return <section className={`preview-progress ${pending ? "active" : progress.failed ? "attention" : "complete"}`} aria-live="polite">
     <div><strong>{pending ? "Generating private previews" : progress.failed ? "Preview generation needs attention" : "Private previews ready"}</strong><span>{progress.ready} of {progress.total} ready{pending ? ` · ${pending} queued` : ""}{progress.failed ? ` · ${progress.failed} failed` : ""}</span></div>
     <progress max={progress.total} value={progress.ready}>{percent}%</progress>
-    <small>{pending ? "This continues securely in the background; you can leave this page." : progress.failed ? "Retry the preview from the upload row before leaving this page." : "All Cloudflare-native images have private previews."}</small>
+    <small>{pending ? "This continues securely in the background; you can leave this page." : progress.failed ? "Open an affected photo’s review page to retry its private preview." : "All Cloudflare-native images have private previews."}</small>
   </section>;
 }

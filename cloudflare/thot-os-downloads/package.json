@@ -1,0 +1,10 @@
+{
+  "name": "thot-os-downloads",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "../thot-os-next/node_modules/.bin/tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  }
+}

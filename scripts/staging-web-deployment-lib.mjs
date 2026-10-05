@@ -12,11 +12,12 @@ export const stagingDeploymentWorkers = Object.freeze({
   publicMedia: "thot-os-public-media-staging",
   publicLinksControl: "thot-os-public-links-control-staging",
   publicContact: "thot-os-public-contact-staging",
+  downloads: "thot-os-downloads-staging",
 });
 
 // Public Workers already use the web package's pinned compiler in their scripts.
 export function stagingToolchainDirectory(registry, component) {
-  const owner = ["publicLinks", "publicLinksControl", "publicMedia", "publicContact"].includes(component) ? "web" : component;
+  const owner = ["publicLinks", "publicLinksControl", "publicMedia", "publicContact", "downloads"].includes(component) ? "web" : component;
   return registry.environments.staging.components[owner].directory;
 }
 
@@ -43,10 +44,19 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
   if (metadata?.environment !== "staging" || !expectedWorker || metadata?.worker !== expectedWorker) throw new Error("Controlled deployment supports only the reviewed staging component Workers.");
   if (!Array.isArray(migrationNames) || migrationNames.length === 0) throw new Error("Deployment plan requires an exact staging migration ledger.");
   if (!Array.isArray(requiredSecretNames)) throw new Error("Deployment plan requires reviewed secret names.");
-  const firstBootstrap = metadata.component === "publicContact" && workerState?.absent === true;
-  if (workerState?.absent === true && !firstBootstrap) throw new Error("Only the reviewed publicContact staging Worker may use the first-bootstrap path.");
-  if (firstBootstrap && (!Number.isInteger(workerState.absenceCode) || ![10007, 10090].includes(workerState.absenceCode) || workerState.routeLessConfig !== true)) {
-    throw new Error("Public-contact first bootstrap requires a provider not-found proof and route-less reviewed config.");
+  const firstBootstrap = ["publicContact", "downloads"].includes(metadata.component) && workerState?.absent === true;
+  if (workerState?.absent === true && !firstBootstrap) throw new Error("Only the reviewed public-contact or downloads staging Worker may use the first-bootstrap path.");
+  if (firstBootstrap && (!Number.isInteger(workerState.absenceCode) || ![10007, 10090].includes(workerState.absenceCode))) {
+    throw new Error("First bootstrap requires a provider not-found proof.");
+  }
+  if (metadata.component === "publicContact" && firstBootstrap && workerState.routeLessConfig !== true) {
+    throw new Error("Public-contact first bootstrap requires route-less reviewed config.");
+  }
+  if (metadata.component === "downloads" && firstBootstrap && workerState.disabledRuntimeConfig !== true) {
+    throw new Error("Downloads first bootstrap requires its reviewed disabled-runtime config.");
+  }
+  if (metadata.component === "downloads" && requiredSecretNames.length !== 0) {
+    throw new Error("Downloads bootstrap must not declare secrets.");
   }
   const remoteSecrets = new Set(workerState?.secretNames ?? []);
   const missing = requiredSecretNames.filter((name) => !remoteSecrets.has(name));
@@ -66,7 +76,9 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
     preDeployment: firstBootstrap
       ? { workerAbsent: true, absenceCode: workerState.absenceCode, latestVersionId: null, versionIds: [], traffic: [], workerSecretNames: [...workerState.secretNames].sort() }
       : { latestVersionId: workerState.latestVersionId, versionIds: [...workerState.versionIds], traffic: workerState.deployment.versions, workerSecretNames: [...workerState.secretNames].sort() },
-    ...(firstBootstrap ? { firstBootstrap: { routeLess: true, requiredSecretNames: [...requiredSecretNames].sort() } } : {}),
+    ...(firstBootstrap ? { firstBootstrap: metadata.component === "publicContact"
+      ? { routeLess: true, requiredSecretNames: [...requiredSecretNames].sort() }
+      : { disabledRuntime: true, requiredSecretNames: [] } } : {}),
     createdAt,
   };
   const digest = planDigest(plan);
@@ -79,7 +91,7 @@ function assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, mi
   const digest = planDigest(plan);
   if (plan.planSha256 !== digest || plan.confirmation !== confirmationForDigest(digest)) throw new Error("Approved deployment plan checksum is invalid.");
   if (confirmation !== plan.confirmation) throw new Error("Apply confirmation does not match the approved deployment plan.");
-  if (plan.environment !== "staging" || plan.component !== metadata.component || plan.target?.worker !== metadata.worker) throw new Error("Approved plan is not the controlled staging component target.");
+  if (plan.environment !== "staging" || plan.component !== metadata.component || plan.target?.worker !== metadata.worker || plan.target?.accountId !== metadata.accountId || plan.target?.config !== metadata.config) throw new Error("Approved plan is not the controlled staging component target.");
   if (plan.source?.gitSha !== metadata.gitSha || plan.source?.gitBranch !== metadata.gitBranch) throw new Error("Current Git identity differs from the approved deployment plan.");
   if (plan.artifact?.sha256 !== artifactManifest.artifact?.sha256 || plan.artifact?.buildTime !== artifactManifest.build?.timestamp) throw new Error("Current artifact differs from the approved deployment plan.");
   if (JSON.stringify(plan.migration?.names) !== JSON.stringify(migrationNames)) throw new Error("Current staging migration state differs from the approved deployment plan.");
@@ -97,8 +109,11 @@ export function assertApprovedPlan({ plan, confirmation, metadata, artifactManif
   if (plan.firstBootstrap && JSON.stringify(plan.firstBootstrap.requiredSecretNames) !== JSON.stringify(plan.requiredSecretNames)) {
     throw new Error("First-bootstrap plan secret names differ from the reviewed required-secret declaration.");
   }
-  if (workerState.absent === true && (plan.firstBootstrap?.routeLess !== true || workerState.routeLessConfig !== true)) {
+  if (workerState.absent === true && plan.component === "publicContact" && (plan.firstBootstrap?.routeLess !== true || workerState.routeLessConfig !== true)) {
     throw new Error("First-bootstrap apply requires the reviewed route-less public-contact config.");
+  }
+  if (workerState.absent === true && plan.component === "downloads" && (plan.firstBootstrap?.disabledRuntime !== true || workerState.disabledRuntimeConfig !== true)) {
+    throw new Error("First-bootstrap apply requires the reviewed disabled-runtime downloads config.");
   }
   const current = workerState.absent === true
     ? { workerAbsent: true, absenceCode: workerState.absenceCode, latestVersionId: null, versionIds: [], traffic: [], workerSecretNames: [...workerState.secretNames].sort() }
@@ -108,7 +123,7 @@ export function assertApprovedPlan({ plan, confirmation, metadata, artifactManif
 }
 
 export function createApplyReceipt({ plan, before, after, observedAt = new Date().toISOString() }) {
-  const firstBootstrap = plan.firstBootstrap?.routeLess === true;
+  const firstBootstrap = plan.firstBootstrap?.routeLess === true || plan.firstBootstrap?.disabledRuntime === true;
   if (firstBootstrap && before?.absent !== true) throw new Error("First-bootstrap receipt requires the approved absent Worker baseline.");
   const newVersionIds = after.versionIds.filter((id) => !before.versionIds.includes(id));
   if (newVersionIds.length !== 1) throw new Error("Deployment did not produce exactly one verifiable fresh Worker version.");

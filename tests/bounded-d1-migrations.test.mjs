@@ -41,7 +41,7 @@ test("reviewed staging ledger records applied booking migrations", () => {
     { remoteId: 63, name: "0061_creator_booking_module.sql" },
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations, []);
+  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0063_content_download_links.sql"]);
   assert.ok(ledger.pendingMigrations.every((entry) => entry.remoteId === undefined));
   assert.deepEqual(inventory[56], {
     number: 55,
@@ -72,7 +72,7 @@ test("reviewed staging ledger records applied booking migrations", () => {
   ]);
   const plan = buildBoundedPlan({ environment: "staging", releaseId: "native-video-intake", from: "0054_native_video_intake.sql", through: "0054_native_video_intake.sql", inventory, remoteApplied: inventory.slice(0, 55).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git });
   assert.deepEqual(plan.execution.map((entry) => entry.name), ["0054_native_video_intake.sql"]);
-  assert.deepEqual(plan.excludedPending.map(({ name }) => name), ["0055_provider_connection_account_scope.sql", "0056_creator_invitations.sql", "0057_instagram_account_scoped_analytics.sql", "0058_fansly_claim_recovery.sql", "0059_instagram_message_sync_reliability.sql", "0060_instagram_reply_media.sql", "0061_creator_booking_module.sql", "0062_booking_delivery_evidence.sql"]);
+  assert.deepEqual(plan.excludedPending.map(({ name }) => name), ["0055_provider_connection_account_scope.sql", "0056_creator_invitations.sql", "0057_instagram_account_scoped_analytics.sql", "0058_fansly_claim_recovery.sql", "0059_instagram_message_sync_reliability.sql", "0060_instagram_reply_media.sql", "0061_creator_booking_module.sql", "0062_booking_delivery_evidence.sql", "0063_content_download_links.sql"]);
   assert.throws(() => buildBoundedPlan({ environment: "staging", releaseId: "ambiguous", from: "0044", through: "0049", inventory, remoteApplied: inventory.slice(0, 43).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git }), /ambiguous/);
 });
 
@@ -272,10 +272,18 @@ test("apply gates reject changed plans, dirty identity, and a changed migration 
   assert.throws(() => migrationSql({ directory, migration: plan.execution[0] }), /digest changed/);
 });
 
-function backupFixture(plan, bytes = Buffer.from("-- export\n"), migrations = plan?.preMigrationState) {
+function sqliteExport(migrations) {
+  return Buffer.from([
+    'CREATE TABLE "d1_migrations" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "applied_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);',
+    ...migrations.map((name, index) => `INSERT INTO "d1_migrations" ("id","name","applied_at") VALUES(${index + 1},'${name}','2026-10-04 00:00:00');`),
+    "",
+  ].join("\n"));
+}
+
+function backupFixture(plan, bytes = undefined, migrations = plan?.preMigrationState) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "bounded-backup-test-"));
   const exportPath = path.join(directory, "staging.sql");
-  writeFileSync(exportPath, bytes);
+  writeFileSync(exportPath, bytes ?? (plan ? sqliteExport(migrations) : Buffer.from("-- no plan export\n")));
   const receiptPath = `${exportPath}.receipt.json`;
   const target = plan
     ? { environment: plan.target.environment, accountId: plan.target.accountId, databaseName: plan.target.databaseName, databaseId: plan.target.databaseId, migrations }
@@ -311,7 +319,7 @@ test("raw-byte hashing preserves text, line endings, nulls, invalid UTF-8, high 
 test("backup evidence is raw-byte checksum matched, fresh, and target-scoped", () => {
   const { inventory } = fixture();
   const plan = currentStagingPlan(inventory);
-  const { receiptPath, receipt } = backupFixture(plan, Buffer.from("line one\r\nline two\n\u0000\xff", "binary"));
+  const { receiptPath, receipt } = backupFixture(plan);
   const options = { receiptPath, plan, target: plan.target, maxAgeMinutes: 60 };
   assert.equal(validateBackup({ receipt, ...options }).sqlChecksum, receipt.sqlChecksum);
   assert.throws(() => validateBackup({ receipt: { ...receipt, exportedAt: "2000-01-01T00:00:00.000Z" }, ...options }), /stale/);

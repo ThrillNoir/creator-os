@@ -21,7 +21,6 @@ test("cloud library writes are creator scoped and audited", async () => {
   assert.doesNotMatch(actions, /creator_id=['"]adelaide['"]/i);
   assert.match(actions, /asset_classification_events/);
   assert.match(actions, /NSFW assets can only be marked for X, Reddit, subscription or PPV/);
-  assert.match(actions, /slice\(0, 50\)/);
   assert.match(actions, /asset_paid_consent_attestations/);
   assert.match(actions, /peopleMode/);
 });
@@ -31,7 +30,7 @@ test("private previews require a matching authorised creator D1 asset", async ()
   assert.match(route, /requireCreatorContext/);
   assert.match(route, /ma\.authority_kind='r2_native'/);
   assert.match(route, /a\.creator_id=\?/);
-  assert.match(route, /private, max-age=86400/);
+  assert.match(route, /private, no-store/);
 });
 
 test("library supports list view and copy-then-apply batch attributes", async () => {

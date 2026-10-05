@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { assertBootstrapSecretsFileOption, assertDirectWebDeployment, assertRouteLessFirstBootstrapConfig, deploymentWranglerEnvironment, observeAbsentPublicContactWorker, snapshotBootstrapSecrets, workerNotFoundProviderCode, workerStateFromPlanBaseline } from "../scripts/deploy-component.mjs";
+import { assertBootstrapSecretsFileOption, assertDirectWebDeployment, assertDisabledDownloadsFirstBootstrapConfig, assertRouteLessFirstBootstrapConfig, deploymentWranglerEnvironment, observeAbsentDownloadsWorker, observeAbsentPublicContactWorker, snapshotBootstrapSecrets, workerNotFoundProviderCode, workerStateFromPlanBaseline } from "../scripts/deploy-component.mjs";
 import { assertApprovedPlan, assertReconciliationPlan, createApplyReceipt, createDeploymentPlan, planDigest, stagingDeploymentWorkers } from "../scripts/staging-web-deployment-lib.mjs";
 
 const metadata = { environment: "staging", component: "web", worker: "thot-os-staging", accountId: "account", config: "cloudflare/thot-os-next/wrangler.jsonc", databaseId: "database", gitSha: "abc", gitBranch: "codex/release" };
@@ -70,6 +70,24 @@ test("public-contact first bootstrap accepts only a provider-proven absent route
   assert.throws(() => observeAbsentPublicContactWorker(registry, { ...contact, accountId: "other-account" }, { execFileSyncImpl: () => undefined }), /only the reviewed/);
 });
 
+test("downloads first bootstrap accepts only the disabled dedicated staging Worker", () => {
+  const config = { workers_dev: true, preview_urls: false, vars: { ENABLED: "false" } };
+  assert.equal(assertDisabledDownloadsFirstBootstrapConfig(config), true);
+  for (const candidate of [
+    { ...config, workers_dev: false },
+    { ...config, preview_urls: true },
+    { ...config, routes: [] },
+    { ...config, vars: { ENABLED: "true" } },
+    { ...config, vars: { ENABLED: "false", EXTRA: "1" } },
+  ]) assert.throws(() => assertDisabledDownloadsFirstBootstrapConfig(candidate), /Downloads first bootstrap/);
+  const registry = { environments: { staging: { accountId: "account", components: { web: { directory: "cloudflare/thot-os-next" }, downloads: { config: "cloudflare/thot-os-downloads/wrangler.staging.jsonc" } } } } };
+  const downloads = { environment: "staging", component: "downloads", worker: stagingDeploymentWorkers.downloads, accountId: "account", config: "cloudflare/thot-os-downloads/wrangler.staging.jsonc" };
+  const diagnostic = `/accounts/account/workers/scripts/${downloads.worker}/versions`;
+  assert.deepEqual(observeAbsentDownloadsWorker(registry, downloads, { execFileSyncImpl: () => { throw { stderr: `${diagnostic} [code: 10090]` }; } }), { absent: true, absenceCode: 10090, versionIds: [], deployment: { versions: [] }, secretNames: [] });
+  assert.throws(() => observeAbsentDownloadsWorker(registry, { ...downloads, worker: stagingDeploymentWorkers.publicContact }, { execFileSyncImpl: () => undefined }), /only the reviewed/);
+  assert.throws(() => observeAbsentDownloadsWorker(registry, { ...downloads, environment: "production" }, { execFileSyncImpl: () => undefined }), /only the reviewed/);
+});
+
 test("bootstrap secrets use an owner-only immutable snapshot with exactly the reviewed names", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "creatoros-bootstrap-secrets-test-"));
   try {
@@ -96,6 +114,8 @@ test("bootstrap secrets file is unavailable to ordinary, planning, and reconcili
   assert.throws(() => assertBootstrapSecretsFileOption({ mode: "reconcile", bootstrapSecretsFile: "/owner/secrets.json" }, { firstBootstrap: {} }), /only for an approved first-bootstrap/);
   assert.throws(() => assertBootstrapSecretsFileOption({ mode: "apply" }, { firstBootstrap: {} }), /requires --bootstrap-secrets-file/);
   assert.equal(assertBootstrapSecretsFileOption({ mode: "apply", bootstrapSecretsFile: "/owner/secrets.json" }, { firstBootstrap: {} }), true);
+  assert.equal(assertBootstrapSecretsFileOption({ mode: "apply" }, { component: "downloads", firstBootstrap: {} }), true);
+  assert.throws(() => assertBootstrapSecretsFileOption({ mode: "apply", bootstrapSecretsFile: "/owner/secrets.json" }, { component: "downloads", firstBootstrap: {} }), /only for an approved public-contact/);
 });
 
 test("Vault deploy gives Wrangler a verified owner-only named snapshot", () => {
@@ -136,14 +156,15 @@ test("Vault receipt binds the fresh Worker version to the reviewed artifact tag"
 });
 
 test("each reviewed connector uses scoped plans, drift checks and tagged receipts", () => {
-  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl", "publicMedia", "publicContact"]) {
+  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl", "publicMedia", "publicContact", "downloads"]) {
     const scoped = { ...metadata, component, worker: stagingDeploymentWorkers[component] };
-    const plan = createDeploymentPlan({ metadata: scoped, artifactManifest, migrationNames, requiredSecretNames, workerState });
+    const componentSecrets = component === "downloads" ? [] : requiredSecretNames;
+    const plan = createDeploymentPlan({ metadata: scoped, artifactManifest, migrationNames, requiredSecretNames: componentSecrets, workerState });
     assert.equal(plan.kind, `staging-${component}-deployment-plan`);
     assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: scoped, artifactManifest, migrationNames, workerState }), true);
     assert.throws(() => createDeploymentPlan({ metadata: { ...scoped, worker: "thot-os-production" }, artifactManifest, migrationNames, requiredSecretNames, workerState }), /reviewed staging/);
     assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: scoped, artifactManifest, migrationNames, workerState: { ...workerState, latestVersionId: "drift" } }), /differs/);
-    const after = { latestVersionId: "after", versionIds: ["after", ...workerState.versionIds], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: requiredSecretNames, versionTag: plan.artifact.versionTag } };
+    const after = { latestVersionId: "after", versionIds: ["after", ...workerState.versionIds], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: componentSecrets, versionTag: plan.artifact.versionTag } };
     assert.equal(createApplyReceipt({ plan, before: workerState, after }).kind, `staging-${component}-deployment-apply-receipt`);
     after.latestSecretVersion.versionTag = "wrong-artifact";
     assert.throws(() => createApplyReceipt({ plan, before: workerState, after }), /not tagged/);
@@ -218,4 +239,20 @@ test("public-contact bootstrap binds provider absence and artifact and requires 
   const receipt = createApplyReceipt({ plan, before: absent, after });
   assert.deepEqual(receipt.deployment.requiredSecretNamesVerified, requiredSecretNames);
   assert.equal(createApplyReceipt({ plan, before: workerStateFromPlanBaseline(plan), after }).deployment.workerVersion, "after");
+});
+
+test("downloads bootstrap binds disabled runtime, exact target, and no secrets", () => {
+  const downloads = { ...metadata, component: "downloads", worker: stagingDeploymentWorkers.downloads, config: "cloudflare/thot-os-downloads/wrangler.staging.jsonc" };
+  const absent = { absent: true, absenceCode: 10007, disabledRuntimeConfig: true, versionIds: [], deployment: { versions: [] }, secretNames: [] };
+  const plan = createDeploymentPlan({ metadata: downloads, artifactManifest, migrationNames, requiredSecretNames: [], workerState: absent });
+  assert.deepEqual(plan.firstBootstrap, { disabledRuntime: true, requiredSecretNames: [] });
+  assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: downloads, artifactManifest, migrationNames, workerState: absent }), true);
+  assert.throws(() => createDeploymentPlan({ metadata: { ...downloads, worker: "thot-os-downloads-production" }, artifactManifest, migrationNames, requiredSecretNames: [], workerState: absent }), /reviewed staging/);
+  assert.throws(() => createDeploymentPlan({ metadata: { ...downloads, environment: "production" }, artifactManifest, migrationNames, requiredSecretNames: [], workerState: absent }), /reviewed staging/);
+  assert.throws(() => createDeploymentPlan({ metadata: downloads, artifactManifest, migrationNames, requiredSecretNames: ["EXTRA_SECRET"], workerState: absent }), /must not declare secrets/);
+  assert.throws(() => assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata: downloads, artifactManifest, migrationNames, workerState: { ...absent, disabledRuntimeConfig: false } }), /disabled-runtime/);
+  const redirected = structuredClone(plan); redirected.target.config = "cloudflare/thot-os-next/wrangler.jsonc"; redirected.planSha256 = planDigest(redirected); redirected.confirmation = `deploy:${redirected.planSha256.slice(0, 16)}`;
+  assert.throws(() => assertApprovedPlan({ plan: redirected, confirmation: redirected.confirmation, metadata: downloads, artifactManifest, migrationNames, workerState: absent }), /controlled staging component target/);
+  const after = { latestVersionId: "after", versionIds: ["after"], deployment: { versions: [{ versionId: "after", percentage: 100 }] }, latestSecretVersion: { versionId: "after", trafficPercentage: 100, secretNames: [], versionTag: plan.artifact.versionTag } };
+  assert.equal(createApplyReceipt({ plan, before: absent, after }).deployment.workerVersion, "after");
 });

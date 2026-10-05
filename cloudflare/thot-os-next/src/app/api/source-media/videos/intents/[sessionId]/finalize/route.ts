@@ -22,7 +22,10 @@ async function verifiedParts(DB: D1Database, session: Session) {
 }
 
 async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, session: Session, parts: Part[], creatorId: string, context: Context) {
-  await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='verifying',reconcile_attempts=reconcile_attempts+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(session.id, creatorId).run();
+  // The historical schema stores a capped counter (0..20). Verification is
+  // bounded metadata-only work; a transient failure must not make a saved
+  // original permanently unrecoverable by overflowing this counter.
+  await DB.prepare("UPDATE asset_video_ingest_sessions SET finalization_state='verifying',reconcile_attempts=MIN(reconcile_attempts+1,20),updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(session.id, creatorId).run();
   const multipartEtag = completedR2MultipartEtag(parts.map((part) => part.etag!));
   if (!multipartEtag) throw new Error("source_media_checksum_unavailable");
   let verified: Awaited<ReturnType<typeof validateR2VideoMetadata>>;
@@ -35,12 +38,15 @@ async function verifyAndPersist(DB: D1Database, bucket: R2Bucket, session: Sessi
   }
   await DB.batch([
     DB.prepare("UPDATE asset_video_ingest_sessions SET status='finalized',finalization_state='verified',completed_r2_version=?,completed_r2_etag=?,completion_observed_at=COALESCE(completion_observed_at,CURRENT_TIMESTAMP),multipart_upload_id=NULL,uploaded_bytes=?,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND finalization_state IN ('completing','completed_unreconciled','verifying')").bind(verified.r2Version, verified.r2Etag, verified.byteCount, session.id, creatorId),
-    DB.prepare("UPDATE asset_storage_objects SET ingest_status='verified',verified_mime_type=?,sha256=?,r2_version=?,r2_etag=?,uploaded_at=COALESCE(uploaded_at,CURRENT_TIMESTAMP),verified_at=CURRENT_TIMESTAMP,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND ingest_status<>'verified'").bind(verified.detectedMime, verified.sha256, verified.r2Version, verified.r2Etag, session.storage_object_id, creatorId),
+    // Preserve the legacy SHA column for existing identity snapshots. For video
+    // intake this is the uploader-declared value; R2 validation does not hash
+    // the complete media body, so it is not a server-verified file digest.
+    DB.prepare("UPDATE asset_storage_objects SET ingest_status='verified',verified_mime_type=?,sha256=?,r2_version=?,r2_etag=?,uploaded_at=COALESCE(uploaded_at,CURRENT_TIMESTAMP),verified_at=CURRENT_TIMESTAMP,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND ingest_status<>'verified'").bind(verified.detectedMime, verified.clientSha256, verified.r2Version, verified.r2Etag, session.storage_object_id, creatorId),
     DB.prepare("UPDATE assets SET media_r2_key=? WHERE id=? AND creator_id=?").bind(session.object_key, session.asset_id, creatorId),
     DB.prepare("UPDATE asset_media_authorities SET state='canonical_verified',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native' AND state='ingesting'").bind(session.asset_id, creatorId),
     DB.prepare("UPDATE asset_video_playback_states SET state='canonical_verified',source_codec=?,playback_provider='none',playback_external_id=NULL,playback_manifest_path=NULL,failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=?").bind(verified.codec, session.asset_id, creatorId),
-    DB.prepare("INSERT INTO asset_video_ingest_events (id,creator_id,asset_id,session_id,actor_email,actor_role,event_type,detail) VALUES (?,?,?,?,?,?, 'ingest_verified',?)").bind(crypto.randomUUID(), creatorId, session.asset_id, session.id, context.email, context.creator.role, JSON.stringify({ byteCount: verified.byteCount, mimeType: verified.detectedMime, codec: verified.codec, playback: "provider_not_configured" })),
-    identityAuditStatement(DB, humanAuditActor(context), "native_video_ingest_verified", session.asset_id, { byteCount: verified.byteCount, mimeType: verified.detectedMime, codec: verified.codec, playback: "provider_not_configured" }),
+    DB.prepare("INSERT INTO asset_video_ingest_events (id,creator_id,asset_id,session_id,actor_email,actor_role,event_type,detail) VALUES (?,?,?,?,?,?, 'ingest_verified',?)").bind(crypto.randomUUID(), creatorId, session.asset_id, session.id, context.email, context.creator.role, JSON.stringify({ byteCount: verified.byteCount, mimeType: verified.detectedMime, codec: verified.codec, checksumProvenance: verified.checksumProvenance, clientSha256: verified.clientSha256, playback: "provider_not_configured" })),
+    identityAuditStatement(DB, humanAuditActor(context), "native_video_ingest_verified", session.asset_id, { byteCount: verified.byteCount, mimeType: verified.detectedMime, codec: verified.codec, checksumProvenance: verified.checksumProvenance, clientSha256: verified.clientSha256, playback: "provider_not_configured" }),
   ]);
   return verified.codec;
 }

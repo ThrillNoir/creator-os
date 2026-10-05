@@ -57,6 +57,13 @@ export function buildCreatorLaunchReadiness(input: {
 
   if (!input.collection) {
     checks.push({ id: "analytics_collection", title: "Official analytics collection", status: "attention", summary: "No creator-scoped analytics collection receipt exists yet. Growth evidence remains unavailable.", observedAt: null });
+  } else if (input.collection.status === "skipped") {
+    const freshness = hasQuality(input.insights, "unavailable")
+      ? "No usable official observation is currently available."
+      : hasQuality(input.insights, "stale")
+        ? "The retained official observation is stale."
+        : "Retained official observations are current enough for review.";
+    checks.push({ id: "analytics_collection", title: "Official analytics collection", status: "attention", summary: `The latest collection was skipped. ${freshness} This run does not confirm a completed provider read.`, observedAt: input.insights.summary.latestObservedAt });
   } else if (input.collection.status === "failed" || input.collection.status === "running") {
     checks.push({ id: "analytics_collection", title: "Official analytics collection", status: "attention", summary: input.collection.status === "failed" ? "The latest read failed. Inspect the retained receipt and allow the bounded retry before relying on fresh evidence." : "A read is in progress. Wait for its durable receipt before using the resulting evidence.", observedAt: input.collection.completed_at ?? input.collection.started_at });
   } else if (hasQuality(input.insights, "stale") || hasQuality(input.insights, "unavailable")) {

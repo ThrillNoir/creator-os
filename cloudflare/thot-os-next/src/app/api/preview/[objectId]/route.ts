@@ -15,5 +15,5 @@ export async function GET(_: Request, { params }: { params: Promise<{ objectId: 
   if (!asset) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   const object = await PREVIEWS.get(asset.preview_r2_key);
   if (!object) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
-  return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, max-age=86400", etag: object.etag, "x-content-type-options": "nosniff" } });
+  return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, no-store", etag: object.etag, "x-content-type-options": "nosniff" } });
 }

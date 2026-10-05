@@ -62,6 +62,14 @@ export function assertRouteLessFirstBootstrapConfig(config) {
   return true;
 }
 
+export function assertDisabledDownloadsFirstBootstrapConfig(config) {
+  if (!config || config.workers_dev !== true || config.preview_urls !== false || Object.hasOwn(config, "route") || Object.hasOwn(config, "routes")
+    || !config.vars || Object.keys(config.vars).length !== 1 || config.vars.ENABLED !== "false") {
+    throw new Error("Downloads first bootstrap requires workers_dev=true, preview_urls=false, no routes, and ENABLED=false.");
+  }
+  return true;
+}
+
 export function workerNotFoundProviderCode(error, { accountId, worker } = {}) {
   if (typeof accountId !== "string" || typeof worker !== "string") return null;
   const diagnostic = typeof error?.stderr === "string" ? error.stderr : "";
@@ -93,6 +101,26 @@ export function observeAbsentPublicContactWorker(registry, metadata, { execFileS
   return { absent: false };
 }
 
+export function observeAbsentDownloadsWorker(registry, metadata, { execFileSyncImpl = execFileSync } = {}) {
+  if (metadata?.environment !== "staging" || metadata?.component !== "downloads" || metadata?.worker !== stagingDeploymentWorkers.downloads || metadata?.accountId !== registry?.environments?.staging?.accountId) {
+    throw new Error("First-bootstrap absence checks support only the reviewed downloads staging Worker.");
+  }
+  const executable = path.join(root, stagingToolchainDirectory(registry, metadata.component), "node_modules/.bin/wrangler");
+  try {
+    execFileSyncImpl(executable, ["versions", "list", "--json", "--config", metadata.config], {
+      cwd: root,
+      encoding: "utf8",
+      env: mutationWranglerEnvironment({ accountId: registry.environments.staging.accountId }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const absenceCode = workerNotFoundProviderCode(error, metadata);
+    if (absenceCode) return { absent: true, absenceCode, versionIds: [], deployment: { versions: [] }, secretNames: [] };
+    throw new Error("Downloads Worker absence was not proven by a known Cloudflare not-found code.");
+  }
+  return { absent: false };
+}
+
 export function snapshotBootstrapSecrets(file, requiredSecretNames, directory) {
   let source;
   try {
@@ -118,8 +146,9 @@ export function snapshotBootstrapSecrets(file, requiredSecretNames, directory) {
 export function assertBootstrapSecretsFileOption(options, plan) {
   if (options?.bootstrapSecretsFile && options?.mode !== "apply") throw new Error("--bootstrap-secrets-file is allowed only for an approved first-bootstrap apply.");
   if (options?.mode !== "apply") return true;
-  if (plan?.firstBootstrap && !options.bootstrapSecretsFile) throw new Error("Public-contact first bootstrap requires --bootstrap-secrets-file.");
-  if (!plan?.firstBootstrap && options?.bootstrapSecretsFile) throw new Error("--bootstrap-secrets-file is allowed only for an approved public-contact first bootstrap.");
+  const requiresBootstrapSecrets = plan?.firstBootstrap && plan?.component !== "downloads";
+  if (requiresBootstrapSecrets && !options.bootstrapSecretsFile) throw new Error("Public-contact first bootstrap requires --bootstrap-secrets-file.");
+  if ((!requiresBootstrapSecrets) && options?.bootstrapSecretsFile) throw new Error("--bootstrap-secrets-file is allowed only for an approved public-contact first bootstrap.");
   return true;
 }
 
@@ -139,7 +168,7 @@ function targetContext(options) {
   const ledger = readJson(ledgerPath, "staging migration ledger");
   const pendingMigrations = ledger.pendingMigrations ?? [];
   if (ledger.environment !== "staging" || ledger.databaseId !== database.id || !ledger.migrations?.length || ledger.migrations.some((entry) => !Number.isInteger(entry.remoteId)) || !Array.isArray(pendingMigrations) || pendingMigrations.length) throw new Error("Staging migration ledger is not a fully applied authoritative ledger.");
-  const bootstrapConfig = options.component === "publicContact" ? readJsoncFile(path.join(root, component.config)) : null;
+  const bootstrapConfig = ["publicContact", "downloads"].includes(options.component) ? readJsoncFile(path.join(root, component.config)) : null;
   return {
     registry,
     artifactManifest,
@@ -162,6 +191,10 @@ async function observeStaging(context) {
   if (context.metadata.component === "publicContact") {
     const absent = observeAbsentPublicContactWorker(context.registry, context.metadata);
     if (absent.absent) return { migrationNames, workerState: { ...absent, routeLessConfig: assertRouteLessFirstBootstrapConfig(context.bootstrapConfig) } };
+  }
+  if (context.metadata.component === "downloads") {
+    const absent = observeAbsentDownloadsWorker(context.registry, context.metadata);
+    if (absent.absent) return { migrationNames, workerState: { ...absent, disabledRuntimeConfig: assertDisabledDownloadsFirstBootstrapConfig(context.bootstrapConfig) } };
   }
   let secretInventory;
   try { secretInventory = JSON.parse(runWranglerMetadataRead(["secret", "list", "--format", "json", "--config", context.metadata.config], context.registry)); } catch { throw new Error("Wrangler staging secret-name inventory was not clean JSON."); }
@@ -213,7 +246,9 @@ async function deployReviewedComponent(registry, metadata, plan, artifactEntrypo
       if (createHash("sha256").update(snapshotBytes).digest("hex") !== artifactEntrypoint.sha256) throw new Error("reviewed_artifact_snapshot_failed");
       closeSync(snapshotDescriptor); snapshotDescriptor = undefined;
     }
-    const bootstrapSecretsSnapshot = plan.firstBootstrap ? snapshotBootstrapSecrets(bootstrapSecretsFile, plan.firstBootstrap.requiredSecretNames, temporaryDirectory) : null;
+    const bootstrapSecretsSnapshot = plan.component === "publicContact" && plan.firstBootstrap
+      ? snapshotBootstrapSecrets(bootstrapSecretsFile, plan.firstBootstrap.requiredSecretNames, temporaryDirectory)
+      : null;
     const args = metadata.component === "web" ? ["deploy", "--config", path.join(root, metadata.config)] : ["deploy", snapshotPath, "--no-bundle", "--config", path.join(root, metadata.config), "--strict", "--tag", plan.artifact.versionTag, "--message", `Creator OS reviewed artifact ${plan.artifact.sha256}`, ...(bootstrapSecretsSnapshot ? ["--secrets-file", bootstrapSecretsSnapshot] : [])];
     const environment = metadata.component === "web"
       ? deploymentWranglerEnvironment({ accountId: registry.environments.staging.accountId })

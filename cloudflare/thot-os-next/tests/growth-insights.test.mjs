@@ -68,6 +68,77 @@ test("growth insights produce a human-review-only format signal from a sufficien
   assert.match(recommendation.summary, /never schedules, publishes or approves/i);
   assert.equal(recommendation.evidence.source, "instagram_api");
   assert.equal(recommendation.evidence.sampleSize, 6);
+  assert.equal(result.summary.freshComparableMedia, 12);
+});
+
+test("all-stale complete metrics trigger refresh and cannot recommend a format", () => {
+  const observations = [
+    ...Array.from({ length: 6 }, (_, index) => observation({ media_id: `stale-reel-${index}`, media_product_type: "REELS", like_count: 12, comments_count: 3, saved_count: 6, shares_count: 3, collected_at: "2026-07-01T10:00:00.000Z" })),
+    ...Array.from({ length: 6 }, (_, index) => observation({ media_id: `stale-feed-${index}`, media_product_type: "FEED", like_count: 3, comments_count: 0, saved_count: 0, shares_count: 0, collected_at: "2026-07-01T10:00:00.000Z" })),
+  ];
+  const result = buildGrowthInsights({ observations, generatedAt: "2026-08-17T10:00:00.000Z" });
+  assert.equal(result.summary.completeMetricMedia, 12);
+  assert.equal(result.summary.freshComparableMedia, 0);
+  assert.equal(result.summary.metricCoveragePercent, 100);
+  assert.ok(result.recommendations.some((item) => item.id === "refresh_official_data"));
+  assert.ok(result.recommendations.some((item) => item.id === "insufficient_sample"));
+  assert.equal(result.recommendations.some((item) => item.category === "format"), false);
+});
+
+test("a mostly stale sample cannot create format recommendations from one fresh observation", () => {
+  const observations = [
+    observation({ media_id: "fresh-reel", media_product_type: "REELS", like_count: 12, comments_count: 3, saved_count: 6, shares_count: 3, collected_at: "2026-08-16T10:00:00.000Z" }),
+    ...Array.from({ length: 11 }, (_, index) => observation({ media_id: `old-feed-${index}`, media_product_type: "FEED", like_count: 0, comments_count: 0, saved_count: 0, shares_count: 0, collected_at: "2026-07-01T10:00:00.000Z" })),
+  ];
+  const result = buildGrowthInsights({ observations, generatedAt: "2026-08-17T10:00:00.000Z" });
+  assert.equal(result.summary.completeMetricMedia, 12);
+  assert.equal(result.summary.freshComparableMedia, 1);
+  assert.ok(result.recommendations.some((item) => item.id === "insufficient_sample"));
+  assert.equal(result.recommendations.some((item) => item.category === "format"), false);
+});
+
+test("missing, invalid and future observation times are unavailable and excluded from comparisons", () => {
+  const observations = [
+    ...Array.from({ length: 6 }, (_, index) => observation({ media_id: `invalid-${index}`, collected_at: index % 2 ? "not-a-date" : null })),
+    ...Array.from({ length: 6 }, (_, index) => observation({ media_id: `future-${index}`, media_product_type: "REELS", like_count: 12, comments_count: 3, saved_count: 6, shares_count: 3, collected_at: "2026-08-18T10:00:00.000Z" })),
+  ];
+  const result = buildGrowthInsights({ observations, generatedAt: "2026-08-17T10:00:00.000Z" });
+  assert.equal(result.summary.completeMetricMedia, 12);
+  assert.equal(result.summary.freshComparableMedia, 0);
+  assert.ok(result.summary.dataQuality.includes("unavailable"));
+  assert.ok(result.recommendations.some((item) => item.id === "refresh_official_data"));
+  assert.equal(result.recommendations.some((item) => item.category === "format"), false);
+});
+
+test("invalid calendar timestamps are unavailable while SQLite timestamps remain accepted", () => {
+  const result = buildGrowthInsights({
+    observations: [
+      observation({ media_id: "invalid-calendar", collected_at: "2026-02-30T10:00:00.000Z" }),
+      observation({ media_id: "sqlite-time", collected_at: "2026-03-02 10:00:00" }),
+    ],
+    generatedAt: "2026-03-02T10:00:00.000Z",
+  });
+  assert.equal(result.summary.completeMetricMedia, 2);
+  assert.equal(result.summary.freshComparableMedia, 1);
+  assert.ok(result.summary.dataQuality.includes("unavailable"));
+  assert.ok(result.recommendations.some((item) => item.id === "refresh_official_data"));
+});
+
+test("complete zero-view metrics count toward coverage but are not comparison-eligible", () => {
+  const result = buildGrowthInsights({
+    observations: [
+      observation({ media_id: "zero-views", view_count: 0, like_count: 0, comments_count: 0, saved_count: 0, shares_count: 0 }),
+      observation({ media_id: "positive-views" }),
+      observation({ media_id: "incomplete", saved_count: null }),
+    ],
+    generatedAt: "2026-08-17T10:00:00.000Z",
+  });
+  assert.equal(result.summary.completeMetricMedia, 2);
+  assert.equal(result.summary.metricCoveragePercent, 67);
+  assert.equal(result.summary.freshComparableMedia, 1);
+  assert.deepEqual(result.summary.dataQuality, ["official", "incomplete"]);
+  assert.match(result.recommendations.find((item) => item.id === "metric_coverage").summary, /1 official media observation is incomplete/);
+  assert.match(result.recommendations.find((item) => item.id === "insufficient_sample").summary, /1 media item has complete metrics and positive views/);
 });
 
 test("growth insight database and API boundaries remain creator-scoped and read-only", async () => {
@@ -82,4 +153,6 @@ test("growth insight database and API boundaries remain creator-scoped and read-
   assert.match(route, /cache-control": "no-store/);
   assert.doesNotMatch(page, /createInstagramPostAction|refreshInstagramDataAction|<form\b/);
   assert.match(page, /cannot like, comment, follow, message, create, schedule, approve or publish/i);
+  assert.match(page, /no exclusive link to individual posts, subscribers or spend/i);
+  assert.match(page, /does not guess post revenue/i);
 });

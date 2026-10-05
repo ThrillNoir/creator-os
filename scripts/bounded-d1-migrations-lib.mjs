@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { migrationNamesFromExport } from "./service-auth-activation-backup.mjs";
 
 const migrationPattern = /^(\d{4})_([a-z0-9][a-z0-9_-]*)\.sql$/i;
 
@@ -29,6 +31,22 @@ export const hashBytes = (value) => {
   return createHash("sha256").update(bytes).digest("hex");
 };
 export const hashFileBytes = (filePath) => hashBytes(readFileSync(filePath));
+
+/**
+ * Replay a D1 SQL export into a disposable SQLite database and check database
+ * and foreign-key integrity. Work on a private copy so validation never adds
+ * sidecars next to, truncates, or otherwise alters the release export itself.
+ */
+export function replayD1ExportMigrationHistory(exportPath) {
+  const replayDirectory = mkdtempSync(path.join(os.tmpdir(), "thot-os-bounded-d1-replay-"), { mode: 0o700 });
+  const replayPath = path.join(replayDirectory, "staging-d1.sql");
+  try {
+    copyFileSync(exportPath, replayPath);
+    return migrationNamesFromExport(replayPath);
+  } finally {
+    rmSync(replayDirectory, { recursive: true, force: true });
+  }
+}
 
 export function planDigest(plan) {
   const copy = { ...plan };
@@ -214,6 +232,8 @@ export function validateBackup({ receipt, receiptPath, plan, target, maxAgeMinut
   if (Number.isNaN(exportedAt.valueOf()) || now.valueOf() - exportedAt.valueOf() > maxAgeMinutes * 60_000 || exportedAt > now) throw new Error("Backup receipt is stale or invalid.");
   const exportPath = receiptPath.replace(/\.receipt\.json$/, "");
   if (!existsSync(exportPath) || statSync(exportPath).size === 0 || hashFileBytes(exportPath) !== receipt.sqlChecksum) throw new Error("Backup export is missing or its checksum does not match the receipt.");
+  const exportedMigrations = replayD1ExportMigrationHistory(exportPath);
+  assertExactMigrationHistory(exportedMigrations, expectedMigrationState, "Replayed export migration history");
   return { receiptPath, exportedAt: exportedAt.toISOString(), sqlChecksum: receipt.sqlChecksum, planSha256: plan.planSha256, receiptHash: hashCanonicalJson(receipt) };
 }
 

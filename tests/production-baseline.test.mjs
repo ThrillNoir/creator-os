@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
@@ -56,4 +58,37 @@ test("production preflight accepts only the route-less public-links foundation",
   assert.equal(outcome.ok, true, JSON.stringify(outcome.errors));
   const config = readJsoncFile(path.join(root, "cloudflare/thot-os-public-links/wrangler.production.jsonc"));
   assert.equal(config.workers_dev, false);
+});
+
+
+test("production baseline generator preserves the reviewed boundary despite newer staging migrations", () => {
+  const result = spawnSync(process.execPath, ["scripts/build-d1-production-baseline.mjs", "--check"], {
+    cwd: root, encoding: "utf8", timeout: 30_000,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /Production baseline is current/);
+});
+
+
+test("a tampered foundation checksum cannot overwrite the production baseline", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "thot-os-baseline-denial-"));
+  try {
+    await mkdir(path.join(fixture, "scripts"));
+    await mkdir(path.join(fixture, "config"));
+    await mkdir(path.join(fixture, "cloudflare/thot-os-app/production-baseline"), { recursive: true });
+    await copyFile(path.join(root, "scripts/build-d1-production-baseline.mjs"), path.join(fixture, "scripts/build-d1-production-baseline.mjs"));
+    await symlink(path.join(root, "node_modules"), path.join(fixture, "node_modules"));
+    await symlink(path.join(root, "cloudflare/thot-os-app/migrations"), path.join(fixture, "cloudflare/thot-os-app/migrations"));
+    const ledger = JSON.parse(await readFile(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
+    ledger.migrations[0].sha256 = "0".repeat(64);
+    await writeFile(path.join(fixture, "config/staging-d1-migration-ledger.json"), JSON.stringify(ledger));
+    const output = path.join(fixture, "cloudflare/thot-os-app/production-baseline/schema.sql");
+    await writeFile(output, "preserved fixture baseline\n");
+    const result = spawnSync(process.execPath, ["scripts/build-d1-production-baseline.mjs"], {
+      cwd: fixture, encoding: "utf8", timeout: 30_000,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Production baseline migration checksum changed/);
+    assert.equal(await readFile(output, "utf8"), "preserved fixture baseline\n");
+  } finally { await rm(fixture, { recursive: true, force: true }); }
 });

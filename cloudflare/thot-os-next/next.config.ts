@@ -15,6 +15,10 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
-
-if (process.env.NODE_ENV === "development") initOpenNextCloudflareForDev();
+export default async function configureNext() {
+  if (process.env.NODE_ENV === "development") {
+    // Local development must not inherit remote staging service/resource access.
+    await initOpenNextCloudflareForDev({ remoteBindings: false });
+  }
+  return nextConfig;
+}

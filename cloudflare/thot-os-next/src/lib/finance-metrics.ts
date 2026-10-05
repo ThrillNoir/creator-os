@@ -85,7 +85,9 @@ export function normaliseFinanceCsv(text: string): FinanceImportRow[] {
     if (!parsedDate || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== rawDate) {
       throw new Error(`Row ${rowNumber} needs a date in YYYY-MM-DD format.`);
     }
-    const currency = (row.currency || "AUD").trim().toUpperCase();
+    const rawCurrency = row.currency?.trim();
+    if (!rawCurrency) throw new Error(`Row ${rowNumber} needs a currency code. Include a currency column and a three-letter code for every row.`);
+    const currency = rawCurrency.toUpperCase();
     if (!/^[A-Z]{3}$/.test(currency)) throw new Error(`Row ${rowNumber} needs a three-letter currency code.`);
     const key = `${rawDate}|${currency}`;
     if (seen.has(key)) throw new Error(`Row ${rowNumber} duplicates ${rawDate} ${currency} in this file.`);

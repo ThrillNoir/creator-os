@@ -97,54 +97,143 @@ function validPreviewMessage(value: unknown): value is PreviewQueueMessage {
     && typeof input.sourceRevision === "string" && input.sourceRevision.length > 0;
 }
 
-async function recordPreviewFailure(env: Env, input: PreviewQueueMessage, message: string, status: "queued" | "failed") {
+const previewProcessingLease = "datetime('now','-5 minutes')";
+
+class PreviewProcessingError extends Error {
+  readonly claimAttempt: number;
+
+  constructor(message: string, claimAttempt: number) {
+    super(message);
+    this.name = "PreviewProcessingError";
+    this.claimAttempt = claimAttempt;
+  }
+}
+
+async function recordPreviewFailure(env: Env, input: PreviewQueueMessage, message: string, status: "queued" | "failed", claimAttempt: number) {
   await env.DB.batch([
-    env.DB.prepare("UPDATE asset_preview_jobs SET status=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision=?")
-      .bind(status, message.slice(0, 1000), input.creatorId, input.assetId, input.sourceRevision),
-    env.DB.prepare("UPDATE asset_media_authorities SET state=?,preview_failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND authority_kind='r2_native'")
-      .bind(status === "failed" ? "preview_failed" : "canonical_verified", message.slice(0, 200), input.creatorId, input.assetId),
+    env.DB.prepare(`UPDATE asset_media_authorities SET state=?,preview_failure_code=?,updated_at=CURRENT_TIMESTAMP
+      WHERE creator_id=? AND asset_id=? AND authority_kind='r2_native'
+        AND EXISTS (SELECT 1 FROM assets a JOIN asset_storage_objects o ON o.asset_id=a.id AND o.creator_id=a.creator_id
+          WHERE a.id=asset_media_authorities.asset_id AND a.creator_id=asset_media_authorities.creator_id
+            AND a.media_r2_key=o.object_key AND o.ingest_status='verified' AND o.source_revision=?)
+        AND EXISTS (SELECT 1 FROM asset_preview_jobs j WHERE j.creator_id=? AND j.asset_id=? AND j.source_revision=? AND j.status='processing' AND j.attempts=?)`)
+      .bind(status === "failed" ? "preview_failed" : "canonical_verified", message.slice(0, 200), input.creatorId, input.assetId, input.sourceRevision, input.creatorId, input.assetId, input.sourceRevision, claimAttempt),
+    env.DB.prepare(`UPDATE asset_preview_jobs SET status=?,last_error=?,updated_at=CURRENT_TIMESTAMP
+      WHERE creator_id=? AND asset_id=? AND source_revision=? AND status='processing' AND attempts=?`)
+      .bind(status, message.slice(0, 1000), input.creatorId, input.assetId, input.sourceRevision, claimAttempt),
   ]);
 }
 
-async function processPreviewMessage(env: Env, input: PreviewQueueMessage) {
-  const asset = await env.DB.prepare(`SELECT o.object_key,o.r2_etag,o.sha256,a.preview_r2_key,j.status AS job_status,j.source_revision
+async function recordPreviewDeadLetter(env: Env, input: PreviewQueueMessage, message: string) {
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE asset_media_authorities SET state='preview_failed',preview_failure_code=?,updated_at=CURRENT_TIMESTAMP
+      WHERE creator_id=? AND asset_id=? AND authority_kind='r2_native'
+        AND EXISTS (SELECT 1 FROM assets a JOIN asset_storage_objects o ON o.asset_id=a.id AND o.creator_id=a.creator_id
+          WHERE a.id=asset_media_authorities.asset_id AND a.creator_id=asset_media_authorities.creator_id
+            AND a.media_r2_key=o.object_key AND o.ingest_status='verified' AND o.source_revision=?)
+        AND EXISTS (SELECT 1 FROM asset_preview_jobs j WHERE j.creator_id=? AND j.asset_id=? AND j.source_revision=?
+          AND (j.status IN ('queued','failed') OR (j.status='processing' AND j.updated_at<=${previewProcessingLease})))`)
+      .bind(message.slice(0, 200), input.creatorId, input.assetId, input.sourceRevision, input.creatorId, input.assetId, input.sourceRevision),
+    env.DB.prepare(`UPDATE asset_preview_jobs SET status='failed',attempts=attempts+CASE WHEN status='processing' THEN 1 ELSE 0 END,
+      last_error=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision=?
+      AND (status IN ('queued','failed') OR (status='processing' AND updated_at<=${previewProcessingLease}))`)
+      .bind(message.slice(0, 1000), input.creatorId, input.assetId, input.sourceRevision),
+  ]);
+}
+
+async function processPreviewMessage(env: Env, input: PreviewQueueMessage): Promise<"done" | "busy" | "noop"> {
+  const asset = await env.DB.prepare(`SELECT o.object_key,o.r2_etag,o.sha256,o.source_revision AS object_revision,a.preview_r2_key,j.status AS job_status,j.source_revision
     FROM assets a JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
     JOIN asset_storage_objects o ON o.asset_id=a.id AND o.creator_id=a.creator_id AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
     JOIN asset_preview_jobs j ON j.asset_id=a.id AND j.creator_id=a.creator_id
     WHERE a.id=? AND a.creator_id=? AND a.source_available=1`).bind(input.assetId, input.creatorId)
-    .first<{ object_key: string; r2_etag: string; sha256: string; preview_r2_key: string | null; job_status: string; source_revision: string }>();
-  if (!asset || asset.source_revision !== input.sourceRevision || asset.preview_r2_key || asset.job_status === "done") return;
-  const claimed = await env.DB.prepare("UPDATE asset_preview_jobs SET status='processing',attempts=attempts+1,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE creator_id=? AND asset_id=? AND source_revision=? AND status IN ('queued','failed')")
-    .bind(input.creatorId, input.assetId, input.sourceRevision).run();
-  if (!claimed.meta.changes) return;
-  const source = await env.LIBRARY_MEDIA.get(asset.object_key, { onlyIf: { etagMatches: asset.r2_etag } });
-  if (!source || !("body" in source)) throw new Error("r2_source_media_not_available");
-  const transformed = await env.IMAGES.input(source.body).transform({ width: 720, height: 720, fit: "scale-down" }).output({ format: "image/jpeg", quality: 84, anim: false });
-  const bytes = await new Response(transformed.image()).arrayBuffer();
-  if (!bytes.byteLength) throw new Error("native_preview_empty");
-  const objectId = await sha256(`${input.creatorId}:${input.assetId}`);
-  const key = `creators/${input.creatorId}/assets/${objectId}/previews/${asset.sha256}.jpg`;
-  await env.PREVIEWS.put(key, bytes, { httpMetadata: { contentType: "image/jpeg", cacheControl: "private, no-store" }, customMetadata: { creator_id: input.creatorId, asset_id: input.assetId, source_sha256: asset.sha256, derivative: "native_preview_v1" } });
-  await env.DB.batch([
-    env.DB.prepare("UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=? AND preview_r2_key IS NULL").bind(key, input.assetId, input.creatorId),
-    env.DB.prepare("UPDATE asset_media_authorities SET state='preview_ready',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native'").bind(input.assetId, input.creatorId),
-    env.DB.prepare("UPDATE asset_preview_jobs SET status='done',completed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND source_revision=?").bind(input.assetId, input.creatorId, input.sourceRevision),
-  ]);
+    .first<{ object_key: string; r2_etag: string; sha256: string; object_revision: string | null; preview_r2_key: string | null; job_status: string; source_revision: string }>();
+  if (!asset || asset.object_revision !== input.sourceRevision || asset.source_revision !== input.sourceRevision || asset.preview_r2_key || asset.job_status === "ready") return "noop";
+  if (asset.job_status === "processing") {
+    const freshness = await env.DB.prepare(`SELECT updated_at>${previewProcessingLease} AS fresh FROM asset_preview_jobs
+      WHERE creator_id=? AND asset_id=? AND source_revision=? AND status='processing'`).bind(input.creatorId, input.assetId, input.sourceRevision).first<{ fresh: number }>();
+    if (freshness?.fresh) return "busy";
+  }
+
+  const claim = await env.DB.prepare(`UPDATE asset_preview_jobs SET status='processing',attempts=attempts+1,last_error=NULL,
+      started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+    WHERE creator_id=? AND asset_id=? AND source_revision=? AND
+      (status IN ('queued','failed') OR (status='processing' AND updated_at<=${previewProcessingLease}))
+    RETURNING attempts`)
+    .bind(input.creatorId, input.assetId, input.sourceRevision).first<{ attempts: number }>();
+  if (!claim) {
+    const current = await env.DB.prepare(`SELECT j.status,j.source_revision,o.source_revision AS object_revision,a.preview_r2_key,
+        j.updated_at>${previewProcessingLease} AS fresh
+      FROM asset_preview_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
+      JOIN asset_storage_objects o ON o.asset_id=a.id AND o.creator_id=a.creator_id AND o.ingest_status='verified' AND o.object_key=a.media_r2_key
+      WHERE j.creator_id=? AND j.asset_id=?`).bind(input.creatorId, input.assetId).first<{ status: string; source_revision: string; object_revision: string | null; preview_r2_key: string | null; fresh: number }>();
+    if (current?.source_revision === input.sourceRevision && current.object_revision === input.sourceRevision && !current.preview_r2_key && current.status === "processing" && current.fresh) return "busy";
+    return "noop";
+  }
+
+  try {
+    const source = await env.LIBRARY_MEDIA.get(asset.object_key, { onlyIf: { etagMatches: asset.r2_etag } });
+    if (!source || !("body" in source)) throw new Error("r2_source_media_not_available");
+    const transformed = await env.IMAGES.input(source.body).transform({ width: 720, height: 720, fit: "scale-down" }).output({ format: "image/jpeg", quality: 84, anim: false });
+    const bytes = await new Response(transformed.image()).arrayBuffer();
+    if (!bytes.byteLength) throw new Error("native_preview_empty");
+    const objectId = await sha256(`${input.creatorId}:${input.assetId}`);
+    const key = `creators/${input.creatorId}/assets/${objectId}/previews/${asset.sha256}.jpg`;
+    await env.PREVIEWS.put(key, bytes, { httpMetadata: { contentType: "image/jpeg", cacheControl: "private, no-store" }, customMetadata: { creator_id: input.creatorId, asset_id: input.assetId, source_sha256: asset.sha256, derivative: "native_preview_v1" } });
+    const committed = await env.DB.batch([
+      env.DB.prepare(`UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=? AND preview_r2_key IS NULL
+        AND EXISTS (SELECT 1 FROM asset_storage_objects o WHERE o.asset_id=assets.id AND o.creator_id=assets.creator_id
+          AND o.object_key=assets.media_r2_key AND o.ingest_status='verified' AND o.source_revision=?)
+        AND EXISTS (SELECT 1 FROM asset_preview_jobs j WHERE j.creator_id=? AND j.asset_id=? AND j.source_revision=? AND j.status='processing' AND j.attempts=?)`)
+        .bind(key, input.assetId, input.creatorId, input.sourceRevision, input.creatorId, input.assetId, input.sourceRevision, claim.attempts),
+      env.DB.prepare(`UPDATE asset_media_authorities SET state='preview_ready',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP
+        WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native'
+          AND EXISTS (SELECT 1 FROM assets a JOIN asset_storage_objects o ON o.asset_id=a.id AND o.creator_id=a.creator_id
+            WHERE a.id=asset_media_authorities.asset_id AND a.creator_id=asset_media_authorities.creator_id
+              AND a.media_r2_key=o.object_key AND o.ingest_status='verified' AND o.source_revision=?)
+          AND EXISTS (SELECT 1 FROM asset_preview_jobs j WHERE j.creator_id=? AND j.asset_id=? AND j.source_revision=? AND j.status='processing' AND j.attempts=?)`)
+        .bind(input.assetId, input.creatorId, input.sourceRevision, input.creatorId, input.assetId, input.sourceRevision, claim.attempts),
+      env.DB.prepare(`UPDATE asset_preview_jobs SET status='ready',completed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
+        WHERE asset_id=? AND creator_id=? AND source_revision=? AND status='processing' AND attempts=?`)
+        .bind(input.assetId, input.creatorId, input.sourceRevision, claim.attempts),
+    ]);
+    return committed[2]?.meta?.changes ? "done" : "noop";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Preview generation failed.";
+    throw new PreviewProcessingError(message, claim.attempts);
+  }
 }
 
 async function claimJob(request: Request, env: Env, identity: BridgeIdentity) {
   if (request.headers.get("x-thot-os-vault-client") !== "explicit-v4") return json(request, { ok: false, error: "Update the THOT OS bridge extension before uploading." }, 428);
+  const uncertainReceipt = JSON.stringify({ outcome: "uncertain", reconciliationRequired: true, reason: "claim_timeout" });
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE vault_upload_jobs SET error='Upload outcome is uncertain; verify Fansly before any retry.',receipt=?,updated_at=CURRENT_TIMESTAMP
+      WHERE creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'
+        AND (claimed_at IS NULL OR claimed_at<datetime('now','-2 minutes'))
+        AND (NOT json_valid(receipt) OR json_extract(receipt,'$.outcome') IS NOT 'uncertain')`)
+      .bind(uncertainReceipt, identity.creator_id, identity.account_id),
+    env.DB.prepare(`INSERT OR IGNORE INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail)
+      SELECT 'vault-upload-uncertain-'||id,id,creator_id,'service:fansly-device','service','upload_outcome_uncertain',?
+      FROM vault_upload_jobs WHERE creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'
+        AND json_valid(receipt) AND json_extract(receipt,'$.outcome')='uncertain'`)
+      .bind(uncertainReceipt, identity.creator_id, identity.account_id),
+  ]);
   const candidate = await env.DB.prepare(`
     SELECT j.id,a.basename,a.bytes,j.asset_id
     FROM vault_upload_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
-    WHERE j.creator_id=? AND j.account_id=? AND j.platform='fansly'
-      AND (j.status='approved' OR (j.status='claimed' AND j.claimed_at<datetime('now','-2 minutes')))
+    WHERE j.creator_id=? AND j.account_id=? AND j.platform='fansly' AND j.status='approved'
     ORDER BY j.created_at LIMIT 1
   `).bind(identity.creator_id, identity.account_id).first<VaultJob>();
-  if (!candidate) return json(request, { ok: true, job: null });
+  if (!candidate) {
+    const uncertain = await env.DB.prepare(`SELECT COUNT(*) AS count FROM vault_upload_jobs
+      WHERE creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'
+        AND json_valid(receipt) AND json_extract(receipt,'$.outcome')='uncertain'`).bind(identity.creator_id, identity.account_id).first<{ count: number }>();
+    return json(request, { ok: true, job: null, reconciliationRequired: Number(uncertain?.count ?? 0) > 0 });
+  }
   const claimed = await env.DB.prepare(`
     UPDATE vault_upload_jobs SET status='claimed',claimed_at=CURRENT_TIMESTAMP,error=NULL,updated_at=CURRENT_TIMESTAMP
-    WHERE id=? AND creator_id=? AND account_id=? AND (status='approved' OR (status='claimed' AND claimed_at<datetime('now','-2 minutes')))
+    WHERE id=? AND creator_id=? AND account_id=? AND status='approved'
   `).bind(candidate.id, identity.creator_id, identity.account_id).run();
   if (!claimed.meta.changes) return json(request, { ok: true, job: null });
   await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:fansly-device','service','job_claimed','{}')").bind(crypto.randomUUID(), candidate.id, identity.creator_id).run();
@@ -164,25 +253,33 @@ async function mediaRedirect(request: Request, env: Env, identity: BridgeIdentit
 
 async function recordReceipt(request: Request, env: Env, identity: BridgeIdentity, jobId: string) {
   const input = await request.json<{ status?: string; error?: string; receipt?: unknown }>();
-  const proof = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt) ? input.receipt as { savedVaultRecord?: unknown; externalMediaId?: unknown; nativeAttachment?: unknown } : null;
+  const proof = input.receipt && typeof input.receipt === "object" && !Array.isArray(input.receipt) ? input.receipt as { savedVaultRecord?: unknown; externalMediaId?: unknown; nativeAttachment?: unknown; outcome?: unknown; uploadStarted?: unknown } : null;
   const externalMediaId = typeof proof?.externalMediaId === "string" ? proof.externalMediaId.trim() : null;
   const verified = input.status === "staged" && proof?.savedVaultRecord === true && proof.nativeAttachment === true
     && externalMediaId !== null && externalMediaId.length > 0 && externalMediaId.length <= 200;
-  const job = await env.DB.prepare("SELECT asset_id FROM vault_upload_jobs WHERE id=? AND creator_id=? AND account_id=? AND platform='fansly' AND status='claimed'")
+  const job = await env.DB.prepare(`SELECT asset_id FROM vault_upload_jobs WHERE id=? AND creator_id=? AND account_id=? AND platform='fansly'
+    AND (status='claimed' OR (status='failed' AND json_valid(receipt) AND json_extract(receipt,'$.outcome')='uncertain'))`)
     .bind(jobId, identity.creator_id, identity.account_id).first<{ asset_id: string }>();
-  if (!job) return json(request, { ok: false, error: "Vault job is no longer claimable." }, 409);
+  if (!job) return json(request, { ok: false, error: "Vault job is no longer eligible for this receipt." }, 409);
   if (externalMediaId && await env.DB.prepare("SELECT 1 FROM vault_upload_jobs WHERE platform='fansly' AND id<>? AND json_valid(receipt) AND json_extract(receipt,'$.externalMediaId')=? LIMIT 1")
     .bind(jobId, externalMediaId).first()) return json(request, { ok: false, error: "Fansly receipt is already recorded for another vault job." }, 409);
-  const status = verified ? "verified" : "failed";
-  const receipt = JSON.stringify(input.receipt ?? {}).slice(0, 12000);
-  const error = verified ? null : String(input.status === "staged" ? "Paired browser receipt did not report a saved vault record." : input.error || "Fansly staging failed.").slice(0, 2000);
+  const uncertain = !verified && (input.status === "uncertain" || proof?.outcome === "uncertain" || proof?.uploadStarted === true);
+  const status = verified ? "verified" : uncertain ? "claimed" : "failed";
+  const receiptFallback = uncertain
+    ? { outcome: "uncertain", reconciliationRequired: true }
+    : verified
+      ? { outcome: "staged", savedVaultRecord: true, nativeAttachment: true, externalMediaId, receiptTruncated: true }
+      : { outcome: "failed", receiptTruncated: true };
+  const receipt = boundedReceipt(uncertain ? { ...(proof ?? {}), outcome: "uncertain", reconciliationRequired: true } : input.receipt, receiptFallback);
+  const error = verified ? null : String(uncertain ? "Fansly upload outcome is uncertain; verify the vault before retrying." : input.status === "staged" ? "Paired browser receipt did not report a saved vault record." : input.error || "Fansly staging failed.").slice(0, 2000);
   const updated = await env.DB.prepare(`
-    UPDATE vault_upload_jobs SET status=?,completed_at=CURRENT_TIMESTAMP,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP
-    WHERE id=? AND creator_id=? AND account_id=? AND asset_id=? AND platform='fansly' AND status='claimed'
-  `).bind(status, error, receipt, jobId, identity.creator_id, identity.account_id, job.asset_id).run();
+    UPDATE vault_upload_jobs SET status=?,completed_at=CASE WHEN ?='claimed' THEN NULL ELSE CURRENT_TIMESTAMP END,error=?,receipt=?,updated_at=CURRENT_TIMESTAMP
+    WHERE id=? AND creator_id=? AND account_id=? AND asset_id=? AND platform='fansly'
+      AND (status='claimed' OR (status='failed' AND json_valid(receipt) AND json_extract(receipt,'$.outcome')='uncertain'))
+  `).bind(status, status, error, receipt, jobId, identity.creator_id, identity.account_id, job.asset_id).run();
   if (!updated.meta.changes) return json(request, { ok: false, error: "Vault job is no longer claimable." }, 409);
   await env.DB.prepare("INSERT INTO vault_upload_events (id,job_id,creator_id,actor,actor_role,event_type,detail) VALUES (?,?,?,'service:fansly-device','service',?,?)")
-    .bind(crypto.randomUUID(), jobId, identity.creator_id, verified ? "upload_verified" : "staging_failed", JSON.stringify({ error, externalMediaId })).run();
+    .bind(crypto.randomUUID(), jobId, identity.creator_id, verified ? "upload_verified" : uncertain ? "upload_outcome_uncertain" : "staging_failed", JSON.stringify({ error, externalMediaId })).run();
   if (verified) await env.DB.prepare("UPDATE operational_accounts SET last_success_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,warning_level='none',warning_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=? AND platform='fansly'").bind(identity.account_id, identity.creator_id).run();
   return json(request, { ok: true, status });
 }
@@ -512,16 +609,19 @@ export default {
       const input = message.body;
       if (!validPreviewMessage(input)) { message.ack(); return; }
       if (batch.queue === "thot-os-preview-dlq-staging") {
-        await recordPreviewFailure(env, input, "Preview generation exhausted its automatic retries.", "failed");
+        await recordPreviewDeadLetter(env, input, "Preview generation exhausted its automatic retries.");
         message.ack();
         return;
       }
       try {
-        await processPreviewMessage(env, input);
-        message.ack();
+        const outcome = await processPreviewMessage(env, input);
+        if (outcome === "busy") message.retry({ delaySeconds: 30 });
+        else message.ack();
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Preview generation failed.";
-        await recordPreviewFailure(env, input, detail, "queued");
+        if (error instanceof PreviewProcessingError) {
+          await recordPreviewFailure(env, input, detail, "queued", error.claimAttempt).catch(() => undefined);
+        }
         message.retry({ delaySeconds: Math.min(30 * (2 ** Math.max(0, message.attempts - 1)), 900) });
       }
     }));

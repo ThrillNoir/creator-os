@@ -55,11 +55,11 @@ test("synthetic creator invitation claim reaches reviewed activation with produc
     db.exec("INSERT INTO users VALUES ('admin@example.test','Agency Admin','active')");
     db.prepare("INSERT INTO creator_memberships VALUES (?,?,?,?)").run("new-creator", "admin@example.test", "agency_admin", "active");
 
-    const claimSelect = match(identityActions, /DB\.prepare\("(SELECT id,creator_id,invited_email FROM creator_invitations[^\"]+)"\)/, "invitation lookup");
-    const createUser = match(identityActions, /DB\.prepare\("(INSERT OR IGNORE INTO users[^\"]+)"\)/, "claim user insert");
+    const claimSelect = match(identityActions, /DB\.prepare\("(SELECT i\.id,i\.creator_id,i\.invited_email FROM creator_invitations i JOIN creators c[^\"]+)"\)/, "invitation lookup");
+    const createUser = match(identityActions, /DB\.prepare\("(INSERT OR IGNORE INTO users \(email,display_name,status\) SELECT[^\"]+)"\)/, "claim user insert");
     const acceptInvitation = match(identityActions, /DB\.prepare\("(UPDATE creator_invitations SET status='accepted'[^\"]+)"\)/, "invitation acceptance");
     const createMembership = match(identityActions, /DB\.prepare\("(INSERT INTO creator_memberships \(creator_id,user_email,role,status\) SELECT[^\"]+)"\)/, "creator membership insert");
-    const claimAudit = match(identityActions, /DB\.prepare\("(INSERT INTO identity_audit_events[^\"]+)"\)\.bind\(crypto\.randomUUID\(\), invitation\.creator_id, identity\.email, "creator", "creator_invitation_accepted"/, "claim audit");
+    const claimAudit = match(identityActions, /DB\.prepare\("(INSERT INTO identity_audit_events \(id,creator_id,actor_email,actor_role,event_type,subject,detail\) SELECT[^\"]+)"\)/, "claim audit");
     const createProfile = match(identityActions, /DB\.prepare\("(INSERT INTO creator_onboarding_profiles \(creator_id,stage_name\) VALUES \(\?,\?\))"\)/, "onboarding profile insert");
     const digest = async (token) => {
       const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -69,13 +69,29 @@ test("synthetic creator invitation claim reaches reviewed activation with produc
     const hash = await digest(token);
     const expiredHash = await digest("b".repeat(64));
     const revokedHash = await digest("c".repeat(64));
+    const suspendedHash = await digest("d".repeat(64));
     const insertInvitation = db.prepare("INSERT INTO creator_invitations (id,creator_id,invited_email,token_hash,expires_at,created_by) VALUES (?,?,?,?,?,?)");
     insertInvitation.run("invite-1", "new-creator", "new.creator@example.test", hash, "2099-01-01", "admin@example.test");
     insertInvitation.run("invite-expired", "new-creator", "expired@example.test", expiredHash, "2000-01-01", "admin@example.test");
     insertInvitation.run("invite-revoked", "new-creator", "revoked@example.test", revokedHash, "2099-01-01", "admin@example.test");
+    insertInvitation.run("invite-suspended", "new-creator", "suspended.creator@example.test", suspendedHash, "2099-01-01", "admin@example.test");
+    db.prepare("INSERT INTO users VALUES ('suspended.creator@example.test','Suspended Creator','suspended')").run();
     db.prepare("UPDATE creator_invitations SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE id='invite-revoked'").run();
     assert.equal(db.prepare(claimSelect).get(expiredHash), undefined);
     assert.equal(db.prepare(claimSelect).get(revokedHash), undefined);
+
+    const suspendedIdentity = "suspended.creator@example.test";
+    const suspendedInvitation = db.prepare(claimSelect).get(suspendedHash);
+    db.transaction(() => {
+      db.prepare(createUser).run(suspendedIdentity, suspendedIdentity, suspendedInvitation.id);
+      assert.equal(db.prepare(acceptInvitation).run(suspendedIdentity, suspendedInvitation.id, suspendedIdentity).changes, 0);
+      db.prepare(createMembership).run(suspendedInvitation.creator_id, suspendedIdentity, suspendedInvitation.id, suspendedIdentity, suspendedIdentity);
+      db.prepare(claimAudit).run("audit-suspended", suspendedInvitation.creator_id, suspendedIdentity, "creator", "creator_invitation_accepted", suspendedInvitation.id, JSON.stringify({ metadataOnly: true }), suspendedInvitation.id, suspendedIdentity);
+    })();
+    assert.equal(db.prepare("SELECT status FROM users WHERE email=?").pluck().get(suspendedIdentity), "suspended", "claim never reactivates a suspended account");
+    assert.equal(db.prepare("SELECT status FROM creator_invitations WHERE id='invite-suspended'").pluck().get(), "pending", "suspended-user denial leaves the invitation recoverable");
+    assert.equal(db.prepare("SELECT COUNT(*) FROM creator_memberships WHERE user_email=?").pluck().get(suspendedIdentity), 0, "suspended-user denial creates no membership");
+    assert.equal(db.prepare("SELECT COUNT(*) FROM identity_audit_events WHERE id='audit-suspended'").pluck().get(), 0, "denied claim creates no acceptance audit");
 
     const wrongIdentity = "different@example.test";
     const wrongInvite = db.prepare(claimSelect).get(hash);
@@ -87,10 +103,10 @@ test("synthetic creator invitation claim reaches reviewed activation with produc
     const invitation = db.prepare(claimSelect).get(hash);
     assert.equal(invitation.invited_email.toLowerCase(), identity.toLowerCase());
     db.transaction(() => {
-      db.prepare(createUser).run(identity, identity);
-      db.prepare(acceptInvitation).run(identity, invitation.id);
-      db.prepare(createMembership).run(invitation.creator_id, identity, invitation.id);
-      db.prepare(claimAudit).run("audit-claim", invitation.creator_id, identity, "creator", "creator_invitation_accepted", invitation.id, JSON.stringify({ metadataOnly: true }));
+      db.prepare(createUser).run(identity, identity, invitation.id);
+      db.prepare(acceptInvitation).run(identity, invitation.id, identity);
+      db.prepare(createMembership).run(invitation.creator_id, identity, invitation.id, identity, identity);
+      db.prepare(claimAudit).run("audit-claim", invitation.creator_id, identity, "creator", "creator_invitation_accepted", invitation.id, JSON.stringify({ metadataOnly: true }), invitation.id, identity);
     })();
     assert.equal(db.prepare("SELECT status FROM creator_invitations WHERE id='invite-1'").pluck().get(), "accepted");
     assert.equal(db.prepare(claimSelect).get(hash), undefined, "accepted invitations cannot be claimed again");

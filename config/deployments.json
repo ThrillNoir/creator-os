@@ -53,7 +53,8 @@
           "publicMedia": "thot-os-public-media-staging",
           "publicLinksControl": "thot-os-public-links-control-staging",
           "adultGateway": "thot-os-adult-gateway-staging",
-          "publicContact": "thot-os-public-contact-staging"
+          "publicContact": "thot-os-public-contact-staging",
+          "downloads": "thot-os-downloads-staging"
         }
       },
       "components": {
@@ -238,6 +239,25 @@
             "queues": [],
             "kv": ["960ce926cd234170aa789a8eb0ca223a"],
             "analytics": ["thot-os-adult-events-staging"],
+            "services": {}
+          }
+        },
+        "downloads": {
+          "service": "thot-os-downloads",
+          "config": "cloudflare/thot-os-downloads/wrangler.staging.jsonc",
+          "directory": "cloudflare/thot-os-downloads",
+          "worker": "thot-os-downloads-staging",
+          "deployable": true,
+          "stagingBoundary": "Private library download delivery on the dedicated staging workers.dev origin only. It may bind only the staging D1 database and private library-media R2 bucket; custom routes, preview URLs, production resources, and additional bindings are forbidden.",
+          "requiredSecrets": [],
+          "bindings": {
+            "d1": ["DB"],
+            "r2": ["LIBRARY_MEDIA"]
+          },
+          "resources": {
+            "d1": ["thot-os-staging"],
+            "r2": ["thot-os-library-media-staging"],
+            "queues": [],
             "services": {}
           }
         }

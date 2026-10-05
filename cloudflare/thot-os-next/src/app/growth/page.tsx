@@ -29,6 +29,7 @@ export default async function GrowthPage({ searchParams }: { searchParams: Promi
     <section className="growth-summary" aria-label="Growth evidence summary">
       <article><span>Official media</span><strong>{insights.summary.officialMedia}</strong><small>Latest item per Instagram media ID</small></article>
       <article><span>Complete metric sets</span><strong>{insights.summary.completeMetricMedia}</strong><small>Views plus likes, comments, saves and shares</small></article>
+      <article><span>Fresh comparable media</span><strong>{insights.summary.freshComparableMedia}</strong><small>Complete metrics collected within the last 14 days</small></article>
       <article><span>Metric coverage</span><strong>{insights.summary.metricCoveragePercent === null ? "—" : `${insights.summary.metricCoveragePercent}%`}</strong><small>Missing values are never converted to zero</small></article>
       <article><span>Evidence confidence</span><strong>{confidenceLabel(insights.summary.confidence)}</strong><small>Latest observation {date(insights.summary.latestObservedAt)}</small></article>
       <article><span>Data quality</span><strong>{insights.summary.dataQuality.map(qualityLabel).join(" · ")}</strong><small>Official provider data stays distinct from incomplete or stale evidence</small></article>
@@ -38,6 +39,7 @@ export default async function GrowthPage({ searchParams }: { searchParams: Promi
       <div className="section-heading"><div><span className="eyebrow">MEASUREMENT CONTRACT</span><h2>What this page can—and cannot—do</h2></div><Link className="secondary-action" href={`/operations?platform=instagram&section=analytics${query.accountId ? `&accountId=${encodeURIComponent(query.accountId)}` : ""}`}>Open Instagram analytics</Link></div>
       <p>{insights.metricDefinition}</p>
       <p>Only the creator&apos;s verified Instagram API observations enter this calculation. Recommendations are read-only: they cannot like, comment, follow, message, create, schedule, approve or publish anything.</p>
+      <p>Instagram engagement observations and daily earnings have no exclusive link to individual posts, subscribers or spend. Subscriber and spender attribution is unavailable here, so THOT OS does not guess post revenue or claim a post caused earnings.</p>
     </section>
 
     <section className="panel growth-recommendations">

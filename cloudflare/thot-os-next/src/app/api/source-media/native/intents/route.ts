@@ -19,11 +19,11 @@ export async function POST(request: Request) {
   const context = await requireCreatorContext("mutate");
   const { DB, LIBRARY_MEDIA } = cloudflareEnv() as CloudflareEnv & { LIBRARY_MEDIA?: R2Bucket };
   if (!LIBRARY_MEDIA) return noStoreJson({ ok: false, error: "source_media_unavailable" }, 503);
-  const existing = await DB.prepare(`SELECT id,asset_id,status,expected_bytes,expected_mime_type,expected_sha256,chunk_bytes
-    FROM asset_ingest_sessions WHERE creator_id=? AND client_upload_id=? AND ingest_kind='native_image'`).bind(context.creator.creator_id, input.clientUploadId).first<{ id: string; asset_id: string; status: string; expected_bytes: number; expected_mime_type: string; expected_sha256: string; chunk_bytes: number | null }>();
+  const existing = await DB.prepare(`SELECT id,asset_id,status,finalization_state,expected_bytes,expected_mime_type,expected_sha256,chunk_bytes
+    FROM asset_ingest_sessions WHERE creator_id=? AND client_upload_id=? AND ingest_kind='native_image'`).bind(context.creator.creator_id, input.clientUploadId).first<{ id: string; asset_id: string; status: string; finalization_state: string; expected_bytes: number; expected_mime_type: string; expected_sha256: string; chunk_bytes: number | null }>();
   if (existing) {
     if (existing.expected_bytes !== bytes || existing.expected_mime_type !== details.mimeType || existing.expected_sha256 !== sha256) return noStoreJson({ ok: false, error: "idempotency_conflict" }, 409);
-    return noStoreJson({ ok: true, sessionId: existing.id, assetId: existing.asset_id, status: existing.status, partBytes: existing.chunk_bytes ?? undefined, replay: true });
+    return noStoreJson({ ok: true, sessionId: existing.id, assetId: existing.asset_id, status: existing.status, finalizationState: existing.finalization_state, partBytes: existing.chunk_bytes ?? undefined, replay: true });
   }
 
   const chunkBytes = multipartPartSize(bytes);
