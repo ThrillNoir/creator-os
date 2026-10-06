@@ -7,7 +7,8 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "ENABLED": "true"
+    "ENABLED": "true",
+    "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com"
   },
   "d1_databases": [
     {

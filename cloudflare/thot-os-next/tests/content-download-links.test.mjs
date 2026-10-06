@@ -7,6 +7,7 @@ import {
   claimContentDownloadLink,
   createContentDownloadLink,
   getContentDownloadSession,
+  getExpiredDownloadCreator,
   inspectContentDownloadLink,
   listContentDownloadLinks,
   revokeContentDownloadLink,
@@ -41,7 +42,7 @@ function fixture() {
   sqlite.exec(`
     PRAGMA foreign_keys=ON;
     CREATE TABLE creators (id TEXT PRIMARY KEY,status TEXT NOT NULL);
-    CREATE TABLE creator_public_profiles (id TEXT PRIMARY KEY,creator_id TEXT,status TEXT,published_version_id TEXT);
+    CREATE TABLE creator_public_profiles (id TEXT PRIMARY KEY,creator_id TEXT,slug TEXT,status TEXT,published_version_id TEXT);
     CREATE TABLE creator_public_profile_versions (id TEXT PRIMARY KEY,profile_id TEXT,creator_id TEXT,status TEXT,approved_by TEXT,approved_at TEXT,display_name TEXT);
     CREATE TABLE users (email TEXT PRIMARY KEY,status TEXT NOT NULL);
     CREATE TABLE creator_memberships (creator_id TEXT,user_email TEXT,role TEXT,status TEXT);
@@ -344,7 +345,7 @@ test("download branding uses only the owning creator's currently published appro
     await create(DB);
     const inspect = () => inspectContentDownloadLink(DB, { token, now });
     assert.equal((await inspect()).creatorName, null);
-    sqlite.exec(`INSERT INTO creator_public_profiles VALUES ('profile-a','creator-a','active','version-a');
+    sqlite.exec(`INSERT INTO creator_public_profiles VALUES ('profile-a','creator-a','creator-a','active','version-a');
       INSERT INTO creator_public_profile_versions VALUES ('version-a','profile-a','creator-a','published','admin','2026-10-01','Public stage name');`);
     assert.equal((await inspect()).creatorName, 'Public stage name');
     for (const change of [
@@ -367,5 +368,41 @@ test("download branding uses only the owning creator's currently published appro
     await revokeContentDownloadLink(DB, { actor, linkId: 'link-a', now });
     assert.equal(await inspect(), null);
     assert.equal(await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now }), null);
+  } finally { sqlite.close(); }
+});
+
+test("expired links reveal only a current approved SFW public creator name and slug", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    const expiredToken = "5".repeat(64);
+    await create(DB, { id: "expired-link", token: expiredToken });
+    sqlite.exec(`INSERT INTO creator_public_profiles VALUES ('profile-a','creator-a','creator-a','active','version-a');
+      INSERT INTO creator_public_profile_versions VALUES ('version-a','profile-a','creator-a','published','admin','2026-10-01','Public stage name');`);
+    assert.deepEqual(await getExpiredDownloadCreator(DB, { token: expiredToken, now }), null);
+    assert.deepEqual(await getExpiredDownloadCreator(DB, { token: "invalid", now }), null);
+    const expired = await getExpiredDownloadCreator(DB, { token: expiredToken, now: "2026-10-06T00:00:00.000Z" });
+    assert.deepEqual(expired, { creatorName: "Public stage name", creatorSlug: "creator-a" });
+    assert.deepEqual(Object.keys(expired).sort(), ["creatorName", "creatorSlug"]);
+    sqlite.exec("UPDATE creator_public_profiles SET status='paused'");
+    assert.equal(await getExpiredDownloadCreator(DB, { token: expiredToken, now: "2026-10-06T00:00:00.000Z" }), null);
+    sqlite.exec("UPDATE creator_public_profiles SET status='active'");
+    sqlite.exec("UPDATE creator_memberships SET status='suspended' WHERE creator_id='creator-a' AND user_email='creator@example.test'");
+    assert.equal(await getExpiredDownloadCreator(DB, { token: expiredToken, now: "2026-10-06T00:00:00.000Z" }), null);
+    sqlite.exec("UPDATE creator_memberships SET status='active' WHERE creator_id='creator-a' AND user_email='creator@example.test'");
+
+    const activeToken = "6".repeat(64);
+    await create(DB, { id: "active-link", token: activeToken });
+    await claimContentDownloadLink(DB, { token: activeToken, sessionToken: "7".repeat(64), now });
+    assert.equal(await getExpiredDownloadCreator(DB, { token: activeToken, now: "2026-10-05T00:30:00.000Z" }), null);
+    assert.deepEqual(await getExpiredDownloadCreator(DB, { token: activeToken, now: "2026-10-05T01:00:00.000Z" }), { creatorName: "Public stage name", creatorSlug: "creator-a" });
+
+    await revokeContentDownloadLink(DB, { actor, linkId: "expired-link", now });
+    assert.equal(await getExpiredDownloadCreator(DB, { token: expiredToken, now: "2026-10-06T00:00:00.000Z" }), null);
+    await create(DB, { id: "unapproved-link", token: "8".repeat(64) });
+    sqlite.exec("UPDATE creator_public_profile_versions SET approved_at=NULL");
+    assert.equal(await getExpiredDownloadCreator(DB, { token: "8".repeat(64), now: "2026-10-06T00:00:00.000Z" }), null);
+    sqlite.exec("UPDATE creator_public_profile_versions SET approved_at='2026-10-01'");
+    sqlite.exec("UPDATE asset_classifications SET safety='nsfw' WHERE asset_id='asset-a'");
+    assert.deepEqual(await getExpiredDownloadCreator(DB, { token: "8".repeat(64), now: "2026-10-06T00:00:00.000Z" }), { creatorName: "Public stage name", creatorSlug: "creator-a" });
   } finally { sqlite.close(); }
 });

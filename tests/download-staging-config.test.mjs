@@ -28,8 +28,15 @@ test("downloads staging preflight rejects routes, production resources, and extr
 });
 
 test("downloads requires an explicit runtime switch", () => {
-  assert.equal(validate({ ...config, vars: { ENABLED: "true" } }).ok, true);
+  assert.equal(validate({ ...config, vars: { ...config.vars, ENABLED: "true" } }).ok, true);
   for (const ENABLED of [undefined, true, "1", "yes"]) {
-    assert.equal(validate({ ...config, vars: { ENABLED } }).ok, false);
+    assert.equal(validate({ ...config, vars: { ...config.vars, ENABLED } }).ok, false);
+  }
+});
+
+
+test("downloads profile navigation is restricted to the approved staging public origin", () => {
+  for (const SAFE_PUBLIC_PROFILE_BASE_URL of [undefined, "https://example.test", "https://public-profile-staging.thathuboverthere.com/other", "javascript:alert(1)"]) {
+    assert.equal(validate({ ...config, vars: { ...config.vars, SAFE_PUBLIC_PROFILE_BASE_URL } }).ok, false);
   }
 });

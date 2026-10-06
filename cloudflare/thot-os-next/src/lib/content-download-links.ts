@@ -1,5 +1,6 @@
 export type DownloadActor = { creatorId: string; email: string };
 import { parseDownloadSale } from "./content-download-sales.ts";
+import { isPublicCreatorSlug } from "../../../shared/public-profile-slug.ts";
 export class ContentDownloadLinkError extends Error {
   readonly code: "invalid_request" | "not_eligible";
   constructor(code: "invalid_request" | "not_eligible") {
@@ -100,6 +101,25 @@ export async function inspectContentDownloadLink(DB: D1Database, input: { token:
   const link = await DB.prepare(`SELECT ${publicCreatorName} AS creator_name,l.id,l.creator_id,l.asset_id,l.title,l.custom_message,l.object_key,l.byte_count,l.mime_type,l.sha256,l.r2_version,l.r2_etag,l.expires_at FROM content_download_links l ${availableLink}`)
     .bind(tokenHash, now).first<LinkObject>();
   return link ? { id: link.id, creatorId: link.creator_id, creatorName: link.creator_name, assetId: link.asset_id, title: link.title, customMessage: link.custom_message, byteCount: link.byte_count, mimeType: link.mime_type, expiresAt: link.expires_at } : null;
+}
+
+export async function getExpiredDownloadCreator(DB: D1Database, input: { token: string; now?: string }) {
+  if (!validToken(input.token)) return null;
+  const now = timestamp(input.now);
+  const tokenHash = await sha256(input.token);
+  const creator = await DB.prepare(`SELECT v.display_name AS creator_name,p.slug AS creator_slug
+    FROM content_download_links l ${currentEligibility}
+    JOIN creator_public_profiles p ON p.creator_id=l.creator_id AND p.status='active'
+    JOIN creator_public_profile_versions v ON v.id=p.published_version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+      AND v.status='published' AND v.approved_by IS NOT NULL AND v.approved_at IS NOT NULL
+    WHERE ${activeIssuer} AND l.token_hash=? AND l.revoked_at IS NULL
+      AND ((l.redeemed_at IS NULL AND unixepoch(l.expires_at)<=unixepoch(?))
+        OR (l.redeemed_at IS NOT NULL AND unixepoch(l.session_expires_at)<=unixepoch(?)))
+      AND NOT EXISTS (SELECT 1 FROM asset_people ap WHERE ap.creator_id=l.creator_id AND ap.asset_id=l.asset_id)
+    LIMIT 1`).bind(tokenHash, now, now).first<{ creator_name: string; creator_slug: string }>();
+  return creator && isPublicCreatorSlug(creator.creator_slug)
+    ? { creatorName: creator.creator_name, creatorSlug: creator.creator_slug }
+    : null;
 }
 
 export async function claimContentDownloadLink(DB: D1Database, input: { token: string; now?: string; sessionToken?: string; sessionId?: string }) {

@@ -15,23 +15,24 @@ function d1(db) {
   }; } }; } };
 }
 
-function environment({ byteCount = 10, creatorName, customMessage } = {}) {
+function environment({ byteCount = 10, creatorName, customMessage, publicProfileBase = "https://profiles.test" } = {}) {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE creators(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE users(email TEXT PRIMARY KEY,status TEXT); CREATE TABLE creator_memberships(creator_id TEXT,user_email TEXT,status TEXT,role TEXT);
     CREATE TABLE assets(id TEXT PRIMARY KEY,creator_id TEXT,source_available INTEGER); CREATE TABLE asset_storage_objects(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,provider TEXT,storage_role TEXT,bucket_role TEXT,ingest_status TEXT,object_key TEXT,byte_count INTEGER,verified_mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT);
     CREATE TABLE asset_media_authorities(asset_id TEXT,creator_id TEXT,authority_kind TEXT,canonical_storage_object_id TEXT,state TEXT); CREATE TABLE asset_video_playback_states(asset_id TEXT,creator_id TEXT,canonical_storage_object_id TEXT,state TEXT); CREATE TABLE asset_classifications(asset_id TEXT,creator_id TEXT,safety TEXT,is_multi INTEGER); CREATE TABLE asset_people(creator_id TEXT,asset_id TEXT);
-    CREATE TABLE creator_public_profiles(id TEXT PRIMARY KEY,creator_id TEXT,status TEXT,published_version_id TEXT); CREATE TABLE creator_public_profile_versions(id TEXT PRIMARY KEY,profile_id TEXT,creator_id TEXT,status TEXT,approved_by TEXT,approved_at TEXT,display_name TEXT);
+    CREATE TABLE creator_public_profiles(id TEXT PRIMARY KEY,creator_id TEXT,status TEXT,published_version_id TEXT,slug TEXT); CREATE TABLE creator_public_profile_versions(id TEXT PRIMARY KEY,profile_id TEXT,creator_id TEXT,status TEXT,approved_by TEXT,approved_at TEXT,display_name TEXT);
     CREATE TABLE content_download_links(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,storage_object_id TEXT,title TEXT,custom_message TEXT,object_key TEXT,byte_count INTEGER,mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT,token_hash TEXT,expires_at TEXT,redeemed_at TEXT,session_id TEXT,session_token_hash TEXT,session_expires_at TEXT,revoked_at TEXT,created_by TEXT,created_at TEXT);`);
   db.exec("INSERT INTO creators VALUES ('c','active'); INSERT INTO users VALUES ('owner@example.test','active'); INSERT INTO creator_memberships VALUES ('c','owner@example.test','active','creator'); INSERT INTO assets VALUES ('a','c',1); INSERT INTO asset_media_authorities VALUES ('a','c','r2_native','o','canonical_verified'); INSERT INTO asset_video_playback_states VALUES ('a','c','o','playback_ready'); INSERT INTO asset_classifications VALUES ('a','c','sfw',0);");
   db.prepare("INSERT INTO asset_storage_objects VALUES ('o','c','a','r2','canonical_original','library_media','verified','private/video',?,'video/mp4',?,'v1','e1')").run(byteCount, "a".repeat(64));
   db.prepare("INSERT INTO content_download_links(id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at) VALUES ('l','c','a','o','Safe title','private/video',?,'video/mp4',?,?,?, ?,datetime('now','+1 day'),'owner@example.test',CURRENT_TIMESTAMP)").run(byteCount, "a".repeat(64), "v1", "e1", hash(token));
   if (creatorName !== undefined) {
-    db.prepare("INSERT INTO creator_public_profiles VALUES ('p','c','active','pv')").run();
+    db.prepare("INSERT INTO creator_public_profiles VALUES ('p','c','active','pv','creator-name')").run();
     db.prepare("INSERT INTO creator_public_profile_versions VALUES ('pv','p','c','published','owner@example.test',CURRENT_TIMESTAMP,?)").run(creatorName);
   }
   if (customMessage !== undefined) db.prepare("UPDATE content_download_links SET custom_message=?").run(customMessage);
   const bytes = new TextEncoder().encode("0123456789"); const calls = []; let identity = { size: byteCount, version: "v1", etag: "e1" };
-  return { db, calls, setIdentity: (value) => { identity = value; }, env: { ENABLED: "true", DB: d1(db), LIBRARY_MEDIA: { head: async () => identity, get: async (_key, options = {}) => { calls.push(options); const range = options.range; const body = range ? bytes.slice(range.offset, range.offset + range.length) : bytes; return { ...identity, body: new Blob([body]) }; } } } };
+  let headCalls = 0;
+  return { db, calls, getHeadCalls: () => headCalls, setIdentity: (value) => { identity = value; }, env: { ENABLED: "true", SAFE_PUBLIC_PROFILE_BASE_URL: publicProfileBase, DB: d1(db), LIBRARY_MEDIA: { head: async () => { headCalls++; return identity; }, get: async (_key, options = {}) => { calls.push(options); const range = options.range; const body = range ? bytes.slice(range.offset, range.offset + range.length) : bytes; return { ...identity, body: new Blob([body]) }; } } } };
 }
 
 test("metadata never redeems; same-origin POST creates a scoped session and download supports resume", async () => {
@@ -123,4 +124,54 @@ test("recipient message is escaped and disappears with unavailable link or sessi
     const revoked = await worker.fetch(new Request(url, { headers:{cookie} }), env);
     assert.equal(revoked.status,404); assert.doesNotMatch(await revoked.text(), /private-message/);
   } finally { db.close(); }
+});
+
+test("expired unclaimed link shows only approved creator and safe profile link", async () => {
+  const { env, db, calls, getHeadCalls } = environment({ creatorName: '<img src=x onerror="alert(1)">', customMessage: "private-message" });
+  db.exec("UPDATE content_download_links SET expires_at=datetime('now','-1 day')");
+  const response = await worker.fetch(new Request(`https://downloads.test/d/${token}`), env);
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store"); assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.match(response.headers.get("content-security-policy"), /style-src 'self'/);
+  assert.match(body, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/); assert.doesNotMatch(body, /<img src=x/);
+  assert.match(body, /href="https:\/\/profiles\.test\/creator-name" rel="noreferrer"/);
+  assert.doesNotMatch(body, /Safe title|private-message|private\/video|video\/mp4|Download<\/button>|Resume download|\/d\/[a-f0-9]+/);
+  assert.equal(calls.length, 0); assert.equal(getHeadCalls(), 0);
+});
+
+test("expired session shows creator-only page; active redeemed foreign browser stays hidden", async () => {
+  const { env, db, calls, getHeadCalls } = environment({ creatorName: "A Creator", customMessage: "private-message" });
+  const url = `https://downloads.test/d/${token}`;
+  const redemption = await worker.fetch(new Request(url, { method: "POST", headers: { origin: "https://downloads.test", "content-type": "application/x-www-form-urlencoded" }, body: "intent=download" }), env);
+  const cookie = redemption.headers.get("set-cookie");
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404);
+  db.exec("UPDATE content_download_links SET session_expires_at=datetime('now','-1 minute')");
+  const response = await worker.fetch(new Request(url, { headers: { cookie } }), env);
+  const body = await response.text();
+  assert.equal(response.status, 200); assert.match(body, /href="https:\/\/profiles\.test\/creator-name"/);
+  assert.doesNotMatch(body, /private-message|Safe title|private\/video|Resume download|Download<\/button>/);
+  assert.equal((await worker.fetch(new Request(`${url}/download`, { headers: { cookie } }), env)).status, 404);
+  assert.equal((await worker.fetch(new Request(url, { method: "POST", headers: { origin: "https://downloads.test", "content-type": "application/x-www-form-urlencoded" }, body: "intent=download" }), env)).status, 404);
+  assert.equal(calls.length, 0); assert.equal(getHeadCalls(), 0);
+});
+
+test("revoked, invalid, withdrawn, and unapproved links stay generic; hostile profile base is omitted", async () => {
+  const { env, db } = environment({ creatorName: "A Creator" });
+  const url = `https://downloads.test/d/${token}`;
+  db.exec("UPDATE content_download_links SET expires_at=datetime('now','-1 day'),revoked_at=CURRENT_TIMESTAMP");
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://downloads.test/d/invalid"), env)).status, 404);
+  assert.equal((await worker.fetch(new Request(`https://downloads.test/d/${"f".repeat(64)}`), env)).status, 404);
+  db.exec("UPDATE content_download_links SET revoked_at=NULL");
+  db.exec("UPDATE creator_public_profiles SET status='inactive'");
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404);
+  db.exec("UPDATE creator_public_profiles SET status='active'");
+  db.exec("UPDATE creator_public_profile_versions SET status='draft'");
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404);
+
+  const hostile = environment({ creatorName: "A Creator", publicProfileBase: "javascript:alert(1)" });
+  hostile.db.exec("UPDATE content_download_links SET expires_at=datetime('now','-1 day')");
+  const body = await (await worker.fetch(new Request(url), hostile.env)).text();
+  assert.match(body, /Explore more from A Creator\.<\/p>/); assert.doesNotMatch(body, /href="javascript:|javascript:/);
 });

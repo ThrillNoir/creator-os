@@ -153,6 +153,7 @@ function validateDownloadsConfig(errors, componentName, component, config) {
     .filter((name) => (Array.isArray(config[name]) ? config[name].length > 0 : config[name] !== undefined));
   if (extraBindings.length) errors.push(`downloads forbids additional bindings: ${extraBindings.join(", ")}.`);
   if (!["false", "true"].includes(config.vars?.ENABLED)) errors.push("downloads requires an explicit true/false ENABLED setting.");
+  if (config.vars?.SAFE_PUBLIC_PROFILE_BASE_URL !== "https://public-profile-staging.thathuboverthere.com") errors.push("downloads requires the approved staging public profile origin.");
 }
 
 function addExactListError(errors, label, actual, expected) {
