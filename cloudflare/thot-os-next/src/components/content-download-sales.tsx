@@ -53,9 +53,9 @@ export function ContentDownloadSales({ assetId, refreshKey }: { assetId: string;
     });
   }
 
-  if (!sales) return <section className="history"><h3>Private download sales</h3><p role="status">{message || "Loading private history…"}</p></section>;
+  if (!sales) return <section className="history content-download-sales"><h3>Private download sales</h3><p role="status">{message || "Loading private history…"}</p></section>;
 
-  return <section className="history">
+  return <section className="history content-download-sales">
     <h3>Private download sales</h3>
     <p>Manual records only. Saving a price does not confirm that payment was received. Clear a recipient reference when it should no longer be retained; void a sale to exclude it from totals.</p>
     <h4>Totals across this video</h4>

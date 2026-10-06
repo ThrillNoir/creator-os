@@ -855,3 +855,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .account-connection-details, .credential-more { margin-top: 12px; }
 .account-connection-details > summary, .credential-more > summary, .account-lifecycle > summary { cursor: pointer; font-weight: 750; }
 .account-connection-details > .connection-row-actions, .credential-more > .connection-row-actions { margin-top: 12px; }
+
+/* Download controls share the app palette without inheriting history-row flex layout. */
+.content-download-panel { display: grid; gap: 18px; min-width: 0; }
+.content-download-panel form, .content-download-panel > div { display: grid; gap: 14px; min-width: 0; }
+.content-download-panel label { display: grid; gap: 7px; min-width: 0; font-size: 12px; font-weight: 700; color: var(--muted); }
+.content-download-panel input:not([type="checkbox"]):not([type="hidden"]),
+.content-download-panel textarea, .content-download-panel select {
+  width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.content-download-panel textarea { resize: vertical; }
+.content-download-panel p { margin: 0; line-height: 1.5; }
+.content-download-panel label.download-sharing-confirmation { display: flex; align-items: flex-start; gap: 10px; line-height: 1.5; cursor: pointer; }
+.content-download-panel input[type="checkbox"] { flex: 0 0 18px; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--purple); }
+.content-download-panel button { justify-self: start; min-height: 44px; margin: 0; }
+.content-download-panel button:disabled { opacity: .55; cursor: not-allowed; }
+.content-download-panel ul { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.content-download-panel li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; overflow-wrap: anywhere; }
+.content-download-panel :is(h3, h4) { margin: 0; font-weight: 800; }
+.content-download-panel [role="status"]:empty { display: none; }
+.content-download-sales { display: grid; gap: 16px; padding-top: 20px; border-top: 1px solid var(--line); }
+.content-download-sales details { min-width: 0; border: 1px solid var(--line); padding: 14px; }
+.content-download-sales summary { cursor: pointer; overflow-wrap: anywhere; line-height: 1.5; }
+.content-download-sales article { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 14px; padding-top: 14px; }
+.content-download-sales .connection-row-actions { display: flex; flex-wrap: wrap; gap: 14px; }

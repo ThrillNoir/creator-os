@@ -12,7 +12,7 @@ export function ContentLinkForm({ assetId, eligibility }: { assetId: string; eli
   const [history, setHistory] = useState<Awaited<ReturnType<typeof listContentLinksAction>>>([]);
   const [salesRefresh, setSalesRefresh] = useState(0);
   useEffect(() => { let active = true; listContentLinksAction(assetId).then((items) => { if (active) setHistory(items); }).catch(() => { if (active) setMessage("Link history unavailable."); }); return () => { active = false; }; }, [assetId]);
-  return <section className="panel">
+  return <section className="panel content-download-panel">
     <h2>One-time download link</h2>
     <p>One video, one redemption, 24 hours to claim. The recipient has one hour to resume their download. Anyone holding the link can claim it first. No payment is collected.</p>
     <form action={(data) => startTransition(async () => {
@@ -35,21 +35,21 @@ export function ContentLinkForm({ assetId, eligibility }: { assetId: string; eli
       <label>Sale amount (optional)<input name="saleAmount" inputMode="decimal" placeholder="Leave blank if no amount was recorded" /></label>
       <label>Currency<select name="saleCurrency" defaultValue=""><option value="">No currency</option>{SALE_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select></label>
       <p>These are manual records only. Recording an amount does not confirm that payment was received. Leave both amount and currency blank when no amount is recorded. Record each sale once; replacement links should not repeat its amount.</p>
-      <label style={{ display: "flex", gap: "0.6rem", alignItems: "start" }}><input type="checkbox" name="sharingConfirmed" value="yes" required style={{ width: "1rem", height: "1rem", flex: "0 0 1rem" }} />I approve this video and message for direct download sharing and confirm the video features only the owning creator.</label>
+      <label className="download-sharing-confirmation"><input type="checkbox" name="sharingConfirmed" value="yes" required />I approve this video and message for direct download sharing and confirm the video features only the owning creator.</label>
       <button className="primary" disabled={pending || Boolean(link) || eligibility.length > 0} type="submit">Generate one-time link</button>
     </form>
     {eligibility.length > 0 && <ul role="status">{eligibility.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
     {link && <div>
       <p>Redeem before {new Date(link.expiresAt).toLocaleString()}.</p>
       <label>Copy this link now; it is not stored in readable form.<input readOnly value={link.url} onFocus={(event) => event.currentTarget.select()} /></label>
-      <button type="button" disabled={pending} onClick={async () => { try { await navigator.clipboard.writeText(link.url); setMessage("Copied."); } catch { setMessage("Select and copy the link above."); } }}>Copy link</button>
-      <button type="button" disabled={pending} onClick={() => startTransition(async () => {
+      <button className="secondary-action" type="button" disabled={pending} onClick={async () => { try { await navigator.clipboard.writeText(link.url); setMessage("Copied."); } catch { setMessage("Select and copy the link above."); } }}>Copy link</button>
+      <button className="secondary-action" type="button" disabled={pending} onClick={() => startTransition(async () => {
         try { const result = await revokeContentLinkAction(link.id); if (!result.ok) { setMessage("That link is unavailable or already revoked."); return; } setLink(null); setMessage("Link revoked. Future downloads are blocked."); try { setHistory(await listContentLinksAction(assetId)); } catch { setMessage("Link revoked. Link history is unavailable."); } }
         catch { setMessage("Could not revoke link."); }
       })}>Revoke link</button>
     </div>}
     {history.length > 0 && <ul>{history.map((item) => <li key={item.id}>{item.title} — {item.status}
-      {item.status !== "revoked" && item.status !== "expired" && <button type="button" disabled={pending} onClick={() => startTransition(async () => {
+      {item.status !== "revoked" && item.status !== "expired" && <button className="secondary-action" type="button" disabled={pending} onClick={() => startTransition(async () => {
         try { const result = await revokeContentLinkAction(item.id); if (!result.ok) { setMessage("That link is unavailable or already revoked."); return; } if (link?.id === item.id) setLink(null); setMessage("Link revoked."); try { setHistory(await listContentLinksAction(assetId)); } catch { setMessage("Link revoked. Link history is unavailable."); } }
         catch { setMessage("Could not revoke link."); }
       })}>Revoke</button>}
