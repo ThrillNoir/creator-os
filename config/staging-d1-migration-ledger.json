@@ -371,18 +371,19 @@
       "sha256": "1e6c7c22508f8eeed7a6e04b23e5b6e6cd9bcea6ea13bab50e3025d1abfa417c",
       "purpose": "Applied approved bounded staging migration: creator-scoped one-time video download links.",
       "remoteId": 65
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0064_content_download_message.sql",
       "sha256": "90c6edd55984f3638faf6c6fb7e0580b47587d251902d4ab8c835b5426c9bc7a",
-      "purpose": "Local-only additive optional recipient-facing download message; remote apply not authorized."
+      "purpose": "Applied approved bounded staging migration: optional download message.",
+      "remoteId": 66
     },
     {
       "name": "0065_content_download_sales.sql",
       "sha256": "619236b1e25bc5c01a88e3e96aba7d3388711abc31d17234e65bae545592d3f2",
-      "purpose": "Local-only private manual download sale records; remote apply not authorized."
+      "purpose": "Applied approved bounded staging migration: private manual download sale records and correction audit.",
+      "remoteId": 67
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
