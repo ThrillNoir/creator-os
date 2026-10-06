@@ -11,8 +11,10 @@ import {
   listContentDownloadLinks,
   revokeContentDownloadLink,
 } from "../src/lib/content-download-links.ts";
+import { getDownloadSales, updateDownloadSale } from "../src/lib/content-download-sales.ts";
 
 const migration = await readFile(new URL("../../thot-os-app/migrations/0064_content_download_message.sql", import.meta.url), "utf8");
+const salesMigration = await readFile(new URL("../../thot-os-app/migrations/0065_content_download_sales.sql", import.meta.url), "utf8");
 const previousMigration = await readFile(new URL("../../thot-os-app/migrations/0063_content_download_links.sql", import.meta.url), "utf8");
 const productionBaseline = await readFile(new URL("../../thot-os-app/production-baseline/schema.sql", import.meta.url), "utf8");
 const now = "2026-10-05T00:00:00.000Z";
@@ -62,6 +64,7 @@ function fixture() {
   `);
   sqlite.exec(previousMigration);
   sqlite.exec(migration);
+  sqlite.exec(salesMigration);
   return { sqlite, DB: d1(sqlite) };
 }
 
@@ -71,6 +74,7 @@ test("migration applies to the canonical production baseline", () => {
     sqlite.exec(productionBaseline);
     sqlite.exec(previousMigration);
     sqlite.exec(migration);
+    sqlite.exec(salesMigration);
     assert.equal(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='content_download_links'").get().name, "content_download_links");
   } finally { sqlite.close(); }
 });
@@ -79,12 +83,15 @@ test("message migration preserves existing links with a null message", async () 
   const { sqlite, DB } = fixture();
   try {
     sqlite.exec("DROP TABLE content_download_links");
+    sqlite.exec("DROP TABLE content_download_sale_audit");
     sqlite.exec(previousMigration);
     sqlite.prepare(`INSERT INTO content_download_links
       (id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at)
       VALUES ('link-a','creator-a','asset-a','object-a','Legacy title','creators/a/original.mp4',42,'video/mp4',?,'v1','etag-a',?,'2026-10-06T00:00:00.000Z','creator@example.test',?)`).run("c".repeat(64), "d".repeat(64), now);
     sqlite.exec(migration);
     assert.equal(sqlite.prepare("SELECT title,custom_message FROM content_download_links WHERE id='link-a'").get().custom_message, null);
+    sqlite.exec(salesMigration);
+    assert.deepEqual(sqlite.prepare("SELECT recipient_reference,amount_minor,sale_currency,revision FROM content_download_links WHERE id='link-a'").get(), { recipient_reference: null, amount_minor: null, sale_currency: null, revision: 0 });
   } finally { sqlite.close(); }
 });
 
@@ -106,6 +113,99 @@ test("inspection is non-consuming and durable rows keep only hashes", async () =
     const row = sqlite.prepare("SELECT token_hash,session_token_hash FROM content_download_links WHERE id='link-a'").get();
     assert.notEqual(row.token_hash, token);
     assert.equal(row.session_token_hash, null);
+    assert.equal(Object.hasOwn(first, "recipientReference"), false);
+    assert.equal(Object.hasOwn(first, "amountMinor"), false);
+  } finally { sqlite.close(); }
+});
+
+test("manual sale fields stay private and support scoped corrections, clearing, voiding, and stale-write rejection", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    await create(DB, { recipientReference: "  buyer-42  ", saleAmount: "12.50", saleCurrency: "AUD" });
+    const sale = await getDownloadSales(DB, { actor, assetId: "asset-a" });
+    assert.equal(sale.rows[0].recipientReference, "buyer-42");
+    assert.deepEqual(sale.totals, [{ currency: "AUD", amountMinor: 1250, paidCount: 1, complimentaryCount: 0 }]);
+    assert.equal(Object.hasOwn(await inspectContentDownloadLink(DB, { token, now }), "amountMinor"), false);
+    await claimContentDownloadLink(DB, { token, sessionToken: session, now });
+    assert.equal(Object.hasOwn(await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now }), "recipientReference"), false);
+    assert.equal(await updateDownloadSale(DB, { actor, linkId: "link-a", expectedRevision: 0, operation: "clear_recipient", now }), true);
+    assert.equal(await updateDownloadSale(DB, { actor, linkId: "link-a", expectedRevision: 0, operation: "save", recipientReference: "restored", saleAmount: "12.50", saleCurrency: "AUD", now }), false);
+    const cleared = await getDownloadSales(DB, { actor, assetId: "asset-a" });
+    assert.equal(cleared.rows[0].recipientReference, null);
+    assert.equal(cleared.rows[0].amountMinor, 1250);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM content_download_sale_audit WHERE instr(actor,'buyer-42')>0 OR instr(event_type,'buyer-42')>0").get().n, 0);
+    assert.equal(await updateDownloadSale(DB, { actor, linkId: "link-a", expectedRevision: 1, operation: "void", now }), true);
+    assert.deepEqual((await getDownloadSales(DB, { actor, assetId: "asset-a" })).totals, []);
+    assert.equal(await updateDownloadSale(DB, { actor, linkId: "link-a", expectedRevision: 2, operation: "save", recipientReference: "corrected", saleAmount: "15.00", saleCurrency: "AUD", now }), true);
+    const savedVoided = (await getDownloadSales(DB, { actor, assetId: "asset-a" })).rows[0];
+    assert.equal(savedVoided.voidedAt, now);
+    assert.equal(savedVoided.amountMinor, 1500);
+    assert.deepEqual((await getDownloadSales(DB, { actor, assetId: "asset-a" })).totals, []);
+    assert.equal(await updateDownloadSale(DB, { actor: { creatorId: "creator-a", email: "viewer@example.test" }, linkId: "link-a", expectedRevision: 3, operation: "clear_recipient", now }), false);
+    assert.equal(await updateDownloadSale(DB, { actor: { creatorId: "creator-b", email: "other@example.test" }, linkId: "link-a", expectedRevision: 3, operation: "clear_recipient", now }), false);
+    for (const deniedActor of [
+      { creatorId: "creator-a", email: "viewer@example.test" },
+      { creatorId: "creator-b", email: "other@example.test" },
+      { creatorId: "creator-a", email: "inactive@example.test" },
+    ]) assert.deepEqual(await getDownloadSales(DB, { actor: deniedActor, assetId: "asset-a" }), { rows: [], totals: [], nextOffset: null });
+  } finally { sqlite.close(); }
+});
+
+test("sale history pages all recipient records while totals include every page", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    for (let index = 0; index < 51; index++) {
+      await create(DB, { id: `sale-${index}`, token: index.toString(16).padStart(64, "0"), recipientReference: `buyer-${index}`, saleAmount: "0", saleCurrency: "JPY" });
+    }
+    const first = await getDownloadSales(DB, { actor, assetId: "asset-a" });
+    assert.equal(first.rows.length, 50);
+    assert.equal(first.nextOffset, 50);
+    assert.deepEqual(first.totals, [{ currency: "JPY", amountMinor: 0, paidCount: 0, complimentaryCount: 51 }]);
+    const second = await getDownloadSales(DB, { actor, assetId: "asset-a", offset: first.nextOffset });
+    assert.equal(second.rows.length, 1);
+    assert.equal(new Set([...first.rows, ...second.rows].map((row) => row.recipientReference)).size, 51);
+    assert.equal(second.nextOffset, null);
+    await create(DB, { id: "sale-usd", token: "f".repeat(64), recipientReference: "usd-buyer", saleAmount: "2.25", saleCurrency: "USD" });
+    assert.deepEqual((await getDownloadSales(DB, { actor, assetId: "asset-a" })).totals, [
+      { currency: "JPY", amountMinor: 0, paidCount: 0, complimentaryCount: 51 },
+      { currency: "USD", amountMinor: 225, paidCount: 1, complimentaryCount: 0 },
+    ]);
+  } finally { sqlite.close(); }
+});
+
+test("voiding a sale leaves the download link usable", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    const otherToken = "3".repeat(64);
+    await create(DB, { token: otherToken, id: "link-void" });
+    assert.equal(await updateDownloadSale(DB, { actor, linkId: "link-void", expectedRevision: 0, operation: "void", now }), true);
+    assert.equal((await inspectContentDownloadLink(DB, { token: otherToken, now }))?.id, "link-void");
+    assert.equal((await claimContentDownloadLink(DB, { token: otherToken, sessionToken: "4".repeat(64), now }))?.linkId, "link-void");
+  } finally { sqlite.close(); }
+});
+
+test("sale mutations recheck the active actor grant in the update statement", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    await create(DB, { recipientReference: "buyer", saleAmount: "1", saleCurrency: "AUD" });
+    const racedDB = {
+      prepare(sql) {
+        const statement = DB.prepare(sql);
+        return { bind(...values) {
+          const bound = statement.bind(...values);
+          return {
+            async first() {
+              const result = await bound.first();
+              if (sql.includes("FROM creator_memberships") && result) sqlite.prepare("UPDATE creator_memberships SET status='suspended' WHERE creator_id='creator-a' AND user_email='creator@example.test'").run();
+              return result;
+            },
+            all: () => bound.all(), run: () => bound.run(),
+          };
+        } };
+      },
+    };
+    assert.equal(await updateDownloadSale(racedDB, { actor, linkId: "link-a", expectedRevision: 0, operation: "clear_recipient", now }), false);
+    assert.equal(sqlite.prepare("SELECT recipient_reference,revision FROM content_download_links WHERE id='link-a'").get().recipient_reference, "buyer");
   } finally { sqlite.close(); }
 });
 

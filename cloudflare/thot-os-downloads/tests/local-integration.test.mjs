@@ -48,14 +48,14 @@ test("local migrated schema creates, redeems, ranges, and revokes a synthetic do
     modules: true, compatibilityDate: "2026-08-08", script: "export default { fetch() { return new Response('fixture'); } }", r2Buckets: ["LIBRARY_MEDIA"],
   }));
   try {
-    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 66);
-    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0064_content_download_message.sql");
+    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 67);
+    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0065_content_download_sales.sql");
     const media = await mf.getR2Bucket("LIBRARY_MEDIA");
     const identity = await media.put("originals/fixture.mp4", bytes, { httpMetadata: { contentType: "video/mp4" } });
     await seed(local.db, identity);
     freezeTime();
 
-    const created = await createContentDownloadLink(local.DB, { actor: owner, assetId: "fixture-video", title: "Fixture video", customMessage: "A note for you", sharingConfirmed: true, token, id: "fixture-link", now });
+    const created = await createContentDownloadLink(local.DB, { actor: owner, assetId: "fixture-video", title: "Fixture video", customMessage: "A note for you", recipientReference: "private-fixture-client", saleAmount: "12.34", saleCurrency: "AUD", sharingConfirmed: true, token, id: "fixture-link", now });
     assert.equal(created.token, token);
     assert.equal((await inspectContentDownloadLink(local.DB, { token, now })).customMessage, "A note for you");
     await assert.rejects(createContentDownloadLink(local.DB, { actor: outsider, assetId: "fixture-video", title: "Foreign", sharingConfirmed: true, token: "b".repeat(64), now }), { name: "ContentDownloadLinkError", code: "not_eligible" });
@@ -65,6 +65,7 @@ test("local migrated schema creates, redeems, ranges, and revokes a synthetic do
     const env = { ENABLED: "true", DB: local.DB, LIBRARY_MEDIA: media };
     const metadata = await worker.fetch(new Request(url), env);
     assert.equal(metadata.status, 200);
+    assert.doesNotMatch(await metadata.text(), /private-fixture-client|12\.34|AUD/);
     const redeemed = await worker.fetch(new Request(url, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/x-www-form-urlencoded" }, body: "intent=download" }), env);
     assert.equal(redeemed.status, 303);
     const cookie = redeemed.headers.get("set-cookie");

@@ -1,4 +1,5 @@
 export type DownloadActor = { creatorId: string; email: string };
+import { parseDownloadSale } from "./content-download-sales.ts";
 export class ContentDownloadLinkError extends Error {
   readonly code: "invalid_request" | "not_eligible";
   constructor(code: "invalid_request" | "not_eligible") {
@@ -58,12 +59,13 @@ const availableLink = `${currentEligibility} WHERE ${activeIssuer}
   AND l.token_hash=? AND l.redeemed_at IS NULL AND l.revoked_at IS NULL AND unixepoch(l.expires_at)>unixepoch(?)
   AND NOT EXISTS (SELECT 1 FROM asset_people ap WHERE ap.creator_id=l.creator_id AND ap.asset_id=l.asset_id)`;
 
-export async function createContentDownloadLink(DB: D1Database, input: { actor: DownloadActor; assetId: string; title: string; customMessage?: string; sharingConfirmed: boolean; now?: string; token?: string; id?: string }) {
+export async function createContentDownloadLink(DB: D1Database, input: { actor: DownloadActor; assetId: string; title: string; customMessage?: string; recipientReference?: string; saleAmount?: string; saleCurrency?: string; sharingConfirmed: boolean; now?: string; token?: string; id?: string }) {
   const now = timestamp(input.now);
   const title = input.title.trim();
   const customMessage = typeof input.customMessage === "string" ? input.customMessage.trim() || null : null;
   if (!validActor(input.actor) || !input.assetId || input.sharingConfirmed !== true || !title || title.length > 120
     || (input.customMessage !== undefined && (typeof input.customMessage !== "string" || input.customMessage.includes("\0") || input.customMessage.length > 500))) throw new ContentDownloadLinkError("invalid_request");
+  const sale = parseDownloadSale(input);
   const token = input.token ?? randomToken();
   if (!validToken(token)) throw new ContentDownloadLinkError("invalid_request");
   const tokenHash = await sha256(token);
@@ -86,8 +88,8 @@ export async function createContentDownloadLink(DB: D1Database, input: { actor: 
     LIMIT 1`).bind(input.assetId, input.actor.creatorId, input.actor.email).first<{ storage_object_id: string; object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string }>();
   if (!source) throw new ContentDownloadLinkError("not_eligible");
   await DB.prepare(`INSERT INTO content_download_links
-    (id,creator_id,asset_id,storage_object_id,title,custom_message,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, input.actor.creatorId, input.assetId, source.storage_object_id, title, customMessage, source.object_key, source.byte_count, source.verified_mime_type, source.sha256, source.r2_version, source.r2_etag, tokenHash, expiresAt, input.actor.email.toLowerCase(), now).run();
+    (id,creator_id,asset_id,storage_object_id,title,custom_message,recipient_reference,amount_minor,sale_currency,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at,updated_at,updated_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, input.actor.creatorId, input.assetId, source.storage_object_id, title, customMessage, sale.recipientReference, sale.amountMinor, sale.currency, source.object_key, source.byte_count, source.verified_mime_type, source.sha256, source.r2_version, source.r2_etag, tokenHash, expiresAt, input.actor.email.toLowerCase(), now, now, input.actor.email.toLowerCase()).run();
   return { id, token, expiresAt };
 }
 
