@@ -1,4 +1,12 @@
 export type DownloadActor = { creatorId: string; email: string };
+export class ContentDownloadLinkError extends Error {
+  readonly code: "invalid_request" | "not_eligible";
+  constructor(code: "invalid_request" | "not_eligible") {
+    super(code === "invalid_request" ? "Check the title and sharing confirmation." : "This video is not currently eligible for sharing. Check its saved review and source availability.");
+    this.code = code;
+    this.name = "ContentDownloadLinkError";
+  }
+}
 type LinkObject = { id: string; creator_id: string; asset_id: string; title: string; object_key: string; byte_count: number; mime_type: string; sha256: string; r2_version: string; r2_etag: string; expires_at: string };
 type LinkListItem = { id: string; title: string; created_at: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null };
 
@@ -49,9 +57,9 @@ const availableLink = `${currentEligibility} WHERE ${activeIssuer}
 export async function createContentDownloadLink(DB: D1Database, input: { actor: DownloadActor; assetId: string; title: string; sharingConfirmed: boolean; now?: string; token?: string; id?: string }) {
   const now = timestamp(input.now);
   const title = input.title.trim();
-  if (!validActor(input.actor) || !input.assetId || input.sharingConfirmed !== true || !title || title.length > 120) throw new Error("Download link is not eligible.");
+  if (!validActor(input.actor) || !input.assetId || input.sharingConfirmed !== true || !title || title.length > 120) throw new ContentDownloadLinkError("invalid_request");
   const token = input.token ?? randomToken();
-  if (!validToken(token)) throw new Error("Invalid download token.");
+  if (!validToken(token)) throw new ContentDownloadLinkError("invalid_request");
   const tokenHash = await sha256(token);
   const id = input.id ?? randomId();
   const expiresAt = after(now, DAY_MS);
@@ -70,7 +78,7 @@ export async function createContentDownloadLink(DB: D1Database, input: { actor: 
         WHERE m.creator_id=a.creator_id AND lower(m.user_email)=lower(?) AND m.status='active' AND u.status='active' AND m.role IN (${actorRoles}))
       AND NOT EXISTS (SELECT 1 FROM asset_people ap WHERE ap.creator_id=a.creator_id AND ap.asset_id=a.id)
     LIMIT 1`).bind(input.assetId, input.actor.creatorId, input.actor.email).first<{ storage_object_id: string; object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string }>();
-  if (!source) throw new Error("Download link is not eligible.");
+  if (!source) throw new ContentDownloadLinkError("not_eligible");
   await DB.prepare(`INSERT INTO content_download_links
     (id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, input.actor.creatorId, input.assetId, source.storage_object_id, title, source.object_key, source.byte_count, source.verified_mime_type, source.sha256, source.r2_version, source.r2_etag, tokenHash, expiresAt, input.actor.email.toLowerCase(), now).run();

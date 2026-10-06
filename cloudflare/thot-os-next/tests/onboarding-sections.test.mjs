@@ -4,6 +4,7 @@ import {
   ONBOARDING_SECTION_KEYS,
   OPTIONAL_ONBOARDING_SECTION_KEYS,
   REQUIRED_ONBOARDING_SECTION_KEYS,
+  creatorContextSectionsComplete,
   missingRequiredOnboardingSections,
 } from "../src/lib/onboarding-sections.ts";
 
@@ -25,4 +26,12 @@ test("activation requires every required section while Chrome remains optional",
     { section_key: "chrome_access", status: "draft" },
   ]), ["social_profiles", "paid_platforms", "brand_voice", "positioning", "about_me"]);
   assert.equal(REQUIRED_ONBOARDING_SECTION_KEYS.includes("chrome_access"), false);
+});
+
+test("creator context stays open until all three sections are approved", () => {
+  const rows = ["brand_voice", "positioning", "about_me"].map((section_key) => ({ section_key, status: "admin_review" }));
+  assert.equal(creatorContextSectionsComplete(rows), false);
+  assert.equal(creatorContextSectionsComplete(rows.map((row, index) => ({ ...row, status: index === 0 ? "complete" : row.status }))), false);
+  assert.equal(creatorContextSectionsComplete(rows.slice(0, 2).map((row) => ({ ...row, status: "complete" }))), false);
+  assert.equal(creatorContextSectionsComplete(rows.map((row) => ({ ...row, status: "complete" }))), true);
 });

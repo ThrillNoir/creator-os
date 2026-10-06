@@ -10,6 +10,8 @@ const code = ts.transpileModule(await readFile(new URL("../src/app/content-link-
 function load({ host = "127.0.0.1:3000", localEnabled = "1", stagingEnabled, denied = false } = {}) {
   const calls = [];
   const exports = {};
+  class ContentDownloadLinkError extends Error { constructor(code) { super("private diagnostic"); this.code = code; } }
+  const behavior = { create: "success", revoke: true };
   const modules = {
     "next/headers": { headers: async () => new Headers({ host }) },
     "@/lib/cloudflare": { cloudflareEnv: () => ({ DB: "db", CONTENT_DOWNLOAD_LINKS_ENABLED: stagingEnabled }) },
@@ -19,8 +21,9 @@ function load({ host = "127.0.0.1:3000", localEnabled = "1", stagingEnabled, den
       return { email: "verified@example.test", creator: { creator_id: "own" } };
     } },
     "@/lib/content-download-links": {
-      createContentDownloadLink: async (_db, input) => { calls.push(input); return { id: "id", token: "secret", expiresAt: 100 }; },
-      revokeContentDownloadLink: async (_db, input) => { calls.push(input); return true; },
+      ContentDownloadLinkError,
+      createContentDownloadLink: async (_db, input) => { calls.push(input); if (behavior.create === "unknown") throw new Error("secret database details"); if (behavior.create !== "success") throw new ContentDownloadLinkError(behavior.create); return { id: "id", token: "secret", expiresAt: 100 }; },
+      revokeContentDownloadLink: async (_db, input) => { calls.push(input); return behavior.revoke; },
       listContentDownloadLinks: async (_db, input) => { calls.push(input); return []; },
     },
   };
@@ -28,7 +31,7 @@ function load({ host = "127.0.0.1:3000", localEnabled = "1", stagingEnabled, den
     if (!(name in modules)) throw new Error(`Unexpected dependency ${name}`);
     return modules[name];
   }, exports, { env: { CONTENT_DOWNLOAD_LINKS_LOCAL: localEnabled } });
-  return { actions: exports, calls };
+  return { actions: exports, calls, behavior };
 }
 
 test("content link actions use verified actor scope and explicit consent", async () => {
@@ -37,7 +40,7 @@ test("content link actions use verified actor scope and explicit consent", async
   form.set("assetId", "asset"); form.set("title", "Approved title");
   form.set("creatorId", "forged"); form.set("email", "forged@example.test");
   form.set("sharingConfirmed", "yes");
-  assert.equal((await actions.generateContentLinkAction(form)).url, "http://127.0.0.1:8791/d/secret");
+  assert.equal((await actions.generateContentLinkAction(form)).link.url, "http://127.0.0.1:8791/d/secret");
   assert.equal(calls[0], "mutate");
   assert.deepEqual(calls[1], { actor: { creatorId: "own", email: "verified@example.test" }, assetId: "asset", title: "Approved title", sharingConfirmed: true });
   await actions.revokeContentLinkAction("link");
@@ -60,5 +63,18 @@ test("disabled, non-local and unauthorized actions do not issue or revoke links"
 test("staging issuance uses only the dedicated staging download origin", async () => {
   const { actions } = load({ host: "thot-os-staging.thot-os.workers.dev", stagingEnabled: "1", localEnabled: "0" });
   const form = new FormData(); form.set("assetId", "asset"); form.set("title", "Approved title"); form.set("sharingConfirmed", "yes");
-  assert.equal((await actions.generateContentLinkAction(form)).url, "https://thot-os-downloads-staging.thot-os.workers.dev/d/secret");
+  assert.equal((await actions.generateContentLinkAction(form)).link.url, "https://thot-os-downloads-staging.thot-os.workers.dev/d/secret");
+});
+
+test("expected domain errors return safe results while unknown and authorization errors stay generic", async () => {
+  const { actions, behavior } = load();
+  const form = new FormData(); form.set("assetId", "asset"); form.set("title", "Title"); form.set("sharingConfirmed", "yes");
+  behavior.create = "not_eligible";
+  assert.deepEqual(await actions.generateContentLinkAction(form), { ok: false, code: "not_eligible" });
+  behavior.create = "unknown";
+  await assert.rejects(() => actions.generateContentLinkAction(form));
+  const denied = load({ denied: true });
+  await assert.rejects(() => denied.actions.generateContentLinkAction(form));
+  behavior.revoke = false;
+  assert.deepEqual(await actions.revokeContentLinkAction("link"), { ok: false });
 });

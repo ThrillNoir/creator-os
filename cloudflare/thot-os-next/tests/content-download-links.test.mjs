@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import Database from "better-sqlite3";
 import {
+  ContentDownloadLinkError,
   claimContentDownloadLink,
   createContentDownloadLink,
   getContentDownloadSession,
@@ -149,8 +150,8 @@ test("revoke denies unredeemed links and already-issued sessions", async () => {
 test("creation and revocation enforce current eligibility and creator scope", async () => {
   const { sqlite, DB } = fixture();
   try {
-    await assert.rejects(create(DB, { sharingConfirmed: false }));
-    await assert.rejects(create(DB, { sharingConfirmed: "true" }));
+    await assert.rejects(create(DB, { sharingConfirmed: false }), (error) => error instanceof ContentDownloadLinkError && error.code === "invalid_request");
+    await assert.rejects(create(DB, { sharingConfirmed: "true" }), (error) => error instanceof ContentDownloadLinkError && error.code === "invalid_request");
     await assert.rejects(createContentDownloadLink(DB, { actor: { creatorId: "creator-a", email: "viewer@example.test" }, assetId: "asset-a", title: "Approved private video", sharingConfirmed: true, now, token: "4".repeat(64) }));
     await assert.rejects(createContentDownloadLink(DB, { actor: { creatorId: "creator-a", email: "inactive@example.test" }, assetId: "asset-a", title: "Approved private video", sharingConfirmed: true, now, token: "5".repeat(64) }));
     sqlite.prepare("INSERT INTO asset_people VALUES ('asset-a','creator-a',1)").run();
@@ -163,6 +164,22 @@ test("creation and revocation enforce current eligibility and creator scope", as
     await claimContentDownloadLink(DB, { token, sessionToken: session, now });
     sqlite.prepare("UPDATE creator_memberships SET status='suspended' WHERE creator_id='creator-a'").run();
     assert.equal(await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now }), null);
+  } finally { sqlite.close(); }
+});
+
+test("review state, multiple creators and attached people remain server-side eligibility gates", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    for (const update of [
+      () => sqlite.prepare("UPDATE asset_classifications SET safety=NULL WHERE asset_id='asset-a'").run(),
+      () => sqlite.prepare("UPDATE asset_classifications SET safety='nsfw',is_multi=1 WHERE asset_id='asset-a'").run(),
+      () => { sqlite.prepare("UPDATE asset_classifications SET safety='nsfw',is_multi=0 WHERE asset_id='asset-a'").run(); sqlite.prepare("INSERT INTO asset_people VALUES ('asset-a','creator-a',1)").run(); },
+    ]) {
+      update();
+      await assert.rejects(create(DB), (error) => error instanceof ContentDownloadLinkError && error.code === "not_eligible");
+      sqlite.prepare("DELETE FROM asset_people WHERE asset_id='asset-a'").run();
+      sqlite.prepare("UPDATE asset_classifications SET safety='nsfw',is_multi=0 WHERE asset_id='asset-a'").run();
+    }
   } finally { sqlite.close(); }
 });
 

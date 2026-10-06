@@ -57,7 +57,7 @@ test("local migrated schema creates, redeems, ranges, and revokes a synthetic do
 
     const created = await createContentDownloadLink(local.DB, { actor: owner, assetId: "fixture-video", title: "Fixture video", sharingConfirmed: true, token, id: "fixture-link", now });
     assert.equal(created.token, token);
-    await assert.rejects(createContentDownloadLink(local.DB, { actor: outsider, assetId: "fixture-video", title: "Foreign", sharingConfirmed: true, token: "b".repeat(64), now }), /not eligible/);
+    await assert.rejects(createContentDownloadLink(local.DB, { actor: outsider, assetId: "fixture-video", title: "Foreign", sharingConfirmed: true, token: "b".repeat(64), now }), { name: "ContentDownloadLinkError", code: "not_eligible" });
     assert.equal(await revokeContentDownloadLink(local.DB, { actor: outsider, linkId: created.id, now }), false);
 
     const url = `http://localhost/d/${token}`;

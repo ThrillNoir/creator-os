@@ -13,6 +13,10 @@ export const ONBOARDING_SECTION_KEYS = [...REQUIRED_ONBOARDING_SECTION_KEYS, ...
 
 export type OnboardingSectionRow = { section_key: string; status: string };
 
+export function creatorContextSectionsComplete(rows: readonly OnboardingSectionRow[]) {
+  return ["brand_voice", "positioning", "about_me"].every((key) => rows.find((row) => row.section_key === key)?.status === "complete");
+}
+
 export function missingRequiredOnboardingSections(rows: readonly OnboardingSectionRow[]) {
   return REQUIRED_ONBOARDING_SECTION_KEYS.filter((key) => rows.find((row) => row.section_key === key)?.status !== "complete");
 }
