@@ -38,6 +38,8 @@ function fixture() {
   sqlite.exec(`
     PRAGMA foreign_keys=ON;
     CREATE TABLE creators (id TEXT PRIMARY KEY,status TEXT NOT NULL);
+    CREATE TABLE creator_public_profiles (id TEXT PRIMARY KEY,creator_id TEXT,status TEXT,published_version_id TEXT);
+    CREATE TABLE creator_public_profile_versions (id TEXT PRIMARY KEY,profile_id TEXT,creator_id TEXT,status TEXT,approved_by TEXT,approved_at TEXT,display_name TEXT);
     CREATE TABLE users (email TEXT PRIMARY KEY,status TEXT NOT NULL);
     CREATE TABLE creator_memberships (creator_id TEXT,user_email TEXT,role TEXT,status TEXT);
     CREATE TABLE assets (id TEXT PRIMARY KEY,creator_id TEXT,source_available INTEGER);
@@ -195,6 +197,39 @@ test("archived media authority denies issue and invalidates a claimed session", 
     await create(DB);
     await claimContentDownloadLink(DB, { token, sessionToken: session, now });
     sqlite.prepare("UPDATE asset_media_authorities SET state='archived' WHERE asset_id='asset-a'").run();
+    assert.equal(await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now }), null);
+  } finally { sqlite.close(); }
+});
+
+
+test("download branding uses only the owning creator's currently published approved public name", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    await create(DB);
+    const inspect = () => inspectContentDownloadLink(DB, { token, now });
+    assert.equal((await inspect()).creatorName, null);
+    sqlite.exec(`INSERT INTO creator_public_profiles VALUES ('profile-a','creator-a','active','version-a');
+      INSERT INTO creator_public_profile_versions VALUES ('version-a','profile-a','creator-a','published','admin','2026-10-01','Public stage name');`);
+    assert.equal((await inspect()).creatorName, 'Public stage name');
+    for (const change of [
+      "UPDATE creator_public_profiles SET status='paused'",
+      "UPDATE creator_public_profile_versions SET status='draft'",
+      "UPDATE creator_public_profile_versions SET approved_at=NULL",
+      "UPDATE creator_public_profile_versions SET approved_by=NULL",
+      "UPDATE creator_public_profile_versions SET creator_id='creator-b'",
+      "UPDATE creator_public_profile_versions SET profile_id='foreign-profile'",
+      "UPDATE creator_public_profiles SET published_version_id='missing-version'",
+    ]) {
+      sqlite.exec(change);
+      assert.equal((await inspect()).creatorName, null);
+      sqlite.exec("UPDATE creator_public_profiles SET status='active',published_version_id='version-a'; UPDATE creator_public_profile_versions SET status='published',approved_by='admin',approved_at='2026-10-01',creator_id='creator-a',profile_id='profile-a';");
+    }
+    await claimContentDownloadLink(DB, { token, sessionToken: session, now });
+    assert.equal((await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now })).creatorName, 'Public stage name');
+    sqlite.exec("UPDATE creator_public_profiles SET status='paused'");
+    assert.equal((await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now })).creatorName, null);
+    await revokeContentDownloadLink(DB, { actor, linkId: 'link-a', now });
+    assert.equal(await inspect(), null);
     assert.equal(await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now }), null);
   } finally { sqlite.close(); }
 });

@@ -15,15 +15,20 @@ function d1(db) {
   }; } }; } };
 }
 
-function environment({ byteCount = 10 } = {}) {
+function environment({ byteCount = 10, creatorName } = {}) {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE creators(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE users(email TEXT PRIMARY KEY,status TEXT); CREATE TABLE creator_memberships(creator_id TEXT,user_email TEXT,status TEXT,role TEXT);
     CREATE TABLE assets(id TEXT PRIMARY KEY,creator_id TEXT,source_available INTEGER); CREATE TABLE asset_storage_objects(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,provider TEXT,storage_role TEXT,bucket_role TEXT,ingest_status TEXT,object_key TEXT,byte_count INTEGER,verified_mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT);
     CREATE TABLE asset_media_authorities(asset_id TEXT,creator_id TEXT,authority_kind TEXT,canonical_storage_object_id TEXT,state TEXT); CREATE TABLE asset_video_playback_states(asset_id TEXT,creator_id TEXT,canonical_storage_object_id TEXT,state TEXT); CREATE TABLE asset_classifications(asset_id TEXT,creator_id TEXT,safety TEXT,is_multi INTEGER); CREATE TABLE asset_people(creator_id TEXT,asset_id TEXT);
+    CREATE TABLE creator_public_profiles(id TEXT PRIMARY KEY,creator_id TEXT,status TEXT,published_version_id TEXT); CREATE TABLE creator_public_profile_versions(id TEXT PRIMARY KEY,profile_id TEXT,creator_id TEXT,status TEXT,approved_by TEXT,approved_at TEXT,display_name TEXT);
     CREATE TABLE content_download_links(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,storage_object_id TEXT,title TEXT,object_key TEXT,byte_count INTEGER,mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT,token_hash TEXT,expires_at TEXT,redeemed_at TEXT,session_id TEXT,session_token_hash TEXT,session_expires_at TEXT,revoked_at TEXT,created_by TEXT,created_at TEXT);`);
   db.exec("INSERT INTO creators VALUES ('c','active'); INSERT INTO users VALUES ('owner@example.test','active'); INSERT INTO creator_memberships VALUES ('c','owner@example.test','active','creator'); INSERT INTO assets VALUES ('a','c',1); INSERT INTO asset_media_authorities VALUES ('a','c','r2_native','o','canonical_verified'); INSERT INTO asset_video_playback_states VALUES ('a','c','o','playback_ready'); INSERT INTO asset_classifications VALUES ('a','c','sfw',0);");
   db.prepare("INSERT INTO asset_storage_objects VALUES ('o','c','a','r2','canonical_original','library_media','verified','private/video',?,'video/mp4',?,'v1','e1')").run(byteCount, "a".repeat(64));
   db.prepare("INSERT INTO content_download_links(id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at) VALUES ('l','c','a','o','Safe title','private/video',?,'video/mp4',?,?,?, ?,datetime('now','+1 day'),'owner@example.test',CURRENT_TIMESTAMP)").run(byteCount, "a".repeat(64), "v1", "e1", hash(token));
+  if (creatorName !== undefined) {
+    db.prepare("INSERT INTO creator_public_profiles VALUES ('p','c','active','pv')").run();
+    db.prepare("INSERT INTO creator_public_profile_versions VALUES ('pv','p','c','published','owner@example.test',CURRENT_TIMESTAMP,?)").run(creatorName);
+  }
   const bytes = new TextEncoder().encode("0123456789"); const calls = []; let identity = { size: byteCount, version: "v1", etag: "e1" };
   return { db, calls, setIdentity: (value) => { identity = value; }, env: { ENABLED: "true", DB: d1(db), LIBRARY_MEDIA: { head: async () => identity, get: async (_key, options = {}) => { calls.push(options); const range = options.range; const body = range ? bytes.slice(range.offset, range.offset + range.length) : bytes; return { ...identity, body: new Blob([body]) }; } } } };
 }
@@ -32,7 +37,10 @@ test("metadata never redeems; same-origin POST creates a scoped session and down
   const { env, db, calls } = environment(); const link = `https://downloads.test/d/${token}`;
   const page = await worker.fetch(new Request(link), env);
   assert.equal(page.headers.get("referrer-policy"), "same-origin", "same-origin form POST must retain its Origin; external requests receive no referrer");
-  assert.equal(page.status, 200); assert.match(await page.text(), /Safe title/); assert.equal(db.prepare("SELECT redeemed_at FROM content_download_links").get().redeemed_at, null);
+  const body = await page.text();
+  assert.equal(page.status, 200); assert.match(page.headers.get("content-security-policy"), /style-src 'self'/); assert.match(body, /Download link expires/); assert.match(body, /Safe title/); assert.equal(db.prepare("SELECT redeemed_at FROM content_download_links").get().redeemed_at, null);
+  const css = await worker.fetch(new Request("https://downloads.test/download.css"), env);
+  assert.equal(css.status, 200); assert.equal(css.headers.get("content-type"), "text/css; charset=utf-8"); assert.equal(css.headers.get("cache-control"), "no-store"); assert.match(await css.text(), /:focus-visible/);
   const redeemed = await worker.fetch(new Request(link, { method: "POST", headers: { origin: "https://downloads.test", "content-type": "application/x-www-form-urlencoded" }, body: "intent=download" }), env);
   assert.equal(redeemed.status, 303); const cookie = redeemed.headers.get("set-cookie"); assert.match(cookie, /HttpOnly; SameSite=Strict; Secure/); assert.match(cookie, new RegExp(`Path=/d/${token};`));
   assert.match(await (await worker.fetch(new Request(link, { headers: { cookie } }), env)).text(), /Resume download/);
@@ -40,6 +48,16 @@ test("metadata never redeems; same-origin POST creates a scoped session and down
   assert.equal(download.status, 200); assert.equal(await download.text(), "0123456789");
   const resumed = await worker.fetch(new Request(`${link}/download`, { headers: { cookie, range: "bytes=4-7" } }), env);
   assert.equal(resumed.status, 206); assert.equal(await resumed.text(), "4567"); assert.deepEqual(calls.at(-1).range, { offset: 4, length: 4 });
+});
+
+test("optional creator name is escaped and resume expiry is labeled as a session", async () => {
+  const { env } = environment({ creatorName: `<img src=x onerror="alert(1)">` }); const link = `https://downloads.test/d/${token}`;
+  const page = await worker.fetch(new Request(link), env); const body = await page.text();
+  assert.match(body, /Shared by &lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  assert.doesNotMatch(body, /<img src=x/);
+  const redemption = await worker.fetch(new Request(link, { method: "POST", headers: { origin: "https://downloads.test", "content-type": "application/x-www-form-urlencoded" }, body: "intent=download" }), env);
+  const resumed = await worker.fetch(new Request(link, { headers: { cookie: redemption.headers.get("set-cookie") } }), env);
+  assert.match(await resumed.text(), /Resume session expires/);
 });
 
 test("wrong token, revoked links, and cross-origin redemption do not expose the object", async () => {
