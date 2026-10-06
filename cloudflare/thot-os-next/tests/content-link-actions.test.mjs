@@ -42,7 +42,7 @@ test("content link actions use verified actor scope and explicit consent", async
   form.set("sharingConfirmed", "yes");
   assert.equal((await actions.generateContentLinkAction(form)).link.url, "http://127.0.0.1:8791/d/secret");
   assert.equal(calls[0], "mutate");
-  assert.deepEqual(calls[1], { actor: { creatorId: "own", email: "verified@example.test" }, assetId: "asset", title: "Approved title", sharingConfirmed: true });
+  assert.deepEqual(calls[1], { actor: { creatorId: "own", email: "verified@example.test" }, assetId: "asset", title: "Approved title", customMessage: undefined, sharingConfirmed: true });
   await actions.revokeContentLinkAction("link");
   assert.deepEqual(calls[3], { actor: { creatorId: "own", email: "verified@example.test" }, linkId: "link" });
   form.delete("sharingConfirmed");
@@ -77,4 +77,17 @@ test("expected domain errors return safe results while unknown and authorization
   await assert.rejects(() => denied.actions.generateContentLinkAction(form));
   behavior.revoke = false;
   assert.deepEqual(await actions.revokeContentLinkAction("link"), { ok: false });
+});
+
+
+test("custom message passes through as text and uploaded files are rejected", async () => {
+  const { actions, calls } = load();
+  const form = new FormData();
+  form.set("assetId", "asset"); form.set("title", "Title"); form.set("sharingConfirmed", "yes");
+  form.set("customMessage", "A note\nfor you");
+  assert.equal((await actions.generateContentLinkAction(form)).ok, true);
+  assert.equal(calls[1].customMessage, "A note\nfor you");
+  form.set("customMessage", new Blob(["not a message"]), "message.txt");
+  assert.deepEqual(await actions.generateContentLinkAction(form), { ok: false, code: "invalid_request" });
+  assert.equal(calls.filter((value) => typeof value === "object").length, 1);
 });

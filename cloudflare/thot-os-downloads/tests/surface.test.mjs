@@ -15,13 +15,13 @@ function d1(db) {
   }; } }; } };
 }
 
-function environment({ byteCount = 10, creatorName } = {}) {
+function environment({ byteCount = 10, creatorName, customMessage } = {}) {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE creators(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE users(email TEXT PRIMARY KEY,status TEXT); CREATE TABLE creator_memberships(creator_id TEXT,user_email TEXT,status TEXT,role TEXT);
     CREATE TABLE assets(id TEXT PRIMARY KEY,creator_id TEXT,source_available INTEGER); CREATE TABLE asset_storage_objects(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,provider TEXT,storage_role TEXT,bucket_role TEXT,ingest_status TEXT,object_key TEXT,byte_count INTEGER,verified_mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT);
     CREATE TABLE asset_media_authorities(asset_id TEXT,creator_id TEXT,authority_kind TEXT,canonical_storage_object_id TEXT,state TEXT); CREATE TABLE asset_video_playback_states(asset_id TEXT,creator_id TEXT,canonical_storage_object_id TEXT,state TEXT); CREATE TABLE asset_classifications(asset_id TEXT,creator_id TEXT,safety TEXT,is_multi INTEGER); CREATE TABLE asset_people(creator_id TEXT,asset_id TEXT);
     CREATE TABLE creator_public_profiles(id TEXT PRIMARY KEY,creator_id TEXT,status TEXT,published_version_id TEXT); CREATE TABLE creator_public_profile_versions(id TEXT PRIMARY KEY,profile_id TEXT,creator_id TEXT,status TEXT,approved_by TEXT,approved_at TEXT,display_name TEXT);
-    CREATE TABLE content_download_links(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,storage_object_id TEXT,title TEXT,object_key TEXT,byte_count INTEGER,mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT,token_hash TEXT,expires_at TEXT,redeemed_at TEXT,session_id TEXT,session_token_hash TEXT,session_expires_at TEXT,revoked_at TEXT,created_by TEXT,created_at TEXT);`);
+    CREATE TABLE content_download_links(id TEXT PRIMARY KEY,creator_id TEXT,asset_id TEXT,storage_object_id TEXT,title TEXT,custom_message TEXT,object_key TEXT,byte_count INTEGER,mime_type TEXT,sha256 TEXT,r2_version TEXT,r2_etag TEXT,token_hash TEXT,expires_at TEXT,redeemed_at TEXT,session_id TEXT,session_token_hash TEXT,session_expires_at TEXT,revoked_at TEXT,created_by TEXT,created_at TEXT);`);
   db.exec("INSERT INTO creators VALUES ('c','active'); INSERT INTO users VALUES ('owner@example.test','active'); INSERT INTO creator_memberships VALUES ('c','owner@example.test','active','creator'); INSERT INTO assets VALUES ('a','c',1); INSERT INTO asset_media_authorities VALUES ('a','c','r2_native','o','canonical_verified'); INSERT INTO asset_video_playback_states VALUES ('a','c','o','playback_ready'); INSERT INTO asset_classifications VALUES ('a','c','sfw',0);");
   db.prepare("INSERT INTO asset_storage_objects VALUES ('o','c','a','r2','canonical_original','library_media','verified','private/video',?,'video/mp4',?,'v1','e1')").run(byteCount, "a".repeat(64));
   db.prepare("INSERT INTO content_download_links(id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at) VALUES ('l','c','a','o','Safe title','private/video',?,'video/mp4',?,?,?, ?,datetime('now','+1 day'),'owner@example.test',CURRENT_TIMESTAMP)").run(byteCount, "a".repeat(64), "v1", "e1", hash(token));
@@ -29,6 +29,7 @@ function environment({ byteCount = 10, creatorName } = {}) {
     db.prepare("INSERT INTO creator_public_profiles VALUES ('p','c','active','pv')").run();
     db.prepare("INSERT INTO creator_public_profile_versions VALUES ('pv','p','c','published','owner@example.test',CURRENT_TIMESTAMP,?)").run(creatorName);
   }
+  if (customMessage !== undefined) db.prepare("UPDATE content_download_links SET custom_message=?").run(customMessage);
   const bytes = new TextEncoder().encode("0123456789"); const calls = []; let identity = { size: byteCount, version: "v1", etag: "e1" };
   return { db, calls, setIdentity: (value) => { identity = value; }, env: { ENABLED: "true", DB: d1(db), LIBRARY_MEDIA: { head: async () => identity, get: async (_key, options = {}) => { calls.push(options); const range = options.range; const body = range ? bytes.slice(range.offset, range.offset + range.length) : bytes; return { ...identity, body: new Blob([body]) }; } } } };
 }
@@ -99,4 +100,27 @@ test("large objects pass each resume range directly to R2 without buffering", as
     assert.equal(response.status, 206); assert.equal(response.headers.get("content-range"), `bytes ${range.offset}-${range.offset + range.length - 1}/${byteCount}`);
   }
   assert.deepEqual(calls.map((call) => call.range), [{ offset: 0, length: 1048576 }, { offset: byteCount - 3, length: 3 }]);
+});
+
+
+test("recipient message is escaped and disappears with unavailable link or session", async () => {
+  const { env, db } = environment({ customMessage: '<script>alert("private-message")</script>\nThanks for watching' });
+  try {
+    const url = `https://downloads.test/d/${token}`;
+    const page = await (await worker.fetch(new Request(url), env)).text();
+    assert.match(page, /&lt;script&gt;alert\(&quot;private-message&quot;\)&lt;\/script&gt;\nThanks for watching/);
+    assert.doesNotMatch(page, /<script>/);
+    db.exec("UPDATE content_download_links SET expires_at=datetime('now','-1 day')");
+    const expired = await worker.fetch(new Request(url), env);
+    assert.equal(expired.status, 404); assert.doesNotMatch(await expired.text(), /private-message/);
+    db.exec("UPDATE content_download_links SET expires_at=datetime('now','+1 day')");
+    const claim = await worker.fetch(new Request(url, { method: 'POST', headers: { origin:'https://downloads.test', 'content-type':'application/x-www-form-urlencoded' }, body:'intent=download' }), env);
+    const cookie = claim.headers.get('set-cookie');
+    assert.match(await (await worker.fetch(new Request(url, { headers:{cookie} }), env)).text(), /Thanks for watching/);
+    const stranger = await worker.fetch(new Request(url), env);
+    assert.equal(stranger.status,404); assert.doesNotMatch(await stranger.text(), /private-message/);
+    db.exec("UPDATE content_download_links SET revoked_at=CURRENT_TIMESTAMP");
+    const revoked = await worker.fetch(new Request(url, { headers:{cookie} }), env);
+    assert.equal(revoked.status,404); assert.doesNotMatch(await revoked.text(), /private-message/);
+  } finally { db.close(); }
 });

@@ -42,7 +42,7 @@ test("reviewed staging ledger records applied booking and download migrations", 
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
     { remoteId: 65, name: "0063_content_download_links.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), []);
+  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0064_content_download_message.sql"]);
   assert.ok(ledger.pendingMigrations.every((entry) => entry.remoteId === undefined));
   assert.deepEqual(inventory[56], {
     number: 55,
@@ -73,7 +73,7 @@ test("reviewed staging ledger records applied booking and download migrations", 
   ]);
   const plan = buildBoundedPlan({ environment: "staging", releaseId: "native-video-intake", from: "0054_native_video_intake.sql", through: "0054_native_video_intake.sql", inventory, remoteApplied: inventory.slice(0, 55).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git });
   assert.deepEqual(plan.execution.map((entry) => entry.name), ["0054_native_video_intake.sql"]);
-  assert.deepEqual(plan.excludedPending.map(({ name }) => name), ["0055_provider_connection_account_scope.sql", "0056_creator_invitations.sql", "0057_instagram_account_scoped_analytics.sql", "0058_fansly_claim_recovery.sql", "0059_instagram_message_sync_reliability.sql", "0060_instagram_reply_media.sql", "0061_creator_booking_module.sql", "0062_booking_delivery_evidence.sql", "0063_content_download_links.sql"]);
+  assert.deepEqual(plan.excludedPending.map(({ name }) => name), ["0055_provider_connection_account_scope.sql", "0056_creator_invitations.sql", "0057_instagram_account_scoped_analytics.sql", "0058_fansly_claim_recovery.sql", "0059_instagram_message_sync_reliability.sql", "0060_instagram_reply_media.sql", "0061_creator_booking_module.sql", "0062_booking_delivery_evidence.sql", "0063_content_download_links.sql", "0064_content_download_message.sql"]);
   assert.throws(() => buildBoundedPlan({ environment: "staging", releaseId: "ambiguous", from: "0044", through: "0049", inventory, remoteApplied: inventory.slice(0, 43).map((entry) => entry.name), registry: { environments: { staging: { provisioned: true, deployable: true, accountId: "account", resources: { d1: { "thot-os-staging": { id: "db-id", migrationsDir: "migrations" } } } } } }, policy, git }), /ambiguous/);
 });
 

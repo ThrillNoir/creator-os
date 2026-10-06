@@ -16,7 +16,7 @@ export function ContentLinkForm({ assetId, eligibility }: { assetId: string; eli
       setMessage("");
       try {
         const result = await generateContentLinkAction(data);
-        if (!result.ok) { setMessage(result.code === "invalid_request" ? "Check the title and sharing confirmation." : "This video is not currently eligible for sharing. Check its saved review and source availability."); return; }
+        if (!result.ok) { setMessage(result.code === "invalid_request" ? "Check the title, message length and sharing confirmation." : "This video is not currently eligible for sharing. Check its saved review and source availability."); return; }
         setLink(result.link);
         try { setHistory(await listContentLinksAction(assetId)); }
         catch { setMessage("Link created. Link history is unavailable."); }
@@ -25,7 +25,9 @@ export function ContentLinkForm({ assetId, eligibility }: { assetId: string; eli
     })}>
       <input type="hidden" name="assetId" value={assetId} />
       <label>Recipient-facing title<input name="title" required maxLength={120} placeholder="Choose a title safe to share" /></label>
-      <label style={{ display: "flex", gap: "0.6rem", alignItems: "start" }}><input type="checkbox" name="sharingConfirmed" value="yes" required style={{ width: "1rem", height: "1rem", flex: "0 0 1rem" }} />I approve this video for direct download sharing and confirm it features only the owning creator.</label>
+      <label>Message to recipient (optional)<textarea name="customMessage" maxLength={500} rows={3} placeholder="Add a personal note" aria-describedby="download-message-help" /></label>
+      <p id="download-message-help">Up to 500 characters. Anyone with this link can read your message while download access is valid.</p>
+      <label style={{ display: "flex", gap: "0.6rem", alignItems: "start" }}><input type="checkbox" name="sharingConfirmed" value="yes" required style={{ width: "1rem", height: "1rem", flex: "0 0 1rem" }} />I approve this video and message for direct download sharing and confirm the video features only the owning creator.</label>
       <button className="primary" disabled={pending || Boolean(link) || eligibility.length > 0} type="submit">Generate one-time link</button>
     </form>
     {eligibility.length > 0 && <ul role="status">{eligibility.map((reason) => <li key={reason}>{reason}</li>)}</ul>}

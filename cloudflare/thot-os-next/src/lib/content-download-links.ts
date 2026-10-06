@@ -7,7 +7,7 @@ export class ContentDownloadLinkError extends Error {
     this.name = "ContentDownloadLinkError";
   }
 }
-type LinkObject = { creator_name: string | null; id: string; creator_id: string; asset_id: string; title: string; object_key: string; byte_count: number; mime_type: string; sha256: string; r2_version: string; r2_etag: string; expires_at: string };
+type LinkObject = { creator_name: string | null; id: string; creator_id: string; asset_id: string; title: string; custom_message: string | null; object_key: string; byte_count: number; mime_type: string; sha256: string; r2_version: string; r2_etag: string; expires_at: string };
 type LinkListItem = { id: string; title: string; created_at: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -58,10 +58,12 @@ const availableLink = `${currentEligibility} WHERE ${activeIssuer}
   AND l.token_hash=? AND l.redeemed_at IS NULL AND l.revoked_at IS NULL AND unixepoch(l.expires_at)>unixepoch(?)
   AND NOT EXISTS (SELECT 1 FROM asset_people ap WHERE ap.creator_id=l.creator_id AND ap.asset_id=l.asset_id)`;
 
-export async function createContentDownloadLink(DB: D1Database, input: { actor: DownloadActor; assetId: string; title: string; sharingConfirmed: boolean; now?: string; token?: string; id?: string }) {
+export async function createContentDownloadLink(DB: D1Database, input: { actor: DownloadActor; assetId: string; title: string; customMessage?: string; sharingConfirmed: boolean; now?: string; token?: string; id?: string }) {
   const now = timestamp(input.now);
   const title = input.title.trim();
-  if (!validActor(input.actor) || !input.assetId || input.sharingConfirmed !== true || !title || title.length > 120) throw new ContentDownloadLinkError("invalid_request");
+  const customMessage = typeof input.customMessage === "string" ? input.customMessage.trim() || null : null;
+  if (!validActor(input.actor) || !input.assetId || input.sharingConfirmed !== true || !title || title.length > 120
+    || (input.customMessage !== undefined && (typeof input.customMessage !== "string" || input.customMessage.includes("\0") || input.customMessage.length > 500))) throw new ContentDownloadLinkError("invalid_request");
   const token = input.token ?? randomToken();
   if (!validToken(token)) throw new ContentDownloadLinkError("invalid_request");
   const tokenHash = await sha256(token);
@@ -84,8 +86,8 @@ export async function createContentDownloadLink(DB: D1Database, input: { actor: 
     LIMIT 1`).bind(input.assetId, input.actor.creatorId, input.actor.email).first<{ storage_object_id: string; object_key: string; byte_count: number; verified_mime_type: string; sha256: string; r2_version: string; r2_etag: string }>();
   if (!source) throw new ContentDownloadLinkError("not_eligible");
   await DB.prepare(`INSERT INTO content_download_links
-    (id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, input.actor.creatorId, input.assetId, source.storage_object_id, title, source.object_key, source.byte_count, source.verified_mime_type, source.sha256, source.r2_version, source.r2_etag, tokenHash, expiresAt, input.actor.email.toLowerCase(), now).run();
+    (id,creator_id,asset_id,storage_object_id,title,custom_message,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, input.actor.creatorId, input.assetId, source.storage_object_id, title, customMessage, source.object_key, source.byte_count, source.verified_mime_type, source.sha256, source.r2_version, source.r2_etag, tokenHash, expiresAt, input.actor.email.toLowerCase(), now).run();
   return { id, token, expiresAt };
 }
 
@@ -93,9 +95,9 @@ export async function inspectContentDownloadLink(DB: D1Database, input: { token:
   if (!validToken(input.token)) return null;
   const now = timestamp(input.now);
   const tokenHash = await sha256(input.token);
-  const link = await DB.prepare(`SELECT ${publicCreatorName} AS creator_name,l.id,l.creator_id,l.asset_id,l.title,l.object_key,l.byte_count,l.mime_type,l.sha256,l.r2_version,l.r2_etag,l.expires_at FROM content_download_links l ${availableLink}`)
+  const link = await DB.prepare(`SELECT ${publicCreatorName} AS creator_name,l.id,l.creator_id,l.asset_id,l.title,l.custom_message,l.object_key,l.byte_count,l.mime_type,l.sha256,l.r2_version,l.r2_etag,l.expires_at FROM content_download_links l ${availableLink}`)
     .bind(tokenHash, now).first<LinkObject>();
-  return link ? { id: link.id, creatorId: link.creator_id, creatorName: link.creator_name, assetId: link.asset_id, title: link.title, byteCount: link.byte_count, mimeType: link.mime_type, expiresAt: link.expires_at } : null;
+  return link ? { id: link.id, creatorId: link.creator_id, creatorName: link.creator_name, assetId: link.asset_id, title: link.title, customMessage: link.custom_message, byteCount: link.byte_count, mimeType: link.mime_type, expiresAt: link.expires_at } : null;
 }
 
 export async function claimContentDownloadLink(DB: D1Database, input: { token: string; now?: string; sessionToken?: string; sessionId?: string }) {
@@ -132,11 +134,11 @@ export async function getContentDownloadSession(DB: D1Database, input: { linkTok
   if (!validToken(input.linkToken) || !validToken(input.sessionToken)) return null;
   const now = timestamp(input.now);
   const [tokenHash, sessionHash] = await Promise.all([sha256(input.linkToken), sha256(input.sessionToken)]);
-  const link = await DB.prepare(`SELECT ${publicCreatorName} AS creator_name,l.id,l.creator_id,l.asset_id,l.title,l.object_key,l.byte_count,l.mime_type,l.sha256,l.r2_version,l.r2_etag,l.session_expires_at FROM content_download_links l ${currentEligibility}
+  const link = await DB.prepare(`SELECT ${publicCreatorName} AS creator_name,l.id,l.creator_id,l.asset_id,l.title,l.custom_message,l.object_key,l.byte_count,l.mime_type,l.sha256,l.r2_version,l.r2_etag,l.session_expires_at FROM content_download_links l ${currentEligibility}
     WHERE ${activeIssuer} AND l.token_hash=? AND l.session_token_hash=? AND l.revoked_at IS NULL
       AND unixepoch(l.session_expires_at)>unixepoch(?)
       AND NOT EXISTS (SELECT 1 FROM asset_people ap WHERE ap.creator_id=l.creator_id AND ap.asset_id=l.asset_id)`).bind(tokenHash, sessionHash, now).first<LinkObject & { session_expires_at: string }>();
-  return link ? { linkId: link.id, creatorId: link.creator_id, creatorName: link.creator_name, assetId: link.asset_id, title: link.title, objectKey: link.object_key, byteCount: link.byte_count, mimeType: link.mime_type, sha256: link.sha256, r2Version: link.r2_version, r2Etag: link.r2_etag, expiresAt: link.session_expires_at } : null;
+  return link ? { linkId: link.id, creatorId: link.creator_id, creatorName: link.creator_name, assetId: link.asset_id, title: link.title, customMessage: link.custom_message, objectKey: link.object_key, byteCount: link.byte_count, mimeType: link.mime_type, sha256: link.sha256, r2Version: link.r2_version, r2Etag: link.r2_etag, expiresAt: link.session_expires_at } : null;
 }
 
 async function activeActor(DB: D1Database, actor: DownloadActor) {

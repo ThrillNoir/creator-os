@@ -12,7 +12,8 @@ import {
   revokeContentDownloadLink,
 } from "../src/lib/content-download-links.ts";
 
-const migration = await readFile(new URL("../../thot-os-app/migrations/0063_content_download_links.sql", import.meta.url), "utf8");
+const migration = await readFile(new URL("../../thot-os-app/migrations/0064_content_download_message.sql", import.meta.url), "utf8");
+const previousMigration = await readFile(new URL("../../thot-os-app/migrations/0063_content_download_links.sql", import.meta.url), "utf8");
 const productionBaseline = await readFile(new URL("../../thot-os-app/production-baseline/schema.sql", import.meta.url), "utf8");
 const now = "2026-10-05T00:00:00.000Z";
 const actor = { creatorId: "creator-a", email: "creator@example.test" };
@@ -59,6 +60,7 @@ function fixture() {
     INSERT INTO asset_video_playback_states VALUES ('asset-a','creator-a','object-a','canonical_verified'),('asset-b','creator-b','object-b','canonical_verified');
     INSERT INTO asset_classifications VALUES ('asset-a','creator-a','nsfw',0),('asset-b','creator-b','nsfw',0);
   `);
+  sqlite.exec(previousMigration);
   sqlite.exec(migration);
   return { sqlite, DB: d1(sqlite) };
 }
@@ -67,8 +69,22 @@ test("migration applies to the canonical production baseline", () => {
   const sqlite = new Database(":memory:");
   try {
     sqlite.exec(productionBaseline);
+    sqlite.exec(previousMigration);
     sqlite.exec(migration);
     assert.equal(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='content_download_links'").get().name, "content_download_links");
+  } finally { sqlite.close(); }
+});
+
+test("message migration preserves existing links with a null message", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    sqlite.exec("DROP TABLE content_download_links");
+    sqlite.exec(previousMigration);
+    sqlite.prepare(`INSERT INTO content_download_links
+      (id,creator_id,asset_id,storage_object_id,title,object_key,byte_count,mime_type,sha256,r2_version,r2_etag,token_hash,expires_at,created_by,created_at)
+      VALUES ('link-a','creator-a','asset-a','object-a','Legacy title','creators/a/original.mp4',42,'video/mp4',?,'v1','etag-a',?,'2026-10-06T00:00:00.000Z','creator@example.test',?)`).run("c".repeat(64), "d".repeat(64), now);
+    sqlite.exec(migration);
+    assert.equal(sqlite.prepare("SELECT title,custom_message FROM content_download_links WHERE id='link-a'").get().custom_message, null);
   } finally { sqlite.close(); }
 });
 
@@ -85,10 +101,30 @@ test("inspection is non-consuming and durable rows keep only hashes", async () =
     const second = await inspectContentDownloadLink(DB, { token, now });
     assert.deepEqual(first, second);
     assert.equal(first.title, "Approved private video");
+    assert.equal(first.customMessage, null);
     assert.equal(sqlite.prepare("SELECT redeemed_at FROM content_download_links WHERE id='link-a'").get().redeemed_at, null);
     const row = sqlite.prepare("SELECT token_hash,session_token_hash FROM content_download_links WHERE id='link-a'").get();
     assert.notEqual(row.token_hash, token);
     assert.equal(row.session_token_hash, null);
+  } finally { sqlite.close(); }
+});
+
+test("custom messages normalize blanks, validate bounds, and persist through retrieval", async () => {
+  const { sqlite, DB } = fixture();
+  try {
+    await create(DB, { customMessage: "  Please enjoy!  " });
+    assert.equal((await inspectContentDownloadLink(DB, { token, now })).customMessage, "Please enjoy!");
+    await claimContentDownloadLink(DB, { token, sessionToken: session, now });
+    assert.equal((await getContentDownloadSession(DB, { linkToken: token, sessionToken: session, now })).customMessage, "Please enjoy!");
+    for (const [index, value] of ["x".repeat(501), "bad\0message", 7, null].entries()) {
+      await assert.rejects(create(DB, { id: `invalid-${index}`, token: `${index + 1}`.repeat(64).slice(0, 64), customMessage: value }), (error) => error instanceof ContentDownloadLinkError && error.code === "invalid_request");
+    }
+    await create(DB, { id: "blank", token: "f".repeat(64), customMessage: " \t\n" });
+    assert.equal(sqlite.prepare("SELECT custom_message FROM content_download_links WHERE id='blank'").get().custom_message, null);
+    await create(DB, { id: "boundary", token: "e".repeat(64), customMessage: "😀".repeat(250) });
+    assert.equal(sqlite.prepare("SELECT length(custom_message) AS n FROM content_download_links WHERE id='boundary'").get().n, 250);
+    assert.throws(() => sqlite.prepare("UPDATE content_download_links SET custom_message=? WHERE id='boundary'").run("x".repeat(501)));
+    assert.throws(() => sqlite.prepare("UPDATE content_download_links SET custom_message=? WHERE id='boundary'").run("x\0y"));
   } finally { sqlite.close(); }
 });
 

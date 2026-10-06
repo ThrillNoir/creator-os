@@ -373,5 +373,11 @@
       "remoteId": 65
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0064_content_download_message.sql",
+      "sha256": "90c6edd55984f3638faf6c6fb7e0580b47587d251902d4ab8c835b5426c9bc7a",
+      "purpose": "Local-only additive optional recipient-facing download message; remote apply not authorized."
+    }
+  ]
 }

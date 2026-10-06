@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import test from "node:test";
-import { createContentDownloadLink, revokeContentDownloadLink } from "../../thot-os-next/src/lib/content-download-links.ts";
+import { createContentDownloadLink, inspectContentDownloadLink, revokeContentDownloadLink } from "../../thot-os-next/src/lib/content-download-links.ts";
 import worker from "../src/index.ts";
 import { replayDownloadSchema } from "../../../tests/fixtures/download-local/replay.mjs";
 
@@ -48,15 +48,16 @@ test("local migrated schema creates, redeems, ranges, and revokes a synthetic do
     modules: true, compatibilityDate: "2026-08-08", script: "export default { fetch() { return new Response('fixture'); } }", r2Buckets: ["LIBRARY_MEDIA"],
   }));
   try {
-    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 65);
-    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0063_content_download_links.sql");
+    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 66);
+    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0064_content_download_message.sql");
     const media = await mf.getR2Bucket("LIBRARY_MEDIA");
     const identity = await media.put("originals/fixture.mp4", bytes, { httpMetadata: { contentType: "video/mp4" } });
     await seed(local.db, identity);
     freezeTime();
 
-    const created = await createContentDownloadLink(local.DB, { actor: owner, assetId: "fixture-video", title: "Fixture video", sharingConfirmed: true, token, id: "fixture-link", now });
+    const created = await createContentDownloadLink(local.DB, { actor: owner, assetId: "fixture-video", title: "Fixture video", customMessage: "A note for you", sharingConfirmed: true, token, id: "fixture-link", now });
     assert.equal(created.token, token);
+    assert.equal((await inspectContentDownloadLink(local.DB, { token, now })).customMessage, "A note for you");
     await assert.rejects(createContentDownloadLink(local.DB, { actor: outsider, assetId: "fixture-video", title: "Foreign", sharingConfirmed: true, token: "b".repeat(64), now }), { name: "ContentDownloadLinkError", code: "not_eligible" });
     assert.equal(await revokeContentDownloadLink(local.DB, { actor: outsider, linkId: created.id, now }), false);
 

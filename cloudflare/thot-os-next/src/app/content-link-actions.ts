@@ -19,11 +19,14 @@ async function downloadBase() {
 export async function generateContentLinkAction(formData: FormData) {
   const base = await downloadBase();
   const context = await requireCreatorContext("mutate");
+  const customMessage = formData.get("customMessage");
+  if (customMessage !== null && typeof customMessage !== "string") return { ok: false as const, code: "invalid_request" as const };
   try {
     const link = await createContentDownloadLink(cloudflareEnv().DB, {
       actor: { creatorId: context.creator.creator_id, email: context.email },
       assetId: String(formData.get("assetId") ?? ""),
       title: String(formData.get("title") ?? ""),
+      customMessage: customMessage ?? undefined,
       sharingConfirmed: formData.get("sharingConfirmed") === "yes",
     });
     return { ok: true as const, link: { id: link.id, url: `${base}/d/${link.token}`, expiresAt: link.expiresAt } };
