@@ -92,7 +92,7 @@ test("service-auth activation plan is redacted, deterministic, staging-only, and
   assert.equal(plan.compatibilityReady, false);
   assert.equal(plan.activationReady, false);
   assert.equal(plan.principals.length, 4);
-  assert.equal(plan.grants.length, 18);
+  assert.equal(plan.grants.length, 20);
   assert.equal(plan.operationsIfApplied.d1CredentialHashes, 4);
   assert.equal(plan.operationsIfApplied.legacyAuthenticationRemoved, false);
   assert.equal(plan.confirmation, activationConfirmation(plan.activationId, plan.planSha256));
@@ -188,7 +188,7 @@ test("structured D1 activation status reads only safe state and makes a satisfie
   assert.equal(status.state, "SATISFIED");
   assert.equal(status.counts.activationRuns, 1);
   assert.equal(status.counts.canonicalCredentialCount, 4);
-  assert.equal(status.counts.canonicalGrantCount, 18);
+  assert.equal(status.counts.canonicalGrantCount, 20);
   assert.equal(calls.length, 6);
   assert.ok(calls.every((call) => call.target.databaseId === activation.expected.databaseId));
   assert.ok(calls.every((call) => !/token_hash|\bdetail\b|operator_identity/i.test(call.statement)));

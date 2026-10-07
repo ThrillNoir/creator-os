@@ -187,7 +187,7 @@
           "deployable": true,
           "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
           "publicationPolicy": {
-            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator", "adelaide"] },
+            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator", "adelaide", "staging-authz-fixture"] },
             "adultProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["adelaide"] }
           },
           "protectedAdultRelease": true,

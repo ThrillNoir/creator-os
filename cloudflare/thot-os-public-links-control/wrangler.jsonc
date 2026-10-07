@@ -9,7 +9,7 @@
   "preview_urls": false,
   "vars": {
     "PUBLIC_PROFILE_PUBLICATION_MODE": "synthetic-only",
-    "PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS": "staging-synthetic-creator,adelaide",
+    "PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS": "staging-synthetic-creator,adelaide,staging-authz-fixture",
     "ADULT_PROFILE_PUBLICATION_MODE": "synthetic-only",
     "ADULT_PROFILE_SYNTHETIC_CREATOR_IDS": "adelaide",
     "PUBLIC_MEDIA_DELIVERY_ENABLED": "1",

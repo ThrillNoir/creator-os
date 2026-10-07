@@ -21,7 +21,7 @@ test("staging publication control keeps SFW and adult projections in separate is
   assert.equal(config.vars.PUBLIC_MEDIA_DELIVERY_ENABLED, "1");
   assert.equal(config.vars.PUBLIC_MEDIA_BASE_URL, "https://public-profile-staging.thathuboverthere.com");
   assert.equal(config.vars.PUBLIC_PROFILE_PUBLICATION_MODE, "synthetic-only");
-  assert.equal(config.vars.PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS, "staging-synthetic-creator,adelaide");
+  assert.equal(config.vars.PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS, "staging-synthetic-creator,adelaide,staging-authz-fixture");
   assert.equal(config.vars.ADULT_PROFILE_PUBLICATION_MODE, "synthetic-only");
   assert.equal(config.vars.ADULT_PROFILE_SYNTHETIC_CREATOR_IDS, "adelaide");
   assert.equal(config.vars.ADULT_MEDIA_DELIVERY_ENABLED, "1");
