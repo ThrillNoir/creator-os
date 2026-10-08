@@ -57,6 +57,13 @@
       "capabilities": [
         "booking.enquiry.submit"
       ]
+    },
+    {
+      "principalName": "thot-os-public-contact",
+      "creatorId": "staging-authz-fixture",
+      "capabilities": [
+        "booking.enquiry.submit"
+      ]
     }
   ]
 }

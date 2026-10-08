@@ -9,7 +9,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = {
   patch: path.join(root, "config/service-auth-capability-patch.staging.json"),
   activation: path.join(root, "config/service-auth-activation.staging.json"),
+  bookingActivation: path.join(root, "config/service-auth-booking-activation.staging.json"),
   contract: path.join(root, "config/service-principals.json"),
+  bookingContract: path.join(root, "config/service-principals.booking.staging.json"),
   registry: path.join(root, "config/deployments.json"),
 };
 
@@ -27,8 +29,14 @@ const patchPolicies = {
     creatorId: "staging-authz-fixture",
     capabilities: ["public.profile.publish", "public.profile.withdraw"],
   },
+  "staging-booking-smoke-capability-v1": {
+    principalName: "thot-os-public-contact",
+    creatorId: "staging-authz-fixture",
+    capabilities: ["booking.enquiry.submit"],
+  },
 };
 const syntheticPatchId = "staging-synthetic-profile-capabilities-v1";
+const revocablePatchIds = new Set([syntheticPatchId, "staging-booking-smoke-capability-v1"]);
 
 function stableId(patchId, value) {
   return `sap-${sha256(`${patchId}:${value}`).slice(0, 24)}`;
@@ -139,7 +147,7 @@ export function buildCapabilityPatchPlan({ patch, activation, contract, registry
 
 export function buildCapabilityPatchRevokePlan({ patch, activation, contract, registry, git }) {
   const appliedPlan = buildCapabilityPatchPlan({ patch, activation, contract, registry, git });
-  if (appliedPlan.patchId !== syntheticPatchId) throw new Error("Capability patch revocation is supported only for the approved synthetic staging fixture.");
+  if (!revocablePatchIds.has(appliedPlan.patchId)) throw new Error("Capability patch revocation is supported only for an approved staging fixture.");
   const plan = {
     ...appliedPlan,
     mode: "capability-grant-patch-revoke",
@@ -179,7 +187,7 @@ export function classifyCapabilityPatchStatus(plan, rows) {
     && rows.activationRuns[0]?.environment === "staging"
     && rows.activationRuns[0]?.target_database_id === plan.database.databaseId
     && rows.principals.length === 1
-    && rows.principals[0]?.principal_name === "thot-os-web-public-links"
+    && rows.principals[0]?.principal_name === plan.grants[0]?.principalName
     && rows.principals[0]?.principal_status === "active"
     && rows.principals[0]?.credential_status === "active";
   const observedGrants = new Map(rows.grants.map((row) => [grantKey({ principalName: row.principal_name, creatorId: row.creator_id, capability: row.capability }), row.status]));
@@ -273,7 +281,7 @@ export function capabilityPatchSql(plan, patch) {
 }
 
 export function capabilityPatchRevokeSql(plan, patch) {
-  if (plan.patchId !== syntheticPatchId) throw new Error("Capability patch revocation is supported only for the approved synthetic staging fixture.");
+  if (!revocablePatchIds.has(plan.patchId)) throw new Error("Capability patch revocation is supported only for an approved staging fixture.");
   const principalName = plan.grants[0].principalName;
   const creatorId = plan.grants[0].creatorId;
   const expectedCapabilities = plan.grants.map((grant) => sql(grant.capability)).join(",");
@@ -390,8 +398,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else {
       if (options.environment !== "staging") throw new Error("Capability patch requires the explicit staging environment.");
       const patch = readJson(options.patch ?? defaults.patch);
-      const activation = readJson(defaults.activation);
-      const contract = readJson(defaults.contract);
+      const bookingPatch = patch.patchId === "staging-booking-smoke-capability-v1";
+      const activation = readJson(bookingPatch ? defaults.bookingActivation : defaults.activation);
+      const contract = readJson(bookingPatch ? defaults.bookingContract : defaults.contract);
       const registry = readJson(defaults.registry);
       const plan = ["revoke", "revoke-plan"].includes(options.mode)
         ? buildCapabilityPatchRevokePlan({ patch, activation, contract, registry, git: currentGitIdentity() })

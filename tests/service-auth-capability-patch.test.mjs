@@ -30,10 +30,20 @@ async function syntheticFixture() {
   return { patch, activation, contract, registry };
 }
 
+async function bookingFixture() {
+  const [patch, activation, contract, registry] = await Promise.all([
+    readJson("config/service-auth-capability-patch.booking-smoke.staging.json"),
+    readJson("config/service-auth-booking-activation.staging.json"),
+    readJson("config/service-principals.booking.staging.json"),
+    readJson("config/deployments.json"),
+  ]);
+  return { patch, activation, contract, registry };
+}
+
 function readyRows(plan, { grants = "missing", audit = false } = {}) {
   const rows = {
     activationRuns: [{ id: plan.sourceActivationId, environment: "staging", target_database_id: plan.database.databaseId }],
-    principals: [{ id: "principal-id", principal_name: "thot-os-web-public-links", principal_status: "active", credential_id: "credential-id", credential_status: "active" }],
+    principals: [{ id: "principal-id", principal_name: plan.grants[0].principalName, principal_status: "active", credential_id: "credential-id", credential_status: "active" }],
     grants: [],
     auditEvents: audit ? [{ id: capabilityPatchAuditId(plan), event_type: "creator_capability_grants_added" }] : [],
   };
@@ -85,6 +95,34 @@ test("synthetic profile capability patch is limited to its approved fixture iden
   const wrongPatchId = structuredClone(patch);
   wrongPatchId.patchId = "staging-unapproved-capabilities-v1";
   assert.throws(() => validateCapabilityPatch({ patch: wrongPatchId, activation, contract, registry }), /identity/i);
+});
+
+test("booking smoke patch grants and revokes only the contact fixture capability", async () => {
+  const fixture = await bookingFixture();
+  const plan = buildCapabilityPatchPlan({ ...fixture, git });
+  const revokePlan = buildCapabilityPatchRevokePlan({ ...fixture, git });
+  assert.deepEqual(plan.grants, [{ principalName: "thot-os-public-contact", creatorId: "staging-authz-fixture", capability: "booking.enquiry.submit" }]);
+  assert.equal(classifyCapabilityPatchStatus(plan, readyRows(plan)).state, "ABSENT");
+  assert.match(capabilityPatchSql(plan, fixture.patch), /booking\.enquiry\.submit/);
+  assert.match(capabilityPatchRevokeSql(revokePlan, fixture.patch), /creator_id='staging-authz-fixture'/);
+  const db = new Database(":memory:");
+  db.exec(`
+    CREATE TABLE service_principals (id TEXT PRIMARY KEY, principal_name TEXT, status TEXT);
+    CREATE TABLE service_principal_credentials (id TEXT PRIMARY KEY, service_principal_id TEXT, status TEXT);
+    CREATE TABLE service_principal_creator_grants (service_principal_id TEXT, creator_id TEXT, capability TEXT, status TEXT, revoked_at TEXT, PRIMARY KEY (service_principal_id, creator_id, capability));
+    CREATE TABLE service_principal_audit_events (id TEXT PRIMARY KEY, service_principal_id TEXT, credential_id TEXT, creator_id TEXT, event_type TEXT, actor_identity TEXT, detail TEXT);
+    INSERT INTO service_principals VALUES ('contact','thot-os-public-contact','active');
+    INSERT INTO service_principal_credentials VALUES ('credential','contact','active');
+    INSERT INTO service_principal_creator_grants VALUES ('contact','adelaide','booking.enquiry.submit','active',NULL);
+  `);
+  db.exec(capabilityPatchSql(plan, fixture.patch));
+  db.exec(capabilityPatchRevokeSql(revokePlan, fixture.patch));
+  assert.equal(db.prepare("SELECT status FROM service_principal_creator_grants WHERE creator_id='adelaide'").get().status, "active");
+  assert.equal(db.prepare("SELECT status FROM service_principal_creator_grants WHERE creator_id='staging-authz-fixture'").get().status, "revoked");
+  db.close();
+  const wrongCreator = structuredClone(fixture.patch);
+  wrongCreator.grants[0].creatorId = "adelaide";
+  assert.throws(() => validateCapabilityPatch({ ...fixture, patch: wrongCreator }), /scope/i);
 });
 
 test("capability patch plan is deterministic, secret-free, and cannot create credentials or deploy Workers", async () => {
@@ -162,7 +200,7 @@ test("synthetic patch revoke accepts only the original verified exact grants and
   revoked.grants.pop();
   assert.equal(classifyCapabilityPatchRevokeStatus(plan, revoked).state, "CONFLICT");
   const adult = await fixture();
-  assert.throws(() => buildCapabilityPatchRevokePlan({ ...adult, git }), /synthetic/i);
+  assert.throws(() => buildCapabilityPatchRevokePlan({ ...adult, git }), /approved staging fixture/i);
 });
 
 test("approved patch plans cannot cross-authorize grant and revoke modes", async () => {

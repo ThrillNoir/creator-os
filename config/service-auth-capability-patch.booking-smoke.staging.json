@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "patchId": "staging-booking-smoke-capability-v1",
+  "environment": "staging",
+  "sourceActivationId": "staging-booking-adelaide-20260929",
+  "operatorIdentity": "approved-release-operator",
+  "expected": {
+    "databaseName": "thot-os-staging",
+    "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f"
+  },
+  "grants": [
+    {
+      "principalName": "thot-os-public-contact",
+      "creatorId": "staging-authz-fixture",
+      "capabilities": ["booking.enquiry.submit"]
+    }
+  ]
+}
