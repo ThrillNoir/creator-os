@@ -134,6 +134,28 @@ test("staging deployment plan binds source, artifact, ledger, secrets, and Worke
   assert.equal(assertApprovedPlan({ plan, confirmation: plan.confirmation, metadata, artifactManifest, migrationNames, workerState }), true);
 });
 
+test("deployment confirmation binds the approved live-host reuse contract", () => {
+  const livePublicReuse = {
+    enabled: true,
+    canonicalProfileOrigin: "https://www.thathuboverthere.com",
+    profileAliasOrigin: "https://thathuboverthere.com",
+    bookingOrigin: "https://booking.thathuboverthere.com",
+    adultOrigin: "https://more.thathuboverthere.com",
+    creatorSlugs: ["adelaide"],
+  };
+  const liveMetadata = { ...metadata, component: "publicLinks", worker: stagingDeploymentWorkers.publicLinks, livePublicReuse };
+  const plan = createDeploymentPlan({ metadata: liveMetadata, artifactManifest, migrationNames, requiredSecretNames, workerState });
+  assert.deepEqual(plan.livePublicReuse, livePublicReuse);
+  assert.throws(() => assertApprovedPlan({
+    plan,
+    confirmation: plan.confirmation,
+    metadata: { ...liveMetadata, livePublicReuse: { ...livePublicReuse, creatorSlugs: ["adelaide", "fixture"] } },
+    artifactManifest,
+    migrationNames,
+    workerState,
+  }), /live-host reuse contract differs/);
+});
+
 test("Vault uses the same bounded plan/apply/reconcile contract", () => {
   const vaultMetadata = { ...metadata, component: "vault", worker: "thot-os-vault-bridge-staging", config: "cloudflare/vault-bridge/wrangler.jsonc" };
   const vaultState = { ...workerState, secretNames: [] };
@@ -156,7 +178,7 @@ test("Vault receipt binds the fresh Worker version to the reviewed artifact tag"
 });
 
 test("each reviewed connector uses scoped plans, drift checks and tagged receipts", () => {
-  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl", "publicMedia", "publicContact", "downloads"]) {
+  for (const component of ["instagram", "reddit", "telegram", "publicLinks", "publicLinksControl", "publicMedia", "publicContact", "adultGateway", "downloads"]) {
     const scoped = { ...metadata, component, worker: stagingDeploymentWorkers[component] };
     const componentSecrets = component === "downloads" ? [] : requiredSecretNames;
     const plan = createDeploymentPlan({ metadata: scoped, artifactManifest, migrationNames, requiredSecretNames: componentSecrets, workerState });

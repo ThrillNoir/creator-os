@@ -1,4 +1,5 @@
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
+import { livePublicHostGuard } from "../../shared/live-public-host.ts";
 
 type PublicLink = {
   id: string;
@@ -193,10 +194,15 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method !== "GET" && request.method !== "HEAD") return textResponse("Method not allowed", 405, { allow: "GET, HEAD" });
     const url = new URL(request.url);
+    const routeParts = url.pathname.split("/").filter(Boolean);
+    const infrastructure = !routeParts.length || isStaticAssetPath(url.pathname) || url.pathname === "/healthz";
+    const liveSlug = infrastructure ? undefined : routeParts[0] === "go" || routeParts[0] === "media" ? routeParts[1] : routeParts[0];
+    const guarded = livePublicHostGuard(request, env, "profile", liveSlug);
+    if (guarded) return guarded;
     if (isStaticAssetPath(url.pathname)) return env.ASSETS.fetch(request);
     if (url.pathname === "/healthz") return textResponse("ok", 200, { "cache-control": "public, max-age=60" });
 
-    const segments = url.pathname.split("/").filter(Boolean);
+    const segments = routeParts;
     if (segments.length === 2 && isPublicCreatorSlug(segments[0]) && segments[1] === "more") {
       const snapshot = await loadSnapshot(env, segments[0]);
       const more = snapshot?.actions?.find((action) => action.id === "more");

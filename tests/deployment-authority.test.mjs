@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   buildDeploymentMetadata,
+  readDeploymentRegistry,
+  readJsoncFile,
   validateDeployment,
   validatePreflightRequest,
   validateRegistry,
@@ -16,6 +18,14 @@ function fixtureRegistry() {
         provisioned: true,
         deployable: true,
         accountId: "account-staging",
+        livePublicReuse: {
+          enabled: true,
+          canonicalProfileOrigin: "https://www.thathuboverthere.com",
+          profileAliasOrigin: "https://thathuboverthere.com",
+          bookingOrigin: "https://booking.thathuboverthere.com",
+          adultOrigin: "https://more.thathuboverthere.com",
+          creatorSlugs: ["adelaide"],
+        },
         resources: {
           d1: { "thot-os-staging": { id: "d1-staging", migrationsDir: "migrations" } },
           r2: ["thot-os-media-staging"],
@@ -119,7 +129,7 @@ function publicContactFixture() {
   staging.resources.workers.control = "control-worker";
   staging.components.publicContact = {
     service: "thot-os-public-contact",
-    publicHostname: "booking-staging.thathuboverthere.com",
+    publicHostname: "booking.thathuboverthere.com",
     config: "contact.jsonc",
     worker: "contact-worker",
     deployable: true,
@@ -134,11 +144,15 @@ function publicContactFixture() {
       account_id: "account-staging",
       workers_dev: false,
       preview_urls: false,
+      routes: [
+        { pattern: "booking.thathuboverthere.com", custom_domain: true },
+        { pattern: "booking-staging.thathuboverthere.com", custom_domain: true },
+      ],
       kv_namespaces: [{ binding: "CONTACT_PROFILES", id: "contact-kv" }],
       analytics_engine_datasets: [{ binding: "CONTACT_EVENTS", dataset: "contact-events" }],
       services: [{ binding: "PUBLIC_LINKS_CONTROL", service: "control-worker" }],
       ratelimits: [{ name: "BOOKING_RATE_LIMITER", namespace_id: "6201", simple: { limit: 5, period: 60 } }],
-      vars: { TURNSTILE_SITE_KEY: "0x4AAAAAAFI459ZZKtJAgrMg", TURNSTILE_EXPECTED_HOSTNAME: "booking-staging.thathuboverthere.com" },
+      vars: { TURNSTILE_SITE_KEY: "0x4AAAAAAFI459ZZKtJAgrMg", TURNSTILE_EXPECTED_HOSTNAME: "booking.thathuboverthere.com", LIVE_PUBLIC_CREATOR_SLUGS: "adelaide" },
       secrets: { required: ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"] },
     },
   };
@@ -151,6 +165,13 @@ test("deployment registry rejects duplicate Worker ownership", () => {
     worker: "thot-os-staging-web",
   };
   assert.match(validateRegistry(registry).join("\n"), /Duplicate Worker ownership/);
+});
+
+test("staging registry requires the exact approved live public reuse contract", () => {
+  const registry = fixtureRegistry();
+  assert.deepEqual(validateRegistry(registry), []);
+  registry.environments.staging.livePublicReuse.creatorSlugs.push("fixture");
+  assert.match(validateRegistry(registry).join("\n"), /exact approved livePublicReuse/);
 });
 
 test("staging cannot bind to a declared production resource", () => {
@@ -266,10 +287,12 @@ test("missing Wrangler configuration fails closed", () => {
 test("public-contact permits only its approved hostname and rejects private data bindings", () => {
   const { registry, config } = publicContactFixture();
   assert.equal(validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config }).ok, true);
-  assert.equal(validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, routes: [{ pattern: "booking-staging.thathuboverthere.com", custom_domain: true }] } }).ok, true);
+  assert.equal(validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config }).ok, true);
   const routeResult = validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, routes: [{ pattern: "other.example.com", custom_domain: true }] } });
   assert.equal(routeResult.ok, false);
-  assert.match(routeResult.errors.join("\n"), /approved staging custom hostname/);
+  assert.match(routeResult.errors.join("\n"), /approved live-host reuse/);
+  const creatorResult = validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, vars: { ...config.vars, LIVE_PUBLIC_CREATOR_SLUGS: "fixture" } } });
+  assert.match(creatorResult.errors.join("\n"), /creator slugs approved by livePublicReuse/);
 
   const dataResult = validateDeployment({ registry, environmentName: "staging", componentName: "publicContact", config: { ...config, d1_databases: [{ binding: "DB", database_name: "thot-os-staging" }] } });
   assert.equal(dataResult.ok, false);
@@ -290,4 +313,21 @@ test("public-contact rejects an unowned or altered rate-limit contract", () => {
   });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /owned BOOKING_RATE_LIMITER contract/);
+});
+
+test("live public Workers reject origin and Turnstile drift", () => {
+  const registry = readDeploymentRegistry();
+  for (const componentName of ["publicLinks", "publicLinksControl"]) {
+    const component = registry.environments.staging.components[componentName];
+    const config = readJsoncFile(new URL(`../${component.config}`, import.meta.url));
+    assert.equal(validateDeployment({ registry, environmentName: "staging", componentName, config }).ok, true);
+    const drifted = { ...config, vars: { ...config.vars, BOOKING_ACTION_BASE_URL: "https://booking-staging.thathuboverthere.com" } };
+    assert.match(validateDeployment({ registry, environmentName: "staging", componentName, config: drifted }).errors.join("\n"), /requires BOOKING_ACTION_BASE_URL/);
+  }
+  const componentName = "adultGateway";
+  const component = registry.environments.staging.components[componentName];
+  const config = readJsoncFile(new URL(`../${component.config}`, import.meta.url));
+  assert.equal(validateDeployment({ registry, environmentName: "staging", componentName, config }).ok, true);
+  const drifted = { ...config, vars: { ...config.vars, TURNSTILE_EXPECTED_HOSTNAME: "more-staging.thathuboverthere.com" } };
+  assert.match(validateDeployment({ registry, environmentName: "staging", componentName, config: drifted }).errors.join("\n"), /approved widget and live hostname/);
 });

@@ -9,15 +9,24 @@
   "preview_urls": false,
   "routes": [
     {
+      "pattern": "www.thathuboverthere.com",
+      "custom_domain": true
+    },
+    {
+      "pattern": "thathuboverthere.com",
+      "custom_domain": true
+    },
+    {
       "pattern": "public-profile-staging.thathuboverthere.com",
       "custom_domain": true
     }
   ],
   "vars": {
-    "PUBLIC_MEDIA_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
-    "SAFE_PUBLIC_PROFILE_BASE_URL": "https://public-profile-staging.thathuboverthere.com",
-    "ADULT_GATEWAY_BASE_URL": "https://more-staging.thathuboverthere.com",
-    "BOOKING_ACTION_BASE_URL": "https://booking-staging.thathuboverthere.com"
+    "LIVE_PUBLIC_CREATOR_SLUGS": "adelaide",
+    "PUBLIC_MEDIA_BASE_URL": "https://www.thathuboverthere.com",
+    "SAFE_PUBLIC_PROFILE_BASE_URL": "https://www.thathuboverthere.com",
+    "ADULT_GATEWAY_BASE_URL": "https://more.thathuboverthere.com",
+    "BOOKING_ACTION_BASE_URL": "https://booking.thathuboverthere.com"
   },
   "assets": {
     "directory": "./assets",

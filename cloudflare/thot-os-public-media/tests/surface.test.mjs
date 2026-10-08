@@ -37,6 +37,18 @@ test("public media serves only a projected derivative with matching immutable me
   assert.deepEqual(keys, [`public-media/adelaide/version-1/${attachmentId}.webp`]);
 });
 
+test("live media serves only configured creators and redirects its legacy host", async () => {
+  const projected = structuredClone(snapshot);
+  projected.media[0].href = `https://www.thathuboverthere.com/media/adelaide/version-1/${attachmentId}`;
+  const live = environment(projected).env;
+  live.LIVE_PUBLIC_CREATOR_SLUGS = "adelaide";
+  assert.equal((await worker.fetch(new Request(`https://www.thathuboverthere.com/media/adelaide/version-1/${attachmentId}`), live)).status, 200);
+  assert.equal((await worker.fetch(new Request(`https://www.thathuboverthere.com/media/fixture/version-1/${attachmentId}`), live)).status, 404);
+  const moved = await worker.fetch(new Request(`https://public-profile-staging.thathuboverthere.com/media/adelaide/version-1/${attachmentId}?download=1`), live);
+  assert.equal(moved.status, 302);
+  assert.equal(moved.headers.get("location"), `https://www.thathuboverthere.com/media/adelaide/version-1/${attachmentId}?download=1`);
+});
+
 test("public media rejects private keys, a foreign snapshot URL, and metadata or checksum mismatch", async () => {
   const routes = [
     `https://media.example/media/adelaide/version-1/${attachmentId}?objectKey=profile-private`,

@@ -1,5 +1,6 @@
 import { effectiveBookingFields, validateBookingConfig, validateBookingEnquiry, type BookingConfig, type BookingEnquiry, type BookingField } from "../../shared/booking-contract.ts";
 import { appearanceCss, contrastRatio, parseProfileAppearance, type ProfileAppearance } from "../../thot-os-next/src/lib/profile-appearance-contract.ts";
+import { livePublicHostGuard } from "../../shared/live-public-host.ts";
 
 type Profile = { schemaVersion: 2; creator: { id: string; slug: string; displayName: string }; versionId: string; config: BookingConfig; channels: { sms: string; email: string } };
 type Bindings = { PUBLIC_LINKS_CONTROL?: Fetcher; BOOKING_SERVICE_TOKEN?: string; BOOKING_FORM_SECRET?: string; BOOKING_RATE_LIMITER?: { limit(input: { key: string }): Promise<{ success: boolean }> } };
@@ -104,7 +105,7 @@ h1 { font-size: clamp(1.8rem,5vw,2.5rem); line-height: 1.1; letter-spacing: -.03
 function handoffLinks(p: Profile, sms: string, whatsapp: string, appearance: ProfileAppearance, replyStatus?: unknown) { return sms.startsWith(`sms:${p.channels.sms}?`) && whatsapp.startsWith(`https://wa.me/${p.channels.sms.slice(1)}?`) ? handoff(sms, whatsapp, appearance, replyStatus) : null; }
 
 export default { async fetch(request: Request, env: Env & Bindings): Promise<Response> {
-  const url = new URL(request.url), parts = url.pathname.split("/").filter(Boolean); if (parts.length !== 2 || parts[0] !== "book" || !SLUG.test(parts[1])) return page("Not found", 404); if (request.method !== "GET" && request.method !== "POST") return new Response("Method not allowed", { status: 405, headers: { ...headers(), allow: "GET, POST" } }); if (!ready(env)) return page("Not found", 404);
+  const url = new URL(request.url), parts = url.pathname.split("/").filter(Boolean); const guarded = livePublicHostGuard(request, env, "booking", parts[0] === "book" ? parts[1] : undefined); if (guarded) return guarded; if (parts.length !== 2 || parts[0] !== "book" || !SLUG.test(parts[1])) return page("Not found", 404); if (request.method !== "GET" && request.method !== "POST") return new Response("Method not allowed", { status: 405, headers: { ...headers(), allow: "GET, POST" } }); if (!ready(env)) return page("Not found", 404);
   const p = profile(await env.CONTACT_PROFILES.get(`public-contact:${parts[1]}`, "json").catch(() => null), parts[1]); if (!p?.config.enabled) return page("Not found", 404);
   if (request.method === "GET") { const appearance = await current(env, p); if (!appearance) return page("Not found", 404); try { env.CONTACT_EVENTS.writeDataPoint({ indexes: [p.creator.slug], blobs: ["booking_open"], doubles: [1] }); } catch {} const rendered = await render(p, env, appearance); return page(rendered.html, 200, rendered.nonce); }
   if (request.headers.get("origin") !== url.origin) return page("Unable to submit booking", 400); const data = await form(request); if (!data) return page("Unable to submit booking", 400); const id = value(data, "submissionId"), issued = value(data, "issuedAt"), signature = value(data, "signature"), n = Number(issued); let e: BookingEnquiry;

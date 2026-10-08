@@ -12,12 +12,13 @@ export const stagingDeploymentWorkers = Object.freeze({
   publicMedia: "thot-os-public-media-staging",
   publicLinksControl: "thot-os-public-links-control-staging",
   publicContact: "thot-os-public-contact-staging",
+  adultGateway: "thot-os-adult-gateway-staging",
   downloads: "thot-os-downloads-staging",
 });
 
 // Public Workers already use the web package's pinned compiler in their scripts.
 export function stagingToolchainDirectory(registry, component) {
-  const owner = ["publicLinks", "publicLinksControl", "publicMedia", "publicContact", "downloads"].includes(component) ? "web" : component;
+  const owner = ["publicLinks", "publicLinksControl", "publicMedia", "publicContact", "adultGateway", "downloads"].includes(component) ? "web" : component;
   return registry.environments.staging.components[owner].directory;
 }
 
@@ -69,6 +70,7 @@ export function createDeploymentPlan({ metadata, artifactManifest, migrationName
     environment: "staging",
     component: metadata.component,
     target: { accountId: metadata.accountId, worker: metadata.worker, config: metadata.config },
+    livePublicReuse: metadata.livePublicReuse ?? null,
     source: { gitSha: metadata.gitSha, gitBranch: metadata.gitBranch },
     artifact: { sha256: artifactManifest.artifact.sha256, buildTime: artifactManifest.build.timestamp, versionTag: metadata.component !== "web" ? `creatoros-${artifactManifest.artifact.sha256.slice(0, 48)}` : null },
     migration: { databaseId: metadata.databaseId, names: [...migrationNames], latest: migrationNames.at(-1), count: migrationNames.length },
@@ -92,6 +94,7 @@ function assertPlanIdentity({ plan, confirmation, metadata, artifactManifest, mi
   if (plan.planSha256 !== digest || plan.confirmation !== confirmationForDigest(digest)) throw new Error("Approved deployment plan checksum is invalid.");
   if (confirmation !== plan.confirmation) throw new Error("Apply confirmation does not match the approved deployment plan.");
   if (plan.environment !== "staging" || plan.component !== metadata.component || plan.target?.worker !== metadata.worker || plan.target?.accountId !== metadata.accountId || plan.target?.config !== metadata.config) throw new Error("Approved plan is not the controlled staging component target.");
+  if (JSON.stringify(plan.livePublicReuse) !== JSON.stringify(metadata.livePublicReuse ?? null)) throw new Error("Current live-host reuse contract differs from the approved deployment plan.");
   if (plan.source?.gitSha !== metadata.gitSha || plan.source?.gitBranch !== metadata.gitBranch) throw new Error("Current Git identity differs from the approved deployment plan.");
   if (plan.artifact?.sha256 !== artifactManifest.artifact?.sha256 || plan.artifact?.buildTime !== artifactManifest.build?.timestamp) throw new Error("Current artifact differs from the approved deployment plan.");
   if (JSON.stringify(plan.migration?.names) !== JSON.stringify(migrationNames)) throw new Error("Current staging migration state differs from the approved deployment plan.");
@@ -147,6 +150,7 @@ export function createApplyReceipt({ plan, before, after, observedAt = new Date(
     planSha256: plan.planSha256,
     source: plan.source,
     artifact: plan.artifact,
+    livePublicReuse: plan.livePublicReuse,
     migration: { verified: true, state: `${plan.migration.count} migrations; latest ${plan.migration.latest}` },
     deployment: {
       worker: plan.target.worker,

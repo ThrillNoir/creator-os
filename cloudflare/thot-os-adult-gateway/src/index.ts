@@ -1,3 +1,5 @@
+import { livePublicHostGuard } from "../../shared/live-public-host.ts";
+
 type AdultProfile = {
   schemaVersion: 1 | 2 | 3 | 4;
   publishedVersionId: string;
@@ -230,6 +232,9 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
+    const liveSlug = parts[0] === "age" || parts[0] === "media" || parts[0] === "r" ? parts[1] : parts[0];
+    const guarded = livePublicHostGuard(request, env, "adult", liveSlug);
+    if (guarded) return guarded;
     if (request.method === "GET" && parts.length === 2 && parts[0] === "age" && SLUG.test(parts[1])) {
       const profile = await loadProfile(env, parts[1]);
       if (!profile) return page("Not found", 404);

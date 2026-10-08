@@ -9,10 +9,17 @@
   "preview_urls": false,
   "routes": [
     {
+      "pattern": "www.thathuboverthere.com/media/*",
+      "zone_name": "thathuboverthere.com"
+    },
+    {
       "pattern": "public-profile-staging.thathuboverthere.com/media/*",
       "zone_name": "thathuboverthere.com"
     }
   ],
+  "vars": {
+    "LIVE_PUBLIC_CREATOR_SLUGS": "adelaide"
+  },
   "kv_namespaces": [
     {
       "binding": "PUBLIC_LINKS",

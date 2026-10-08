@@ -21,7 +21,15 @@
       "provisioned": true,
       "deployable": true,
       "accountId": "3e7cfa6efb7a97825f1dc24515410c63",
-      "description": "The only real Cloudflare integration environment. Production credentials and resources are forbidden here.",
+      "description": "The existing Cloudflare integration environment. Its named staging resources also serve the explicitly declared live public domains; production credentials and resources remain forbidden.",
+      "livePublicReuse": {
+        "enabled": true,
+        "canonicalProfileOrigin": "https://www.thathuboverthere.com",
+        "profileAliasOrigin": "https://thathuboverthere.com",
+        "bookingOrigin": "https://booking.thathuboverthere.com",
+        "adultOrigin": "https://more.thathuboverthere.com",
+        "creatorSlugs": ["adelaide"]
+      },
       "resources": {
         "d1": {
           "thot-os-staging": {
@@ -151,7 +159,7 @@
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-staging",
           "deployable": true,
-          "stagingBoundary": "Isolated SFW staging public-profile origin for public-profile-staging.thathuboverthere.com only. It may publish only the configured staging allowlist and must never bind operational D1, adult KV, or private R2. Its only adult capability is a no-store redirect from /{slug}/more to the configured protected gateway.",
+          "stagingBoundary": "SFW public-profile delivery on www.thathuboverthere.com, its bare-domain alias, and the transitional staging hostname, using the existing staging projection. It may publish only the configured live creator allowlist and must never bind operational D1, adult KV, or private R2. Its only adult capability is a no-store redirect from /{slug}/more to the configured protected gateway.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],
@@ -168,7 +176,7 @@
           "directory": "cloudflare/thot-os-public-media",
           "worker": "thot-os-public-media-staging",
           "deployable": true,
-          "stagingBoundary": "Isolated SFW derivative delivery only for public-profile-staging.thathuboverthere.com/media/*. It may bind only the public-link projection KV and the dedicated public derivative bucket; it must never bind private authoring R2, D1, contact, or adult resources.",
+          "stagingBoundary": "SFW derivative delivery only for www.thathuboverthere.com/media/* and the transitional staging media route. It may bind only the public-link projection KV and the dedicated public derivative bucket; it must never bind private authoring R2, D1, contact, or adult resources.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],
@@ -185,9 +193,9 @@
           "directory": "cloudflare/thot-os-public-links-control",
           "worker": "thot-os-public-links-control-staging",
           "deployable": true,
-          "stagingBoundary": "Isolated staging control Worker only. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
+          "stagingBoundary": "Private control Worker for the declared live public reuse. It is reachable solely through the authenticated internal service binding and must not be assigned a public route.",
           "publicationPolicy": {
-            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["staging-synthetic-creator", "adelaide", "staging-authz-fixture"] },
+            "publicProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["adelaide"] },
             "adultProfile": { "mode": "synthetic-only", "syntheticCreatorIds": ["adelaide"] }
           },
           "protectedAdultRelease": true,
@@ -203,7 +211,8 @@
         },
         "publicContact": {
           "service": "thot-os-public-contact",
-          "publicHostname": "booking-staging.thathuboverthere.com",
+          "publicHostname": "booking.thathuboverthere.com",
+          "transitionalPublicHostname": "booking-staging.thathuboverthere.com",
           "config": "cloudflare/thot-os-public-contact/wrangler.jsonc",
           "directory": "cloudflare/thot-os-public-contact",
           "worker": "thot-os-public-contact-staging",
@@ -231,7 +240,7 @@
           "directory": "cloudflare/thot-os-adult-gateway",
           "worker": "thot-os-adult-gateway-staging",
           "deployable": true,
-          "stagingBoundary": "Protected adult staging gateway for more-staging.thathuboverthere.com only. It may bind only the isolated adult projection KV, adult derivative R2 bucket, and adult event dataset. It must never bind D1, authoring R2, safe public KV, contact KV, or the SFW public Worker.",
+          "stagingBoundary": "Protected adult gateway for more.thathuboverthere.com and the transitional staging hostname. It may bind only the isolated adult projection KV, adult derivative R2 bucket, and adult event dataset. It must never bind D1, authoring R2, safe public KV, contact KV, or the SFW public Worker.",
           "requiredSecrets": ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"],
           "resources": {
             "d1": [],

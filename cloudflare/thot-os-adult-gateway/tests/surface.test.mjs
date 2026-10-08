@@ -57,6 +57,19 @@ function cookie(response) {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
 }
 
+test("live adult routes allow only configured creators and legacy POSTs restart safely", async () => {
+  const { env } = environment(); env.LIVE_PUBLIC_CREATOR_SLUGS = "adelaide";
+  assert.equal((await worker.fetch(new Request("https://more.thathuboverthere.com/age/adelaide"), env)).status, 200);
+  assert.equal((await worker.fetch(new Request("https://more.thathuboverthere.com/age/fixture"), env)).status, 404);
+  const moved = await worker.fetch(new Request("https://more-staging.thathuboverthere.com/age/adelaide?from=old"), env);
+  assert.equal(moved.status, 302);
+  assert.equal(moved.headers.get("location"), "https://more.thathuboverthere.com/age/adelaide?from=old");
+  const denied = await worker.fetch(new Request("https://more-staging.thathuboverthere.com/age/adelaide/confirm", { method: "POST", body: new FormData() }), env);
+  assert.equal(denied.status, 400);
+  assert.equal(denied.headers.get("location"), null);
+  assert.match(await denied.text(), /href="https:\/\/more\.thathuboverthere\.com\/age\/adelaide"/);
+});
+
 test("the gate is the only response available before confirmation", async () => {
   const { env } = environment();
   const gate = await worker.fetch(new Request("https://adult.example/age/adelaide"), env);

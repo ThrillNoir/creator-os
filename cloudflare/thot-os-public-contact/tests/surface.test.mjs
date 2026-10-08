@@ -10,6 +10,19 @@ function setup(snapshot = profile, reply = url => Response.json({ ok: true, appe
 async function data(env, alter = () => {}) { const html = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), env)).text(), get = key => html.match(new RegExp(`name="${key}" value="([^"]+)"`))?.[1], f = new FormData(), tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10); ["submissionId", "issuedAt", "signature"].forEach(k => f.set(k, get(k))); Object.entries({ firstName: "Ava", lastName: "Jones", phone: "+61400000001", email: "ava@example.com", date: tomorrow, time: "19:30", timezone: "Australia/Perth", address: "1 Main St", suburb: "Perth", guests: "8", occasion: "Birthday", wear: "theme", specialRequests: "", consent: "yes", acknowledged: "yes", "cf-turnstile-response": "ok" }).forEach(([k, v]) => f.set(k, v)); alter(f); return f; }
 const post = (f, env) => worker.fetch(new Request("https://contact.example/book/adelaide", { method: "POST", headers: { origin: "https://contact.example", "cf-connecting-ip": "192.0.2.1" }, body: f }), env);
 
+test("live booking allows only configured creators and does not redirect legacy POST bodies", async () => {
+  const { env } = setup(); env.LIVE_PUBLIC_CREATOR_SLUGS = "adelaide";
+  assert.equal((await worker.fetch(new Request("https://booking.thathuboverthere.com/book/adelaide"), env)).status, 200);
+  assert.equal((await worker.fetch(new Request("https://booking.thathuboverthere.com/book/fixture"), env)).status, 404);
+  const moved = await worker.fetch(new Request("https://booking-staging.thathuboverthere.com/book/adelaide?from=old"), env);
+  assert.equal(moved.status, 302);
+  assert.equal(moved.headers.get("location"), "https://booking.thathuboverthere.com/book/adelaide?from=old");
+  const denied = await worker.fetch(new Request("http://booking-staging.thathuboverthere.com:8787/book/adelaide", { method: "POST", body: new FormData() }), env);
+  assert.equal(denied.status, 400);
+  assert.equal(denied.headers.get("location"), null);
+  assert.match(await denied.text(), /href="https:\/\/booking\.thathuboverthere\.com\/book\/adelaide"/);
+});
+
 test("initial HTML never reveals private contact and renders optional event fields, Uniform choices, and rules feedback", async () => { const { env } = setup(), response = await worker.fetch(new Request("https://contact.example/book/adelaide"), env), body = await response.text(); assert.match(body, /Booking rules/); assert.match(body, /I have read and agree to these rules/); assert.match(body, /name="endTime"/); assert.match(body, /<legend>Uniform<\/legend>/); assert.match(body, /type="checkbox" name="wear"/); assert.match(body, /Don’t skip the fine print, read the rules\./); assert.match(body, /These details are correct—send my enquiry/); assert.match(response.headers.get("content-security-policy"), /script-src 'nonce-[^']+' https:\/\/challenges\.cloudflare\.com/); assert.doesNotMatch(body, /400000000|adelaide@example\.com/); });
 test("rules warning requires a prior open but permits a checked acknowledgement after closing", async () => {
   const { env } = setup(), html = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), env)).text(), script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script><\/main>/)?.[1];

@@ -6,14 +6,18 @@
   "compatibility_date": "2026-08-20",
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "booking-staging.thathuboverthere.com", "custom_domain": true }],
+  "routes": [
+    { "pattern": "booking.thathuboverthere.com", "custom_domain": true },
+    { "pattern": "booking-staging.thathuboverthere.com", "custom_domain": true }
+  ],
   "kv_namespaces": [{ "binding": "CONTACT_PROFILES", "id": "57d716b2562b4bb989e62482df6f6b19" }],
   "analytics_engine_datasets": [{ "binding": "CONTACT_EVENTS", "dataset": "thot-os-booking-events-staging" }],
   "services": [{ "binding": "PUBLIC_LINKS_CONTROL", "service": "thot-os-public-links-control-staging" }],
   "ratelimits": [{ "name": "BOOKING_RATE_LIMITER", "namespace_id": "6201", "simple": { "limit": 5, "period": 60 } }],
   "vars": {
+    "LIVE_PUBLIC_CREATOR_SLUGS": "adelaide",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFI459ZZKtJAgrMg",
-    "TURNSTILE_EXPECTED_HOSTNAME": "booking-staging.thathuboverthere.com"
+    "TURNSTILE_EXPECTED_HOSTNAME": "booking.thathuboverthere.com"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "BOOKING_SERVICE_TOKEN", "BOOKING_FORM_SECRET"] }
 }

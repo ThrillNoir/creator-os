@@ -9,6 +9,10 @@
   "preview_urls": false,
   "routes": [
     {
+      "pattern": "more.thathuboverthere.com",
+      "custom_domain": true
+    },
+    {
       "pattern": "more-staging.thathuboverthere.com",
       "custom_domain": true
     }
@@ -32,8 +36,9 @@
     }
   ],
   "vars": {
+    "LIVE_PUBLIC_CREATOR_SLUGS": "adelaide",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAEZL1cy4h2SV62cN",
-    "TURNSTILE_EXPECTED_HOSTNAME": "more-staging.thathuboverthere.com"
+    "TURNSTILE_EXPECTED_HOSTNAME": "more.thathuboverthere.com"
   },
   "secrets": {
     "required": ["TURNSTILE_SECRET", "AGE_SESSION_SECRET"]

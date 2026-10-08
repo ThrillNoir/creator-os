@@ -1,4 +1,5 @@
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
+import { livePublicHostGuard } from "../../shared/live-public-host.ts";
 
 type PublicMediaItem = {
   id: string;
@@ -97,6 +98,8 @@ export default {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { ...headers("no-store"), allow: "GET, HEAD" } });
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
+    const guarded = livePublicHostGuard(request, env, "media", parts[0] === "media" ? parts[1] : undefined);
+    if (guarded) return guarded;
     if (parts.length !== 4 || parts[0] !== "media" || !isPublicCreatorSlug(parts[1]) || !ID.test(parts[2]) || !ID.test(parts[3]) || url.search || url.hash) return notFound();
     const [_, slug, versionId, attachmentId] = parts;
     const snapshot = await env.PUBLIC_LINKS.get(snapshotKey(slug), "json");

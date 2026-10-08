@@ -19,14 +19,15 @@ test("staging publication control keeps SFW and adult projections in separate is
   ]);
   assert.deepEqual(config.send_email, [{ name: "EMAIL", allowed_sender_addresses: ["welcome@thathuboverthere.com"] }]);
   assert.equal(config.vars.PUBLIC_MEDIA_DELIVERY_ENABLED, "1");
-  assert.equal(config.vars.PUBLIC_MEDIA_BASE_URL, "https://public-profile-staging.thathuboverthere.com");
+  assert.equal(config.vars.PUBLIC_MEDIA_BASE_URL, "https://www.thathuboverthere.com");
   assert.equal(config.vars.PUBLIC_PROFILE_PUBLICATION_MODE, "synthetic-only");
-  assert.equal(config.vars.PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS, "staging-synthetic-creator,adelaide,staging-authz-fixture");
+  assert.equal(config.vars.PUBLIC_PROFILE_SYNTHETIC_CREATOR_IDS, "adelaide");
   assert.equal(config.vars.ADULT_PROFILE_PUBLICATION_MODE, "synthetic-only");
   assert.equal(config.vars.ADULT_PROFILE_SYNTHETIC_CREATOR_IDS, "adelaide");
   assert.equal(config.vars.ADULT_MEDIA_DELIVERY_ENABLED, "1");
-  assert.equal(config.vars.ADULT_GATEWAY_BASE_URL, "https://more-staging.thathuboverthere.com");
-  assert.equal(config.vars.SAFE_PUBLIC_PROFILE_BASE_URL, "https://public-profile-staging.thathuboverthere.com");
+  assert.equal(config.vars.ADULT_GATEWAY_BASE_URL, "https://more.thathuboverthere.com");
+  assert.equal(config.vars.SAFE_PUBLIC_PROFILE_BASE_URL, "https://www.thathuboverthere.com");
+  assert.equal(config.vars.BOOKING_ACTION_BASE_URL, "https://booking.thathuboverthere.com");
   assert.deepEqual(config.workflows.map(({ binding, class_name }) => ({ binding, class_name })), [
     { binding: "PUBLIC_PROFILE_PUBLISH", class_name: "PublicProfilePublishWorkflow" },
     { binding: "PUBLIC_PROFILE_WITHDRAW", class_name: "PublicProfileWithdrawWorkflow" },

@@ -110,11 +110,9 @@ function resourceNames(environment) {
 
 function validatePublicContactConfig(errors, componentName, component, config) {
   if (componentName !== "publicContact") return;
-  const routes = config.routes ?? [];
   if (config.workers_dev !== false || config.preview_urls !== false || "route" in config
-    || !Array.isArray(routes) || routes.length > 1
-    || routes.some((route) => route?.pattern !== component.publicHostname || route?.custom_domain !== true)) {
-    errors.push("publicContact permits only its approved staging custom hostname, with workers_dev=false and preview_urls=false.");
+    || component.publicHostname !== "booking.thathuboverthere.com") {
+    errors.push("publicContact permits only its approved custom hostnames, with workers_dev=false and preview_urls=false.");
   }
   if ((config.d1_databases ?? []).length || (config.r2_buckets ?? []).length) {
     errors.push("publicContact must not bind D1 or R2 resources.");
@@ -132,8 +130,8 @@ function validatePublicContactConfig(errors, componentName, component, config) {
     errors.push("publicContact requires the owned BOOKING_RATE_LIMITER contract of 5 requests per 60 seconds.");
   }
   const vars = config.vars ?? {};
-  if (vars.TURNSTILE_SITE_KEY !== "0x4AAAAAAFI459ZZKtJAgrMg" || vars.TURNSTILE_EXPECTED_HOSTNAME !== "booking-staging.thathuboverthere.com") {
-    errors.push("publicContact Turnstile configuration must use the approved booking staging widget and hostname.");
+  if (vars.TURNSTILE_SITE_KEY !== "0x4AAAAAAFI459ZZKtJAgrMg" || vars.TURNSTILE_EXPECTED_HOSTNAME !== "booking.thathuboverthere.com") {
+    errors.push("publicContact Turnstile configuration must use the approved booking widget and live hostname.");
   }
 }
 
@@ -164,6 +162,62 @@ function addExactListError(errors, label, actual, expected) {
 
 const publicationModes = new Set(["disabled", "synthetic-only", "enabled"]);
 const creatorIdPattern = /^[a-z0-9][a-z0-9_-]{0,79}$/i;
+const approvedLivePublicReuse = Object.freeze({
+  enabled: true,
+  canonicalProfileOrigin: "https://www.thathuboverthere.com",
+  profileAliasOrigin: "https://thathuboverthere.com",
+  bookingOrigin: "https://booking.thathuboverthere.com",
+  adultOrigin: "https://more.thathuboverthere.com",
+  creatorSlugs: ["adelaide"],
+});
+
+function validLivePublicReuse(value) {
+  return JSON.stringify(value) === JSON.stringify(approvedLivePublicReuse);
+}
+
+function validateLivePublicRoutes(errors, componentName, config) {
+  const allowed = {
+    publicLinks: [
+      { pattern: "www.thathuboverthere.com", custom_domain: true },
+      { pattern: "thathuboverthere.com", custom_domain: true },
+      { pattern: "public-profile-staging.thathuboverthere.com", custom_domain: true },
+    ],
+    publicMedia: [
+      { pattern: "www.thathuboverthere.com/media/*", zone_name: "thathuboverthere.com" },
+      { pattern: "public-profile-staging.thathuboverthere.com/media/*", zone_name: "thathuboverthere.com" },
+    ],
+    adultGateway: [
+      { pattern: "more.thathuboverthere.com", custom_domain: true },
+      { pattern: "more-staging.thathuboverthere.com", custom_domain: true },
+    ],
+    publicContact: [
+      { pattern: "booking.thathuboverthere.com", custom_domain: true },
+      { pattern: "booking-staging.thathuboverthere.com", custom_domain: true },
+    ],
+  };
+  if (allowed[componentName] && JSON.stringify(config.routes) !== JSON.stringify(allowed[componentName])) {
+    errors.push(`${componentName} routes must exactly match the approved live-host reuse and transitional hostnames.`);
+  }
+  if (allowed[componentName] && config.vars?.LIVE_PUBLIC_CREATOR_SLUGS !== approvedLivePublicReuse.creatorSlugs.join(",")) {
+    errors.push(`${componentName} must use the creator slugs approved by livePublicReuse.`);
+  }
+  const canonicalOrigins = {
+    PUBLIC_MEDIA_BASE_URL: approvedLivePublicReuse.canonicalProfileOrigin,
+    SAFE_PUBLIC_PROFILE_BASE_URL: approvedLivePublicReuse.canonicalProfileOrigin,
+    ADULT_GATEWAY_BASE_URL: approvedLivePublicReuse.adultOrigin,
+    BOOKING_ACTION_BASE_URL: approvedLivePublicReuse.bookingOrigin,
+  };
+  if (["publicLinks", "publicLinksControl"].includes(componentName)) {
+    for (const [name, value] of Object.entries(canonicalOrigins)) {
+      if (config.vars?.[name] !== value) errors.push(`${componentName} requires ${name}=${value}.`);
+    }
+  }
+  if (componentName === "adultGateway"
+    && (config.vars?.TURNSTILE_SITE_KEY !== "0x4AAAAAAEZL1cy4h2SV62cN"
+      || config.vars?.TURNSTILE_EXPECTED_HOSTNAME !== new URL(approvedLivePublicReuse.adultOrigin).hostname)) {
+    errors.push("adultGateway Turnstile configuration must use the approved widget and live hostname.");
+  }
+}
 
 function validPublicationPolicy(policy) {
   return policy
@@ -196,8 +250,8 @@ function validatePublicationPolicyConfig(errors, componentName, component, confi
     if (component.protectedAdultRelease !== true) errors.push("Adult publication requires an explicitly approved protected-service configuration.");
     const requiredVars = {
       ADULT_MEDIA_DELIVERY_ENABLED: "1",
-      ADULT_GATEWAY_BASE_URL: "https://more-staging.thathuboverthere.com",
-      SAFE_PUBLIC_PROFILE_BASE_URL: "https://public-profile-staging.thathuboverthere.com",
+      ADULT_GATEWAY_BASE_URL: approvedLivePublicReuse.adultOrigin,
+      SAFE_PUBLIC_PROFILE_BASE_URL: approvedLivePublicReuse.canonicalProfileOrigin,
     };
     for (const [name, value] of Object.entries(requiredVars)) {
       if (vars[name] !== value) errors.push(`Protected adult release requires ${name}=${value}.`);
@@ -240,6 +294,9 @@ export function validateRegistry(registry) {
   const errors = [];
   if (registry.schemaVersion !== 1) errors.push("Unsupported or missing deployment registry schemaVersion.");
   for (const [environmentName, environment] of Object.entries(registry.environments ?? {})) {
+    if (environmentName === "staging" && !validLivePublicReuse(environment.livePublicReuse)) {
+      errors.push("staging must declare the exact approved livePublicReuse contract.");
+    }
     if (!environment.resources) errors.push(`${environmentName} has no resource inventory.`);
     if (environment.kind === "cloudflare" && environment.provisioned && environment.deployable && !environment.accountId) {
       errors.push(`${environmentName} is deployable but has no Cloudflare account identifier.`);
@@ -328,6 +385,7 @@ export function validateDeployment({ registry, environmentName, componentName, c
     validatePublicationPolicyConfig(errors, componentName, component, config);
     validatePublicContactConfig(errors, componentName, component, config);
     validateDownloadsConfig(errors, componentName, component, config);
+    if (environmentName === "staging") validateLivePublicRoutes(errors, componentName, config);
 
     const d1Registry = environment.resources?.d1 ?? {};
     for (const binding of resources.d1) {
@@ -366,7 +424,10 @@ export function validateDeployment({ registry, environmentName, componentName, c
     errors.push(`Missing Wrangler configuration for ${environmentName}/${componentName}.`);
   }
 
-  const metadata = buildDeploymentMetadata({ environment: environmentName, componentName, component, gitSha, gitBranch, buildTime });
+  const metadata = {
+    ...buildDeploymentMetadata({ environment: environmentName, componentName, component, gitSha, gitBranch, buildTime }),
+    livePublicReuse: environment.livePublicReuse ?? null,
+  };
   return { ok: errors.length === 0, errors, metadata };
 }
 

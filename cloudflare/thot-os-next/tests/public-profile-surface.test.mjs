@@ -131,8 +131,8 @@ test("published profiles expose only environment-controlled public entry links f
   assert.doesNotMatch(copyLink, /destination|query|redirect/i);
   assert.match(urls, /url\.protocol !== "https:"/);
   assert.match(urls, /isPublicCreatorSlug/);
-  assert.match(wrangler, /"SAFE_PUBLIC_PROFILE_BASE_URL": "https:\/\/public-profile-staging\.thathuboverthere\.com"/);
-  assert.match(wrangler, /"ADULT_GATEWAY_BASE_URL": "https:\/\/more-staging\.thathuboverthere\.com"/);
+  assert.match(wrangler, /"SAFE_PUBLIC_PROFILE_BASE_URL": "https:\/\/www\.thathuboverthere\.com"/);
+  assert.match(wrangler, /"ADULT_GATEWAY_BASE_URL": "https:\/\/more\.thathuboverthere\.com"/);
 });
 
 test("public-profile save validation returns structured field errors without leaking values", async () => {

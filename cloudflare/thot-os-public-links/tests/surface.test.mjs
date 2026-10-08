@@ -39,6 +39,24 @@ const snapshot = {
 };
 const stagingVars = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")).vars;
 
+test("live profile hosts allow only configured creators and redirect apex and legacy URLs", async () => {
+  const live = environment(snapshot, { LIVE_PUBLIC_CREATOR_SLUGS: "adelaide" }).env;
+  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/adelaide"), live)).status, 200);
+  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/go/fixture/official"), live)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/adelaide"), environment(snapshot).env)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/healthz"), live)).status, 200);
+  assert.equal(await (await worker.fetch(new Request("https://www.thathuboverthere.com/robots.txt"), live)).text(), "asset");
+  for (const host of ["thathuboverthere.com", "public-profile-staging.thathuboverthere.com"]) {
+    const response = await worker.fetch(new Request(`http://${host}:8787/adelaide?from=old`), live);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), "https://www.thathuboverthere.com/adelaide?from=old");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  const media = await worker.fetch(new Request("https://thathuboverthere.com/media/adelaide/version/avatar"), live);
+  assert.equal(media.status, 302);
+  assert.equal(media.headers.get("location"), "https://www.thathuboverthere.com/media/adelaide/version/avatar");
+});
+
 test("public profiles render an approved KV projection without exposing source markup", async () => {
   const { env, events } = environment(snapshot);
   const response = await worker.fetch(new Request("https://links.example/adelaide"), env);
@@ -136,13 +154,13 @@ test("v2 interaction actions use the exact configured safe friendly entrance", a
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2).env)).status, 404);
 });
 
-test("booking actions render only for the configured staging booking origin", async () => {
+test("booking actions render only for the configured booking origin", async () => {
   const v2 = structuredClone(snapshot);
   v2.schemaVersion = 2;
-  v2.actions = [{ id: "book", label: "Book Adelaide", href: "https://booking-staging.thathuboverthere.com/book/adelaide" }];
+  v2.actions = [{ id: "book", label: "Book Adelaide", href: "https://booking.thathuboverthere.com/book/adelaide" }];
   const response = await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, stagingVars).env);
   assert.equal(response.status, 200);
-  assert.match(await response.text(), /https:\/\/booking-staging\.thathuboverthere\.com\/book\/adelaide/);
+  assert.match(await response.text(), /https:\/\/booking\.thathuboverthere\.com\/book\/adelaide/);
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, { ...stagingVars, BOOKING_ACTION_BASE_URL: undefined }).env)).status, 404);
   v2.actions[0].href = "https://booking.example/book/adelaide";
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v2, stagingVars).env)).status, 404);
