@@ -101,6 +101,7 @@ test("email resolves approved recipient; receipt excludes enquiry PII; duplicate
   assert.equal(f.sent[0].to, "creator@example.test");
   assert.match(f.sent[0].text, /12 Example Street/);
   const links = await result.json();
+  assert.equal(links.replyStatus, "not_requested");
   assert.match(links.whatsapp, /^https:\/\/wa.me\/61400000000/);
   assert.match(decodeURIComponent(decodeURIComponent(links.sms)), /12 Example Street/);
   assert.doesNotMatch(decodeURIComponent(links.sms), /Accessible entrance|visitor@example/);
@@ -171,6 +172,43 @@ test("provider uncertainty reserves nonce; no automatic resend or draft disclosu
   assert.equal((await handleBooking(f.request(body), f.env, now)).status, 409);
 });
 
+test("published reply is personalized from the exact creator and duplicate sends nothing", async (t) => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const withReply = { ...config, reply: { enabled: true, subject: "We received your enquiry", body: "Hi {first name},\n\nCreator A will be in touch." } };
+  f.db.prepare("UPDATE creator_booking_configs SET config_json=?").run(JSON.stringify(withReply));
+  const body = f.payload({ enquiry: { ...enquiry, firstName: "$&" } }), response = await handleBooking(f.request(body), f.env, now);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).replyStatus, "accepted");
+  assert.equal(f.sent.length, 2);
+  assert.equal(f.sent[0].from, "THOT OS <welcome@thathuboverthere.com>");
+  assert.deepEqual(f.sent[1], { from: { email: "welcome@thathuboverthere.com", name: "Creator A via THOT OS" }, to: "visitor@example.test", replyTo: "creator@example.test", subject: "We received your enquiry", text: "Hi $&,\n\nCreator A will be in touch." });
+  assert.equal((await handleBooking(f.request(body), f.env, now)).status, 409);
+  assert.equal(f.sent.length, 2);
+});
+
+test("disabled reply preserves notification-only delivery", async (t) => {
+  const f = await fixture(); t.after(() => f.db.close());
+  f.db.prepare("UPDATE creator_booking_configs SET config_json=?").run(JSON.stringify({ ...config, reply: { enabled: false, subject: "", body: "" } }));
+  const response = await handleBooking(f.request(f.payload()), f.env, now);
+  assert.equal((await response.json()).replyStatus, "not_requested");
+  assert.equal(f.sent.length, 1);
+});
+
+test("draft reply cannot leak and uncertain visitor reply preserves successful handoff", async (t) => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const published = { ...config, reply: { enabled: true, subject: "Published", body: "Hello {first name}" } };
+  f.db.prepare("UPDATE creator_booking_configs SET config_json=?").run(JSON.stringify(published));
+  f.db.exec(`INSERT INTO creator_public_profile_versions VALUES('version-draft-reply','creator-a','Draft Name','draft','operator@example.test','2026-09-01');
+    INSERT INTO creator_booking_configs VALUES('version-draft-reply','creator-a','${JSON.stringify({ ...published, reply: { enabled: true, subject: "LEAK", body: "LEAK" } }).replaceAll("'", "''")}');`);
+  f.env.EMAIL.send = async message => { f.sent.push(message); if (f.sent.length === 2) throw new Error("unknown outcome"); };
+  const response = await handleBooking(f.request(f.payload()), f.env, now), result = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(result.replyStatus, "uncertain");
+  assert.match(result.whatsapp, /^https:\/\/wa\.me\//);
+  assert.equal(f.db.prepare("SELECT state FROM creator_booking_receipts").get().state, "uncertain");
+  assert.doesNotMatch(JSON.stringify(f.sent), /LEAK|Draft Name/);
+});
+
 test("concurrent same nonce sends once, creator-wide hourly limit caps fresh nonces", async (t) => {
   const f = await fixture(); t.after(() => f.db.close());
   const body = f.payload();
@@ -183,6 +221,10 @@ test("concurrent same nonce sends once, creator-wide hourly limit caps fresh non
 
 test("bounded configuration and actual calendar dates, consent and configured selections are enforced", () => {
   assert.deepEqual(validateBookingConfig(config), config);
+  assert.deepEqual(validateBookingConfig({ ...config, reply: { enabled: false, subject: "", body: "" } }).reply, { enabled: false, subject: "", body: "" });
+  assert.throws(() => validateBookingConfig({ ...config, reply: { enabled: true, subject: "x".repeat(201), body: "Hello" } }));
+  assert.throws(() => validateBookingConfig({ ...config, reply: { enabled: true, subject: "Hello", body: "Hi {last name}" } }));
+  assert.throws(() => validateBookingConfig({ ...config, reply: { enabled: true, subject: "Hello {surname}", body: "Hi" } }));
   assert.throws(() => validateBookingConfig({ ...config, wear: [config.wear[0], config.wear[0]] }));
   for (const change of [{ date: "2026-02-31" }, { time: "27:00" }, { timezone: "not/a-zone" }, { consent: false }, { acknowledged: false }, { extras: ["unknown"] }, { wear: "unknown" }, { guests: 1.5 }, { email: "user@example.test\r\nBcc: other@example.test" }]) {
     assert.throws(() => validateBookingEnquiry({ ...enquiry, ...change }, config, new Date(now)));
@@ -212,4 +254,25 @@ test("public projection contains only CTA; private projection is version-bound a
   await project(env, profile, contacts);
   assert.equal(writes.size, 0);
   assert.deepEqual((await snapshot(env, profile, [], contacts, [])).actions, []);
+});
+
+test("acknowledgement resolves only its published creator's checked attachment and fails closed if missing", async (t) => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const bytes = new TextEncoder().encode('%PDF-1.4\n%%EOF\n');
+  const manifest = { id: crypto.randomUUID(), filename: 'rules.pdf', contentType: 'application/pdf', byteSize: bytes.byteLength, sha256: Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex') };
+  f.db.prepare('UPDATE creator_booking_configs SET config_json=?').run(JSON.stringify({ ...config, reply: { enabled: true, subject: 'Received', body: 'Hello {first name}', attachments: [manifest] } }));
+  const keys = [];
+  f.env.MEDIA = { get: async key => { keys.push(key); return { size: bytes.byteLength, httpMetadata: { contentType: 'application/pdf' }, customMetadata: { creator_id: 'creator-a', attachment_id: manifest.id, filename: manifest.filename, sha256: manifest.sha256, content_type: manifest.contentType, byte_size: String(manifest.byteSize) }, arrayBuffer: async () => bytes.buffer }; } };
+  const response = await handleBooking(f.request(f.payload()), f.env, now);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).replyStatus, 'accepted');
+  assert.equal(keys[0], `booking-reply/creator-a/${manifest.id}/attachment.pdf`);
+  assert.equal(f.sent.length, 2);
+  assert.equal(f.sent[1].attachments[0].filename, 'rules.pdf');
+  assert.deepEqual(new Uint8Array(f.sent[1].attachments[0].content), bytes);
+  f.env.MEDIA.get = async () => null;
+  const missing = await handleBooking(f.request(f.payload()), f.env, now);
+  assert.equal(missing.status, 200);
+  assert.equal((await missing.json()).replyStatus, 'uncertain');
+  assert.equal(f.sent.length, 3, 'only the creator notification is sent when an attachment is missing');
 });

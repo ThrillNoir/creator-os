@@ -1,9 +1,10 @@
+import { validateReplyAttachments, type BookingReplyAttachment } from "./booking-reply-attachments.ts";
 /** Shared bounds for the non-sexual event enquiry editor and delivery boundary. */
 export type BookingOption = { id: string; label: string; description: string };
 export const bookingFieldNames = ["phone", "date", "time", "endTime", "timezone", "address", "suburb", "guests", "occasion", "wear", "extras", "specialRequests"] as const;
 export type BookingField = typeof bookingFieldNames[number];
 export type BookingFieldSettings = { visible: boolean; required: boolean };
-export type BookingConfig = { enabled: boolean; label: string; rules: string; wear: BookingOption[]; extras: BookingOption[]; fields?: Record<BookingField, BookingFieldSettings> };
+export type BookingConfig = { enabled: boolean; label: string; rules: string; wear: BookingOption[]; extras: BookingOption[]; fields?: Record<BookingField, BookingFieldSettings>; reply?: { enabled: boolean; subject: string; body: string; attachments?: BookingReplyAttachment[] } };
 export type BookingEnquiry = {
   firstName: string; lastName: string; email: string; phone?: string;
   date?: string; time?: string; endTime?: string; timezone?: string; address?: string; suburb?: string;
@@ -66,6 +67,14 @@ export function validateBookingConfig(value: unknown): BookingConfig {
     wear: options(input.wear), extras: options(input.extras),
   };
   if (input.fields !== undefined) result.fields = fields(input.fields);
+  if (input.reply !== undefined) {
+    const reply = object(input.reply);
+    if (typeof reply.enabled !== "boolean") throw new Error("Invalid booking reply setting.");
+    const subject = text(reply.subject, 200, reply.enabled), body = text(reply.body, 12000, reply.enabled, true);
+    if ([subject, body].some((value) => /[{}]/.test(value.replaceAll("{first name}", "")))) throw new Error("Invalid booking reply placeholder.");
+    result.reply = { enabled: reply.enabled, subject, body };
+    if (reply.attachments !== undefined) result.reply.attachments = validateReplyAttachments(reply.attachments);
+  }
   if (result.enabled && result.fields && ((result.fields.wear.visible && result.fields.wear.required && !result.wear.length) || (result.fields.extras.visible && result.fields.extras.required && !result.extras.length))) throw new Error("Required booking choices need at least one option.");
   return result;
 }

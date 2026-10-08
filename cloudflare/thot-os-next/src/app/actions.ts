@@ -14,6 +14,7 @@ import { approvedHttpsDestination } from "@/lib/profile-link-input";
 import { parseProfileAppearance } from "@/lib/profile-appearance-contract";
 import { canRetryVaultJob } from "@/lib/vault-job-status";
 import { isPublicCreatorSlug } from "../../../shared/public-profile-slug.ts";
+import { resolveReplyAttachments } from "../../../shared/booking-reply-attachments.ts";
 import { validateBookingConfig, type BookingConfig } from "../../../shared/booking-contract.ts";
 
 function values(formData: FormData, key: string) {
@@ -1326,7 +1327,12 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
   const { slug, requestedDisplayName, headline, bio, links, contacts, bookingConfig, appearance } = validated;
   const displayName = requestedDisplayName || identity.creator.creator_name;
   const checksum = await bookingAwarePublicProfileChecksum({ displayName, headline, bio, links }, { contacts, config: bookingConfig });
-  const { DB } = cloudflareEnv();
+  const { DB, MEDIA } = cloudflareEnv();
+  try {
+    await resolveReplyAttachments(MEDIA, creatorId, bookingConfig.reply?.attachments ?? []);
+  } catch {
+    return { status: "error", message: "An email attachment is unavailable. Remove it and upload it again.", reasonCode: "reply_attachment_unavailable", fieldErrors: { bookingConfig: "Check the attachments in the Email tab." }, values };
+  }
   const [profile, draft, nextVersion] = await Promise.all([
     creatorPrepare(DB, creatorId, "SELECT id,slug,published_version_id FROM creator_public_profiles WHERE creator_id=@creator LIMIT 1")
       .first<{ id: string; slug: string; published_version_id: string | null }>(),

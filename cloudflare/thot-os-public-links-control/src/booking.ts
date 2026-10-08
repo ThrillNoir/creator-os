@@ -1,8 +1,9 @@
+import { resolveReplyAttachments } from "../../shared/booking-reply-attachments.ts";
 import { bookingEmail, bookingLinks, validateBookingConfig, validateBookingEnquiry } from "../../shared/booking-contract.ts";
 import { requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { parseProfileAppearance } from "../../thot-os-next/src/lib/profile-appearance-contract.ts";
 
-type BookingEnv = { DB: D1Database; BOOKING_ENQUIRIES_ENABLED?: string; EMAIL?: { send(message: { from: string; to: string; subject: string; text: string }): Promise<unknown> } };
+type BookingEnv = { DB: D1Database; MEDIA?: R2Bucket; BOOKING_ENQUIRIES_ENABLED?: string; EMAIL?: { send(message: EmailMessageBuilder): Promise<unknown> } };
 type PublishedBooking = { config_json: string; display_name: string; email: string; sms: string; theme_key: unknown; button_style: unknown; background_mode: unknown; background_color: unknown; primary_color: unknown; text_color: unknown; card_color: unknown; radius_scale: unknown };
 const MAX_BODY = 32768;
 const WINDOW = 30 * 60 * 1000;
@@ -93,8 +94,18 @@ export async function handleBooking(request: Request, env: BookingEnv, now = Dat
       await env.DB.prepare("UPDATE creator_booking_receipts SET state='uncertain' WHERE id=? AND creator_id=? AND state='sending'").bind(submissionId, creatorId).run();
       return reply(502);
     }
+    if (config.reply?.enabled) {
+      try {
+        const attachments = await resolveReplyAttachments(env.MEDIA, creatorId, config.reply.attachments ?? []);
+        const from = { email: "welcome@thathuboverthere.com", name: `${current.display_name} via THOT OS` };
+        await env.EMAIL.send({ ...(attachments.length ? { attachments } : {}), from, to: enquiry.email, replyTo: current.email, subject: config.reply.subject.replaceAll("{first name}", () => enquiry.firstName), text: config.reply.body.replaceAll("{first name}", () => enquiry.firstName) });
+      } catch {
+        await env.DB.prepare("UPDATE creator_booking_receipts SET state='uncertain' WHERE id=? AND creator_id=? AND state='sending'").bind(submissionId, creatorId).run();
+        return reply(200, { ...bookingLinks(current.sms, current.display_name, enquiry), replyStatus: "uncertain" });
+      }
+    }
     await env.DB.prepare("UPDATE creator_booking_receipts SET state='accepted' WHERE id=? AND creator_id=? AND state='sending'").bind(submissionId, creatorId).run();
-    return reply(200, bookingLinks(current.sms, current.display_name, enquiry));
+    return reply(200, { ...bookingLinks(current.sms, current.display_name, enquiry), replyStatus: config.reply?.enabled ? "accepted" : "not_requested" });
   } catch {
     // Provider, D1 and parsing diagnostics can contain private request data.
     return reply(503);

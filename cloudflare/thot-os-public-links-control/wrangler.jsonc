@@ -81,8 +81,7 @@
   "send_email": [
     {
       "name": "EMAIL",
-      "allowed_sender_addresses": ["welcome@thathuboverthere.com"],
-      "allowed_destination_addresses": ["suedeadelaide@gmail.com"]
+      "allowed_sender_addresses": ["welcome@thathuboverthere.com"]
     }
   ],
   "triggers": { "crons": ["*/15 * * * *"] },

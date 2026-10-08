@@ -151,3 +151,28 @@ test("explicit required End time is enforced, bounded, and ignored when hidden",
   const hiddenEndTime = validateBookingConfig({ ...profile.config, fields: Object.fromEntries(bookingFieldNames.map(name => [name, { visible: name === "specialRequests", required: name === "specialRequests" }])) });
   assert.equal(validateBookingEnquiry({ firstName: "Ava", lastName: "Jones", email: "ava@example.com", endTime: "25:00", specialRequests: "Hi", consent: true, acknowledged: true }, hiddenEndTime).endTime, undefined);
 });
+
+
+test("consent names the creator and supporting disclosure remains accessible", async () => {
+  const response = await worker.fetch(new Request("https://contact.example/book/adelaide"), setup().env);
+  const html = await response.text();
+  assert.match(html, /I consent to sending my enquiry and my details to Adelaide\./);
+  assert.match(html, /<details class="consent-info"><summary aria-label="How your enquiry details are used">/);
+  assert.match(html, /Messaging drafts include your full-address Maps link/);
+});
+
+test("acknowledgement uncertainty keeps the accepted enquiry and prevents a misleading retry prompt", async () => {
+  const old = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ success: true, action: "booking", hostname: "contact.example" });
+  try {
+    const links = bookingLinks(profile.channels.sms, "Adelaide", { firstName: "Ava", lastName: "Jones", email: "ava@example.com", consent: true, acknowledged: true });
+    for (const status of ["accepted", "uncertain"]) {
+      const x = setup(profile, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ ok: true, ...links, replyStatus: status }));
+      const response = await post(await data(x.env), x.env);
+      assert.equal(response.status, 200);
+      const html = await response.text();
+      assert.match(html, /Continue in WhatsApp/);
+      assert.match(html, status === "accepted" ? /acknowledgement email has also been accepted/ : /Please do not submit it again/);
+    }
+  } finally { globalThis.fetch = old; }
+});

@@ -692,10 +692,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .import-history article strong,.import-history article small { display: block; }
 .import-history article small,.import-history article time { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .public-profile-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.public-profile-tab-panel { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.public-profile-tab-panel[hidden] { display: none; }
 .public-profile-form label,.public-profile-form textarea { min-width: 0; }
 .public-profile-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .public-profile-form label > small { color: var(--muted); font-size: 10px; font-weight: 500; line-height: 1.4; }
-.public-profile-form input,.public-profile-form textarea { box-sizing: border-box; width: 100%; min-height: 42px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #100c16; color: var(--ink); }
+.public-profile-form input,.public-profile-form textarea { box-sizing: border-box; width: 100%; min-height: 42px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--ink); }
 .public-profile-form textarea { min-height: 112px; resize: vertical; }
 .public-profile-form .wide,.public-profile-form > button { grid-column: 1 / -1; }
 .public-link-fields { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(150px,.5fr) minmax(260px,1.5fr); gap: 12px; }
@@ -707,6 +709,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .booking-field-row { display: grid; grid-template-columns: minmax(0,1fr) 110px 100px; align-items: center; gap: 12px; padding: 3px 0; }
 .booking-field-row > b { font-size: 13px; overflow-wrap: anywhere; }
 .public-link-fields.booking-option-row { grid-template-columns: minmax(0,1fr) minmax(0,2fr) auto; align-items: end; margin-bottom: 12px; }
+.reply-attachments { display: grid; gap: 10px; }
+.reply-attachments > div,.reply-attachments li span { display: grid; gap: 3px; }
+.reply-attachments small,.reply-attachments > span { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.reply-attachments ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.reply-attachments li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.reply-attachments li b { overflow-wrap: anywhere; }
+.reply-attachments li button { flex: none; }
 @media (max-width: 480px) {
   .booking-field-row { grid-template-columns: minmax(0,1fr) 82px 76px; gap: 6px; }
   .public-profile-form .booking-field-row label { gap: 5px; font-size: 11px; }
@@ -772,6 +781,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .launch-summary { grid-template-columns: 1fr 1fr; }
   .money-layout { grid-template-columns: 1fr; }
   .public-profile-form { grid-template-columns: 1fr; }
+  .public-profile-tab-panel { grid-template-columns: 1fr; }
   .public-profile-form .wide,.public-profile-form > button { grid-column: auto; }
 }
 @media (max-width: 560px) {
