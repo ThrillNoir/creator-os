@@ -82,7 +82,7 @@ button, input, textarea, select { font: inherit; }
 .public-preview-links { display: grid; gap: .75rem; margin-top: 2rem; }
 .public-preview-actions { display: grid; gap: .75rem; margin-top: 2rem; }
 .public-preview-action { display: block; padding: 1rem 1.1rem; border: 1px solid color-mix(in srgb, var(--profile-text) 20%, transparent); border-radius: var(--profile-radius); background: var(--profile-primary); color: var(--profile-background); font: inherit; font-weight: 750; text-decoration: none; }
-a.public-preview-action:hover,a.public-preview-action:focus-visible { background: #ffffff1c; border-color: #ffffff75; outline: 0; cursor: pointer; }
+.public-preview-action:not([aria-disabled="true"]):hover,.public-preview-action:not([aria-disabled="true"]):focus-visible { background: #ffffff1c; border-color: #ffffff75; outline: 0; cursor: pointer; }
 .public-preview-action-disabled,.profile-preview-action-disabled { opacity: .72; cursor: default; }
 .public-preview-note { margin: 1.25rem 0 0; color: var(--profile-text); font-size: 12px; opacity: .76; }
 .public-preview-link { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem 1.1rem; border: 1px solid transparent; border-radius: var(--profile-radius); background: var(--profile-primary); color: var(--profile-background); text-align: left; }
