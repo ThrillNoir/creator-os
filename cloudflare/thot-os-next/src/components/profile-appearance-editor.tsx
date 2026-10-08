@@ -12,6 +12,7 @@ import {
   type ProfileRadiusScale,
   type ProfileThemeKey,
 } from "@/lib/profile-appearance-contract";
+import type { ProfilePreviewAction } from "@/lib/public-profile-preview-actions";
 
 type Surface = "sfw" | "adult";
 type ImageRole = "avatar" | "background";
@@ -23,6 +24,7 @@ type Props = {
   surface: Surface;
   displayName: string;
   sampleLinks: string[];
+  previewActions?: ProfilePreviewAction[];
   versionId?: string;
   initialImages?: ProfileImageAttachment[];
   imageUploadsEnabled?: boolean;
@@ -69,7 +71,7 @@ function buttonClass(style: ProfileButtonStyle) {
   return "profile-preview-button";
 }
 
-export function ProfileAppearanceEditor({ initialAppearance, inheritedAppearance, surface, displayName, sampleLinks, versionId, initialImages = [], imageUploadsEnabled = true }: Props) {
+export function ProfileAppearanceEditor({ initialAppearance, inheritedAppearance, surface, displayName, sampleLinks, previewActions = [], versionId, initialImages = [], imageUploadsEnabled = true }: Props) {
   const [appearance, setAppearance] = useState(initialAppearance);
   const [inheritSfwTheme, setInheritSfwTheme] = useState(initialAppearance.inheritSfwTheme);
   const [activePanel, setActivePanel] = useState<"design" | "images" | "preview">("design");
@@ -149,7 +151,7 @@ export function ProfileAppearanceEditor({ initialAppearance, inheritedAppearance
         <fieldset disabled={inheritSfwTheme}><legend>Background and shape</legend><div className="profile-choice-grid"><label className={appearance.backgroundMode === "solid" ? "selected" : ""}><input type="radio" value="solid" checked={appearance.backgroundMode === "solid"} onChange={() => update("backgroundMode", "solid")} />Solid</label><label className={appearance.backgroundMode === "gradient" ? "selected" : ""}><input type="radio" value="gradient" checked={appearance.backgroundMode === "gradient"} onChange={() => update("backgroundMode", "gradient")} />Gradient</label>{PROFILE_RADIUS_SCALES.map((radius) => <label key={radius} className={appearance.radiusScale === radius ? "selected" : ""}><input type="radio" value={radius} checked={appearance.radiusScale === radius} onChange={() => update("radiusScale", radius)} />{radiusLabels[radius]}</label>)}</div></fieldset>
         <fieldset disabled={inheritSfwTheme}><legend>Colours</legend><div className="profile-colour-grid">{(["backgroundColor", "primaryColor", "textColor", "cardColor"] as const).map((key) => <label key={key}>{key === "backgroundColor" ? "Background" : key === "primaryColor" ? "Accent" : key === "textColor" ? "Text" : "Card"}<input type="color" value={appearance[key]} onChange={(event) => update(key, event.target.value)} /></label>)}</div></fieldset>
       </div>
-      <PhonePreview appearance={effectiveAppearance} css={css} displayName={displayName} sampleLinks={sampleLinks} surface={surface} images={images} />
+      <PhonePreview appearance={effectiveAppearance} css={css} displayName={displayName} sampleLinks={sampleLinks} previewActions={previewActions} surface={surface} images={images} />
     </div>}
     {activePanel === "images" && <div className="profile-image-adapter">
       <b>Private images</b>
@@ -182,13 +184,13 @@ export function ProfileAppearanceEditor({ initialAppearance, inheritedAppearance
       {imageError && <span role="alert">{imageError}</span>}
       <span>Original files, metadata, and storage keys are never included in public snapshots or returned to the browser.</span>
     </div>}
-    {activePanel === "preview" && <div className="profile-preview-panel"><PhonePreview appearance={effectiveAppearance} css={css} displayName={displayName} sampleLinks={sampleLinks} surface={surface} images={images} /></div>}
+    {activePanel === "preview" && <div className="profile-preview-panel"><PhonePreview appearance={effectiveAppearance} css={css} displayName={displayName} sampleLinks={sampleLinks} previewActions={previewActions} surface={surface} images={images} /></div>}
   </section>;
 }
 
-function PhonePreview({ appearance, css, displayName, sampleLinks, surface, images }: { appearance: ProfileAppearance; css: Record<string, string>; displayName: string; sampleLinks: string[]; surface: Surface; images: ProfileImageAttachment[] }) {
+function PhonePreview({ appearance, css, displayName, sampleLinks, previewActions, surface, images }: { appearance: ProfileAppearance; css: Record<string, string>; displayName: string; sampleLinks: string[]; previewActions: ProfilePreviewAction[]; surface: Surface; images: ProfileImageAttachment[] }) {
   const labels = sampleLinks.filter(Boolean).slice(0, 4);
   const avatar = images.find((image) => image.role === "avatar");
   const background = images.find((image) => image.role === "background");
-  return <div className="profile-phone" style={{ ...css, ...(background ? { backgroundImage: `linear-gradient(#0002,#0002),url(${background.previewUrl})` } : {}) } as React.CSSProperties}><div className="profile-phone-notch" /><div className="profile-phone-content"><span className="profile-preview-eyebrow">{surface === "adult" ? "18+ PRIVATE PREVIEW" : "SAFE PROFILE PREVIEW"}</span><div className="profile-preview-avatar">{avatar ? <img src={avatar.previewUrl} alt="" /> : displayName.slice(0, 1).toUpperCase() || "T"}</div><h3>{displayName || "Creator"}</h3><p>Previewing this profile&apos;s current design.</p>{labels.length ? <div>{labels.map((label, index) => <div className={buttonClass(appearance.buttonStyle)} key={`${label}-${index}`}><span>{label}</span><i aria-hidden="true">↗</i></div>)}</div> : <div className={buttonClass(appearance.buttonStyle)}><span>Creator link</span><i aria-hidden="true">↗</i></div>}</div></div>;
+  return <div className="profile-phone" style={{ ...css, ...(background ? { backgroundImage: `linear-gradient(#0002,#0002),url(${background.previewUrl})` } : {}) } as React.CSSProperties}><div className="profile-phone-notch" /><div className="profile-phone-content"><span className="profile-preview-eyebrow">{surface === "adult" ? "18+ PRIVATE PREVIEW" : "SAFE PROFILE PREVIEW"}</span><div className="profile-preview-avatar">{avatar ? <img src={avatar.previewUrl} alt="" /> : displayName.slice(0, 1).toUpperCase() || "T"}</div><h3>{displayName || "Creator"}</h3><p>Saved drafts stay private until published.</p>{labels.length ? <div>{labels.map((label, index) => <div className={buttonClass(appearance.buttonStyle)} key={`${label}-${index}`}><span>{label}</span><i aria-hidden="true">↗</i></div>)}</div> : <div className={buttonClass(appearance.buttonStyle)}><span>Creator link</span><i aria-hidden="true">↗</i></div>}{previewActions.map((action) => <span className={`${buttonClass(appearance.buttonStyle)} profile-preview-action-disabled`} aria-disabled="true" key={action.kind}>{action.label}</span>)}</div></div>;
 }

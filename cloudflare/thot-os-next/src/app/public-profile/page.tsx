@@ -10,6 +10,7 @@ import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppeara
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
 import { safePublicProfileUrl } from "@/lib/profile-public-url";
 import { disabledBookingConfig, validateBookingConfig, type BookingConfig } from "../../../../shared/booking-contract.ts";
+import { previewAdultVersion } from "@/lib/public-profile-preview-actions";
 
 type Profile = { id: string; slug: string; status: string; published_version_id: string | null };
 type Version = { id: string; version_number: number; display_name: string; headline: string; bio: string; status: string; approved_by: string | null; approved_at: string | null; created_at: string };
@@ -19,6 +20,7 @@ type BookingConfigRow = { profile_version_id: string; config_json: string };
 type Publication = { id: string; version_id: string; status: string; public_snapshot_key: string; created_at: string };
 type AppearanceRow = { profile_version_id: string; theme_key: string; button_style: string; background_mode: string; background_color: string; primary_color: string; text_color: string; card_color: string; radius_scale: string };
 type ImageRow = { id: string; image_role: "avatar" | "background"; profile_version_id: string };
+type AdultVersion = { id: string; creator_id: string; status: string };
 
 function appearanceFromRow(row: AppearanceRow | undefined): ProfileAppearance {
   if (!row) return DEFAULT_PROFILE_APPEARANCE;
@@ -53,7 +55,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
   const DB = env.DB;
   const canEdit = roleCan(context.creator.role, "mutate");
   const publishingConfigured = typeof env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN === "string" && env.INTERNAL_PUBLIC_LINKS_CONTROL_TOKEN.length >= 40;
-  const [creator, profile, versions, links, contacts, bookingConfigs, publications, appearances, images] = await Promise.all([
+  const [creator, profile, versions, links, contacts, bookingConfigs, publications, appearances, images, adultVersions] = await Promise.all([
     DB.prepare("SELECT slug FROM creators WHERE id=?").bind(creatorId).first<{ slug: string }>(),
     DB.prepare("SELECT id,slug,status,published_version_id FROM creator_public_profiles WHERE creator_id=?").bind(creatorId).first<Profile>(),
     DB.prepare(`SELECT id,version_number,display_name,headline,bio,status,approved_by,approved_at,created_at
@@ -70,6 +72,10 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
       FROM creator_public_profile_details WHERE creator_id=?`).bind(creatorId).all<AppearanceRow>(),
     DB.prepare(`SELECT id,image_role,public_profile_version_id AS profile_version_id FROM creator_profile_image_attachments
       WHERE creator_id=? AND surface='public_sfw' AND status='attached'`).bind(creatorId).all<ImageRow>(),
+    DB.prepare(`SELECT v.id,v.creator_id,v.status FROM creator_adult_profiles p
+      JOIN creator_adult_profile_versions v ON v.profile_id=p.id AND v.creator_id=p.creator_id
+      WHERE p.creator_id=? AND v.status IN ('draft','approved','published')
+      ORDER BY v.version_number DESC`).bind(creatorId).all<AdultVersion>(),
   ]);
   const canPublish = canEdit;
   const draft = versions.results.find((version) => version.status === "draft") ?? null;
@@ -99,7 +105,7 @@ export default async function PublicProfilePage({ searchParams }: { searchParams
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">ISOLATED PUBLIC SURFACE</span><h2>Creator link page</h2><p>Save changes privately, preview the page, then publish when it is ready.</p></div><span>{profile?.published_version_id ? "Published" : draft ? "Draft" : approved ? "Saved" : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
       {publicProfileUrl && <CopyProfileLink title="Your link for bio" detail="Use this safe public page in Instagram, TikTok, X, and other social bios." url={publicProfileUrl} />}
       {canEdit ? <PublicProfileEditor defaultSlug={defaultSlug} displayName={authoring?.display_name ?? context.creator.creator_name} headline={authoring?.headline ?? ""} bio={authoring?.bio ?? ""} phone={phone} email={email}
-        bookingConfig={authoringBookingConfig}
+        bookingConfig={authoringBookingConfig} adultPreviewAvailable={Boolean(previewAdultVersion(adultVersions.results.map((version) => ({ id: version.id, creatorId: version.creator_id, status: version.status })), creatorId))}
         links={slots.map((link, index) => ({ id: link?.id ?? `new-${index}`, label: link?.label ?? "", destination: link?.destination_url ?? "", stableId: link?.stable_link_id ?? "" }))}
         appearance={authoringAppearance} images={authoringImages} draftVersionId={draft?.id} versionForPublishId={versionForPublish?.id} canPublish={canPublish} publishingConfigured={publishingConfigured} imageUploadsEnabled={profileImageProcessorAvailable(env)} slugLocked={Boolean(profile?.published_version_id)} />
         : <div className="empty"><b>Read-only public profile view</b><span>Your role can inspect profile history but cannot alter text, destinations, approvals, or publication.</span></div>}

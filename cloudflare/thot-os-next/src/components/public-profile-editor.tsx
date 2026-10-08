@@ -5,6 +5,7 @@ import { publishPublicProfileAction, savePublicProfileDraftAction, type PublicPr
 import { ProfileAppearanceEditor, type ProfileImageAttachment } from "@/components/profile-appearance-editor";
 import type { ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { bookingFieldNames, effectiveBookingFields, type BookingConfig, type BookingField, type BookingOption } from "../../../shared/booking-contract.ts";
+import { profilePreviewActions } from "@/lib/public-profile-preview-actions";
 
 type LinkValue = { id: string; label: string; destination: string; stableId: string };
 
@@ -24,6 +25,7 @@ type Props = {
   phone: string;
   email: string;
   bookingConfig: BookingConfig;
+  adultPreviewAvailable: boolean;
   links: LinkValue[];
   appearance: ProfileAppearance;
   images: ProfileImageAttachment[];
@@ -78,6 +80,7 @@ export function PublicProfileEditor(props: Props) {
   const slots = Array.from({ length: Math.max(4, Math.min(8, values.linkLabels.length || 4)) }, (_, index) => index);
   const formId = "public-profile-editor";
   const errorCount = Object.keys(state.fieldErrors).length;
+  const previewActions = profilePreviewActions({ bookingConfig, hasBookingPhone: Boolean(values.bookingPhone.trim()), hasBookingEmail: Boolean(values.bookingEmail.trim()), hasAdultProfile: props.adultPreviewAvailable, displayName: values.displayName });
   return <>
     {state.status === "error" && <div className="error" role="alert" tabIndex={-1} ref={errorSummary}>
       <b>{state.message}</b>{state.reasonCode && <span> Reference: {state.reasonCode}.</span>}{errorCount > 0 && <span> Review the {errorCount === 1 ? "highlighted field" : "highlighted fields"} below.</span>}
@@ -108,7 +111,7 @@ export function PublicProfileEditor(props: Props) {
         <label>HTTPS destination<input name="linkDestination" type="url" value={values.linkDestinations[index] ?? ""} onChange={(event) => updateLink("linkDestinations", index, event.target.value)} placeholder="https://example.com" {...fieldProps(`linkDestination.${index}`)} />{error(`linkDestination.${index}`) && <span className="field-error" id={errorId(`linkDestination.${index}`)}>{error(`linkDestination.${index}`)}</span>}</label>
       </div>)}
       <div aria-invalid={Boolean(error("appearance")) || undefined} aria-describedby={error("appearance") ? errorId("appearance") : undefined}>
-        <ProfileAppearanceEditor surface="sfw" initialAppearance={props.appearance} displayName={values.displayName} sampleLinks={values.linkLabels} versionId={props.draftVersionId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} />
+        <ProfileAppearanceEditor surface="sfw" initialAppearance={props.appearance} displayName={values.displayName} sampleLinks={values.linkLabels} previewActions={previewActions} versionId={props.draftVersionId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} />
       </div>
       {error("appearance") && <span className="field-error wide" id={errorId("appearance")}>{error("appearance")}</span>}
     </form>

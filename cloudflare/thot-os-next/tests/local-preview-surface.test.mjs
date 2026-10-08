@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { localAdultPreviewAvailable } from "../src/lib/local-preview-runtime.ts";
 import { localPreviewRedirect } from "../src/lib/local-preview-redirect.ts";
+import { localPreviewAdultVersion, previewAdultVersion, profilePreviewActions } from "../src/lib/public-profile-preview-actions.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 const source = (file) => readFile(path.join(root, file), "utf8");
@@ -16,14 +17,35 @@ test("the adult local-preview action is unavailable outside configured local Nod
   assert.equal(localAdultPreviewAvailable({ nodeEnv: "production", userAgent: "Cloudflare-Workers", signingSecret }), false);
 });
 
-test("safe preview only renders More when the local age route is available", async () => {
-  const [preview, localAdultPreview] = await Promise.all([
-    source("src/app/public-profile/preview/page.tsx"),
-    source("src/lib/local-adult-preview.ts"),
+test("preview actions are fail-closed, omit contact values, and keep adult profiles creator-scoped", () => {
+  const config = { enabled: true, label: "Event enquiry", rules: "Please provide event details.", wear: [], extras: [] };
+  assert.deepEqual(profilePreviewActions({ bookingConfig: config, hasBookingPhone: true, hasBookingEmail: true, hasAdultProfile: true, displayName: "Alex" }), [
+    { kind: "booking", label: "Preview only — Event enquiry" },
+    { kind: "more", label: "Preview only — More from Alex" },
   ]);
-  assert.match(preview, /const localAdultPreview = localAdultPreviewAvailable\(\)/);
-  assert.match(preview, /\{localAdultPreview && adultVersion && <nav className="public-preview-actions"/);
-  assert.match(localAdultPreview, /return localAdultPreviewAvailable\(\);/);
+  assert.deepEqual(profilePreviewActions({ bookingConfig: config, hasBookingPhone: true, hasBookingEmail: false, hasAdultProfile: false, displayName: "Alex" }), []);
+  assert.deepEqual(profilePreviewActions({ bookingConfig: config, hasBookingPhone: false, hasBookingEmail: true, hasAdultProfile: false, displayName: "Alex" }), []);
+  assert.deepEqual(profilePreviewActions({ bookingConfig: { ...config, enabled: false }, hasBookingPhone: true, hasBookingEmail: true, hasAdultProfile: false, displayName: "Alex" }), []);
+  assert.deepEqual(profilePreviewActions({ bookingConfig: "{", hasBookingPhone: true, hasBookingEmail: true, hasAdultProfile: false, displayName: "Alex" }), []);
+
+  const versions = [
+    { id: "approved", creatorId: "creator", status: "approved" },
+    { id: "foreign-draft", creatorId: "other", status: "draft" },
+    { id: "published", creatorId: "creator", status: "published" },
+    { id: "draft", creatorId: "creator", status: "draft" },
+    { id: "rejected", creatorId: "creator", status: "rejected" },
+  ];
+  assert.equal(previewAdultVersion(versions, "creator")?.id, "draft");
+  assert.equal(localPreviewAdultVersion(versions, "creator")?.id, "draft");
+  assert.equal(previewAdultVersion([{ id: "published", creatorId: "creator", status: "published" }, { id: "rejected", creatorId: "creator", status: "rejected" }], "creator")?.id, "published");
+  assert.equal(previewAdultVersion([{ id: "rejected", creatorId: "creator", status: "rejected" }], "creator"), null);
+  assert.equal(previewAdultVersion(versions, "missing"), null);
+});
+
+test("the More href remains limited to the existing local signed age route", async () => {
+  const preview = await source("src/app/public-profile/preview/page.tsx");
+  assert.match(preview, /action\.kind === "more" && localAdultPreview && localAdultVersion/);
+  assert.match(preview, /href=\{`\/public-profile\/preview\/age\/\$\{localAdultVersion\.id\}`\}/);
 });
 
 test("preview redirects are stored-destination-only and non-cacheable", async () => {
