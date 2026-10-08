@@ -18,6 +18,7 @@ async function fixture() {
   db.exec(`CREATE TABLE creators(id TEXT PRIMARY KEY,status TEXT);
     CREATE TABLE creator_public_profiles(id TEXT PRIMARY KEY,creator_id TEXT,slug TEXT,published_version_id TEXT,status TEXT);
     CREATE TABLE creator_public_profile_versions(id TEXT PRIMARY KEY,creator_id TEXT,display_name TEXT,status TEXT,approved_by TEXT,approved_at TEXT,UNIQUE(id,creator_id));
+    CREATE TABLE creator_public_profile_details(profile_version_id TEXT,creator_id TEXT,theme_key TEXT,button_style TEXT,background_mode TEXT,background_color TEXT,primary_color TEXT,text_color TEXT,card_color TEXT,radius_scale TEXT);
     CREATE TABLE creator_booking_configs(profile_version_id TEXT,creator_id TEXT,config_json TEXT);
     CREATE TABLE creator_public_contact_methods(creator_id TEXT,profile_version_id TEXT,channel TEXT,contact_value TEXT,enabled INTEGER);
     CREATE TABLE creator_profile_projection_deliveries(creator_id TEXT,profile_id TEXT,version_id TEXT,surface TEXT,action TEXT);
@@ -29,6 +30,7 @@ async function fixture() {
   db.exec(`INSERT INTO creators VALUES('creator-a','active'),('creator-b','active');
     INSERT INTO creator_public_profiles VALUES('profile-a','creator-a','creator-a','version-a','active');
     INSERT INTO creator_public_profile_versions VALUES('version-a','creator-a','Creator A','published','operator@example.test','2026-09-01');
+    INSERT INTO creator_public_profile_details VALUES('version-a','creator-a','forest','soft-card-icon','gradient','#112c24','#8bd49a','#f2fff5','#1b4437','compact');
     INSERT INTO service_principals VALUES('principal','thot-os-public-contact','active');
     INSERT INTO service_principal_creator_grants VALUES('principal','creator-a','active','booking.enquiry.submit');
     INSERT INTO creator_public_contact_methods VALUES('creator-a','version-a','email','creator@example.test',1),('creator-a','version-a','sms','+61400000000',1);`);
@@ -124,6 +126,38 @@ test("foreign creator, invalid credentials, stale version, withdrawal and disabl
   assert.equal((await handleBooking(f.request(f.payload(), "check"), f.env, now)).status, 404);
   assert.equal((await handleBooking(f.request(f.payload()), f.env, now)).status, 404);
   assert.equal(f.sent.length, 0);
+});
+
+test("booking check returns the exact published appearance without draft or creator bleed", async (t) => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const check = async (override = {}) => {
+    const response = await handleBooking(f.request(f.payload(override), "check"), f.env, now);
+    return { response, body: await response.json() };
+  };
+  const forest = await check();
+  assert.equal(forest.response.status, 200);
+  assert.deepEqual(forest.body.appearance, { themeKey: "forest", buttonStyle: "soft-card-icon", backgroundMode: "gradient", backgroundColor: "#112c24", primaryColor: "#8bd49a", textColor: "#f2fff5", cardColor: "#1b4437", radiusScale: "compact", inheritSfwTheme: false });
+  f.db.exec(`INSERT INTO creator_public_profile_versions VALUES('version-draft','creator-a','Draft','draft','operator@example.test','2026-09-01');
+    INSERT INTO creator_public_profile_details VALUES('version-draft','creator-a','crimson','elevated-shadow-tile','solid','#300d17','#ee5f76','#fff5f7','#541724','comfortable');
+    INSERT INTO creator_public_profiles VALUES('profile-b','creator-b','creator-b','version-b','active');
+    INSERT INTO creator_public_profile_versions VALUES('version-b','creator-b','Creator B','published','operator@example.test','2026-09-01');
+    INSERT INTO creator_public_profile_details VALUES('version-b','creator-b','ocean','minimal-outline','gradient','#082b3a','#58c8e8','#effcff','#0c465d','comfortable');
+    INSERT INTO creator_booking_configs VALUES('version-b','creator-b','${JSON.stringify(config).replaceAll("'", "''")}');
+    INSERT INTO creator_public_contact_methods VALUES('creator-b','version-b','email','creator-b@example.test',1),('creator-b','version-b','sms','+61400000002',1);
+    INSERT INTO service_principal_creator_grants VALUES('principal','creator-b','active','booking.enquiry.submit');`);
+  assert.doesNotMatch(JSON.stringify((await check()).body), /crimson|#300d17/);
+  const ocean = await check({ creatorId: "creator-b", slug: "creator-b", versionId: "version-b" });
+  assert.equal(ocean.response.status, 200);
+  assert.equal(ocean.body.appearance.themeKey, "ocean");
+  f.db.prepare("UPDATE creator_public_profile_details SET background_color=? WHERE profile_version_id='version-a'").run("url(https://attacker.example)");
+  const malformed = await check();
+  assert.equal(malformed.response.status, 503);
+  assert.doesNotMatch(JSON.stringify(malformed.body), /attacker\.example/);
+  f.db.prepare("DELETE FROM creator_public_profile_details WHERE profile_version_id='version-a'").run();
+  const legacy = await check();
+  assert.equal(legacy.response.status, 200);
+  assert.equal(legacy.body.appearance.themeKey, "thot-noir");
+  assert.equal(legacy.body.appearance.backgroundColor, "#0c0911");
 });
 
 test("provider uncertainty reserves nonce; no automatic resend or draft disclosure", async (t) => {

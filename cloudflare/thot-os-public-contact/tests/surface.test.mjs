@@ -5,7 +5,8 @@ import worker from "../src/index.ts";
 import { bookingEmail, bookingFieldNames, bookingLinks, effectiveBookingFields, validateBookingConfig, validateBookingEnquiry } from "../../shared/booking-contract.ts";
 
 const profile = { schemaVersion: 2, creator: { id: "creator-1", slug: "adelaide", displayName: "Adelaide" }, versionId: "version-1", config: { enabled: true, label: "Book Adelaide", rules: "Public-safe events only.", wear: [{ id: "theme", label: "Theme", description: "Costume." }], extras: [] }, channels: { sms: "+61400000000", email: "adelaide@example.com" } };
-function setup(snapshot = profile, reply = url => Response.json({ ok: true })) { const calls = [], submissions = []; return { calls, submissions, env: { CONTACT_PROFILES: { get: async () => snapshot }, CONTACT_EVENTS: { writeDataPoint() {} }, TURNSTILE_SECRET: "secret", TURNSTILE_SITE_KEY: "site", TURNSTILE_EXPECTED_HOSTNAME: "contact.example", BOOKING_SERVICE_TOKEN: "x".repeat(40), BOOKING_FORM_SECRET: "x".repeat(32), BOOKING_RATE_LIMITER: { limit: async () => ({ success: true }) }, PUBLIC_LINKS_CONTROL: { fetch: async (url, init) => { calls.push(String(url)); if (String(url).endsWith("/submit")) submissions.push(JSON.parse(init.body)); return reply(String(url)); } } } }; }
+const appearance = { themeKey: "forest", buttonStyle: "soft-card-icon", backgroundMode: "gradient", backgroundColor: "#112c24", primaryColor: "#8bd49a", textColor: "#f2fff5", cardColor: "#1b4437", radiusScale: "compact", inheritSfwTheme: false };
+function setup(snapshot = profile, reply = url => Response.json({ ok: true, appearance })) { const calls = [], submissions = []; return { calls, submissions, env: { CONTACT_PROFILES: { get: async () => snapshot }, CONTACT_EVENTS: { writeDataPoint() {} }, TURNSTILE_SECRET: "secret", TURNSTILE_SITE_KEY: "site", TURNSTILE_EXPECTED_HOSTNAME: "contact.example", BOOKING_SERVICE_TOKEN: "x".repeat(40), BOOKING_FORM_SECRET: "x".repeat(32), BOOKING_RATE_LIMITER: { limit: async () => ({ success: true }) }, PUBLIC_LINKS_CONTROL: { fetch: async (url, init) => { calls.push(String(url)); if (String(url).endsWith("/submit")) submissions.push(JSON.parse(init.body)); return reply(String(url)); } } } }; }
 async function data(env, alter = () => {}) { const html = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), env)).text(), get = key => html.match(new RegExp(`name="${key}" value="([^"]+)"`))?.[1], f = new FormData(), tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10); ["submissionId", "issuedAt", "signature"].forEach(k => f.set(k, get(k))); Object.entries({ firstName: "Ava", lastName: "Jones", phone: "+61400000001", email: "ava@example.com", date: tomorrow, time: "19:30", timezone: "Australia/Perth", address: "1 Main St", suburb: "Perth", guests: "8", occasion: "Birthday", wear: "theme", specialRequests: "", consent: "yes", acknowledged: "yes", "cf-turnstile-response": "ok" }).forEach(([k, v]) => f.set(k, v)); alter(f); return f; }
 const post = (f, env) => worker.fetch(new Request("https://contact.example/book/adelaide", { method: "POST", headers: { origin: "https://contact.example", "cf-connecting-ip": "192.0.2.1" }, body: f }), env);
 
@@ -28,21 +29,46 @@ test("rules warning requires a prior open but permits a checked acknowledgement 
 });
 test("same-origin referrer policy keeps null and foreign POST origins denied", async () => { const { env } = setup(), page = await worker.fetch(new Request("https://contact.example/book/adelaide"), env); assert.equal(page.headers.get("referrer-policy"), "same-origin"); for (const origin of ["null", "https://attacker.example"]) assert.equal((await worker.fetch(new Request("https://contact.example/book/adelaide", { method: "POST", headers: { origin }, body: new FormData() }), env)).status, 400); });
 test("legacy, disabled and check denial fail closed", async () => { assert.equal((await worker.fetch(new Request("https://contact.example/book/adelaide"), setup({ ...profile, schemaVersion: 1 }).env)).status, 404); assert.equal((await worker.fetch(new Request("https://contact.example/book/adelaide"), setup({ ...profile, config: { ...profile.config, enabled: false } }).env)).status, 404); assert.equal((await worker.fetch(new Request("https://contact.example/book/adelaide"), setup(profile, () => Response.json({ ok: false })).env)).status, 404); });
+test("booking form and accepted handoff use only the checked bounded appearance", async () => {
+  const themed = setup();
+  const form = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), themed.env)).text();
+  assert.match(form, /--profile-background:#112c24/);
+  assert.match(form, /color-scheme: dark/);
+  assert.match(form, /data-button-style="soft-card-icon"/);
+  const light = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), setup(profile, () => Response.json({ ok: true, appearance: { ...appearance, themeKey: "clean-minimal", buttonStyle: "solid-rounded", backgroundMode: "solid", backgroundColor: "#ffffff", primaryColor: "#222222", textColor: "#161616", cardColor: "#f4f4f2" } })).env)).text();
+  assert.match(light, /color-scheme: light/);
+  const invalid = setup(profile, () => Response.json({ ok: true, appearance: { ...appearance, backgroundColor: "url(https:\/\/attacker.example)" } }));
+  const rejected = await worker.fetch(new Request("https://contact.example/book/adelaide"), invalid.env);
+  assert.equal(rejected.status, 404);
+  assert.doesNotMatch(await rejected.text(), /attacker\.example/);
+});
+test("all approved button styles and an older check response render safely", async () => {
+  for (const buttonStyle of ["solid-rounded", "full-pill", "minimal-outline", "soft-card-icon", "elevated-shadow-tile"]) {
+    const response = await worker.fetch(new Request("https://contact.example/book/adelaide"), setup(profile, () => Response.json({ ok: true, appearance: { ...appearance, buttonStyle } })).env);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), new RegExp(`data-button-style="${buttonStyle}"`));
+  }
+  const legacy = await worker.fetch(new Request("https://contact.example/book/adelaide"), setup(profile, () => Response.json({ ok: true })).env);
+  assert.equal(legacy.status, 200);
+  assert.match(await legacy.text(), /--profile-background:#0c0911/);
+});
 test("tampered nonce and failed gate never call submit", async () => { const old = globalThis.fetch; globalThis.fetch = async () => Response.json({ success: false }); try { const x = setup(), f = await data(x.env, form => form.set("signature", "x".repeat(43))); assert.equal((await post(f, x.env)).status, 400); assert.equal(x.calls.filter(c => c.endsWith("/booking/submit")).length, 0); } finally { globalThis.fetch = old; } });
-test("provider errors remain generic", async () => { const old = globalThis.fetch; globalThis.fetch = async () => Response.json({ success: true, action: "booking", hostname: "contact.example" }); try { const bad = setup(profile, url => url.endsWith("/check") ? Response.json({ ok: true }) : Response.json({ error: "private provider" }, { status: 502 })); assert.equal(await (await post(await data(bad.env), bad.env)).text(), "Unable to submit booking"); } finally { globalThis.fetch = old; } });
+test("provider errors remain generic", async () => { const old = globalThis.fetch; globalThis.fetch = async () => Response.json({ success: true, action: "booking", hostname: "contact.example" }); try { const bad = setup(profile, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ error: "private provider" }, { status: 502 })); assert.equal(await (await post(await data(bad.env), bad.env)).text(), "Unable to submit booking"); } finally { globalThis.fetch = old; } });
 
 test("successful validated submission offers both recipient-bound manual drafts after email acceptance", async () => {
   const old = globalThis.fetch;
   globalThis.fetch = async () => Response.json({ success: true, action: "booking", hostname: "contact.example" });
   try {
     const links = bookingLinks(profile.channels.sms, "Adelaide", { firstName: "Ava", lastName: "Jones", date: "2026-10-01", time: "19:30", timezone: "Australia/Perth", suburb: "Perth", address: "1 Main St" });
-    const x = setup(profile, url => url.endsWith("/check") ? Response.json({ ok: true }) : Response.json({ ok: true, ...links }));
+    const x = setup(profile, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ ok: true, ...links }));
     const response = await post(await data(x.env), x.env);
     assert.equal(response.status, 200);
     const html = await response.text();
     assert.match(html, /Continue in WhatsApp/);
     assert.match(html, /Continue by text message/);
     assert.match(html, /accepted for delivery/i);
+    assert.match(html, /--profile-background:#112c24/);
+    assert.match(html, /data-button-style="soft-card-icon"/);
     assert.doesNotMatch(html, /adelaide@example.com|http-equiv=.refresh/i);
     assert.equal(x.calls.filter(url => url.endsWith("/submit")).length, 1);
   } finally { globalThis.fetch = old; }
@@ -74,7 +100,7 @@ test("configured hidden fields are dropped and required visible fields reject bl
   const old = globalThis.fetch; globalThis.fetch = async () => Response.json({ success: true, action: "booking", hostname: "contact.example" });
   try {
     const links = bookingLinks(profile.channels.sms, "Adelaide", { firstName: "Ava", lastName: "Jones", email: "ava@example.com", consent: true, acknowledged: true });
-    const x = setup(configured, url => url.endsWith("/check") ? Response.json({ ok: true }) : Response.json({ ok: true, ...links }));
+    const x = setup(configured, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ ok: true, ...links }));
     assert.equal((await post(await data(x.env, f => { f.set("specialRequests", "Quiet arrival"); f.set("address", "malicious hidden address"); f.set("endTime", "23:59"); f.set("guests", "999"); }), x.env)).status, 200);
     assert.deepEqual(x.submissions[0].enquiry, { firstName: "Ava", lastName: "Jones", email: "ava@example.com", specialRequests: "Quiet arrival", consent: true, acknowledged: true });
     const missing = setup(configured);

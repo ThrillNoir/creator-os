@@ -1,8 +1,9 @@
 import { bookingEmail, bookingLinks, validateBookingConfig, validateBookingEnquiry } from "../../shared/booking-contract.ts";
 import { requireInternalServiceForCreator } from "../../shared/service-auth.ts";
+import { parseProfileAppearance } from "../../thot-os-next/src/lib/profile-appearance-contract.ts";
 
 type BookingEnv = { DB: D1Database; BOOKING_ENQUIRIES_ENABLED?: string; EMAIL?: { send(message: { from: string; to: string; subject: string; text: string }): Promise<unknown> } };
-type PublishedBooking = { config_json: string; display_name: string; email: string; sms: string };
+type PublishedBooking = { config_json: string; display_name: string; email: string; sms: string; theme_key: unknown; button_style: unknown; background_mode: unknown; background_color: unknown; primary_color: unknown; text_color: unknown; card_color: unknown; radius_scale: unknown };
 const MAX_BODY = 32768;
 const WINDOW = 30 * 60 * 1000;
 
@@ -33,12 +34,13 @@ async function readBody(request: Request) {
 }
 
 /** Primary D1 state is authoritative even when a stale contact KV entry survives. */
-const LIVE_BOOKING = `SELECT b.config_json,v.display_name,
+const LIVE_BOOKING = `SELECT b.config_json,v.display_name,d.theme_key,d.button_style,d.background_mode,d.background_color,d.primary_color,d.text_color,d.card_color,d.radius_scale,
   (SELECT contact_value FROM creator_public_contact_methods WHERE creator_id=p.creator_id AND profile_version_id=v.id AND channel='email' AND enabled=1) AS email,
   (SELECT contact_value FROM creator_public_contact_methods WHERE creator_id=p.creator_id AND profile_version_id=v.id AND channel='sms' AND enabled=1) AS sms
   FROM creator_public_profiles p
   JOIN creators c ON c.id=p.creator_id AND c.status='active'
   JOIN creator_public_profile_versions v ON v.id=p.published_version_id AND v.creator_id=p.creator_id
+  LEFT JOIN creator_public_profile_details d ON d.profile_version_id=v.id AND d.creator_id=p.creator_id
   JOIN creator_booking_configs b ON b.profile_version_id=v.id AND b.creator_id=p.creator_id
   WHERE p.creator_id=? AND p.slug=? AND v.id=? AND p.status='active' AND v.status='published'
     AND v.approved_by IS NOT NULL AND v.approved_at IS NOT NULL
@@ -63,7 +65,7 @@ export async function handleBooking(request: Request, env: BookingEnv, now = Dat
     if (!current) return reply(404);
     const config = validateBookingConfig(JSON.parse(current.config_json));
     if (!config.enabled || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(current.email ?? "") || !/^\+[1-9]\d{5,14}$/.test(current.sms ?? "")) return reply(404);
-    if (path === "/booking/check") return reply(200);
+    if (path === "/booking/check") return reply(200, { appearance: parseProfileAppearance({ themeKey: current.theme_key, buttonStyle: current.button_style, backgroundMode: current.background_mode, backgroundColor: current.background_color, primaryColor: current.primary_color, textColor: current.text_color, cardColor: current.card_color, radiusScale: current.radius_scale }) });
     const { submissionId, issuedAt } = body;
     if (typeof submissionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionId) || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt) || issuedAt > now || now - issuedAt > WINDOW) return reply(400);
     let enquiry;
