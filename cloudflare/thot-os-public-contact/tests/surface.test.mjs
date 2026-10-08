@@ -176,3 +176,20 @@ test("acknowledgement uncertainty keeps the accepted enquiry and prevents a misl
     }
   } finally { globalThis.fetch = old; }
 });
+
+
+test("creator notifications and messaging drafts include a safe optional Instagram profile link", () => {
+  const base = { firstName: "Ava", lastName: "Jones", email: "ava@example.com", consent: true, acknowledged: true };
+  for (const instagram of ["@ava.j", "ava.j"]) {
+    const enquiry = { ...base, instagram };
+    assert.ok(bookingEmail("Adelaide", profile.config, enquiry, "version", "2026-10-08T00:00:00Z").includes("https://www.instagram.com/ava.j/"));
+    const links = bookingLinks(profile.channels.sms, "Adelaide", enquiry);
+    for (const url of [links.sms, links.whatsapp]) assert.ok(decodeURIComponent(url).includes("https://www.instagram.com/ava.j/"));
+  }
+  assert.doesNotMatch(bookingEmail("Adelaide", profile.config, base, "version", "now"), /Instagram:/);
+  assert.doesNotMatch(decodeURIComponent(bookingLinks(profile.channels.sms, "Adelaide", base).sms), /Instagram:/);
+  for (const instagram of ["https://evil.example/", "ava?next=evil", "ava\nInjected"]) {
+    assert.throws(() => bookingEmail("Adelaide", profile.config, { ...base, instagram }, "version", "now"), /Invalid Instagram/);
+    assert.throws(() => bookingLinks(profile.channels.sms, "Adelaide", { ...base, instagram }), /Invalid Instagram/);
+  }
+});

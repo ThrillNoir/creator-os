@@ -120,10 +120,17 @@ export function validateBookingEnquiry(value: unknown, config: BookingConfig, no
   };
 }
 
+function bookingInstagram(handle?: string) {
+  if (!handle) return "";
+  if (!/^@?[A-Za-z0-9._]{1,30}$/.test(handle)) throw new Error("Invalid Instagram handle.");
+  return `Instagram: ${handle} — https://www.instagram.com/${handle.replace(/^@/, "")}/`;
+}
+
 export function bookingDraft(displayName: string, enquiry: BookingEnquiry) {
   const event = enquiry.date && enquiry.time && enquiry.timezone ? `\n\nBooking enquiry: ${enquiry.date} at ${enquiry.time} (${enquiry.timezone})` : "";
   const location = enquiry.address && enquiry.suburb ? `\nSuburb: ${enquiry.suburb}\nOpen address in Maps: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${enquiry.address}, ${enquiry.suburb}`)}` : "";
-  return `Hi ${displayName}, this is ${enquiry.firstName} ${enquiry.lastName}.${event}${location}\n\nPlease check your email for the full booking details.`;
+  const instagram = bookingInstagram(enquiry.instagram);
+  return `Hi ${displayName}, this is ${enquiry.firstName} ${enquiry.lastName}.${event}${location}${instagram ? `\n${instagram}` : ""}\n\nPlease check your email for the full booking details.`;
 }
 
 export function bookingLinks(phone: string, displayName: string, enquiry: BookingEnquiry) {
@@ -140,7 +147,7 @@ export function bookingEmail(displayName: string, config: BookingConfig, enquiry
     ...(enquiry.guests ? [`Guests: ${enquiry.guests}`] : []), ...(enquiry.occasion ? [`Occasion: ${enquiry.occasion}`] : []),
     ...(enquiry.wear ? [`Uniform: ${config.wear.filter((option) => enquiry.wear!.includes(option.id)).map((option) => option.label).join(", ") || "None"}`] : []),
     ...(enquiry.extras ? [`Extra spice: ${config.extras.filter((option) => enquiry.extras!.includes(option.id)).map((option) => option.label).join(", ") || "None"}`] : []),
-    ...(enquiry.specialRequests ? [`Special requests: ${enquiry.specialRequests}`] : []), ...(enquiry.instagram ? [`Instagram: ${enquiry.instagram}`] : []),
+    ...(enquiry.specialRequests ? [`Special requests: ${enquiry.specialRequests}`] : []), ...(enquiry.instagram ? [bookingInstagram(enquiry.instagram)] : []),
     `Rules version: ${versionId}`, `Rules and sharing acknowledged at: ${acknowledgedAt}`,
     "Rules acknowledged:", config.rules,
   ].join("\n\n");

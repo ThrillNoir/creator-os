@@ -17,7 +17,7 @@ test("staging publication control keeps SFW and adult projections in separate is
     { binding: "ADULT_PROFILES", id: "960ce926cd234170aa789a8eb0ca223a" },
     { binding: "CONTACT_PROFILES", id: "57d716b2562b4bb989e62482df6f6b19" },
   ]);
-  assert.deepEqual(config.send_email, [{ name: "EMAIL", allowed_sender_addresses: ["welcome@thathuboverthere.com"], allowed_destination_addresses: ["suedeadelaide@gmail.com"] }]);
+  assert.deepEqual(config.send_email, [{ name: "EMAIL", allowed_sender_addresses: ["welcome@thathuboverthere.com"] }]);
   assert.equal(config.vars.PUBLIC_MEDIA_DELIVERY_ENABLED, "1");
   assert.equal(config.vars.PUBLIC_MEDIA_BASE_URL, "https://public-profile-staging.thathuboverthere.com");
   assert.equal(config.vars.PUBLIC_PROFILE_PUBLICATION_MODE, "synthetic-only");
