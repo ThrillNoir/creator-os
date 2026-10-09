@@ -23,7 +23,7 @@ test("live booking allows only configured creators and does not redirect legacy 
   assert.match(await denied.text(), /href="https:\/\/booking\.thathuboverthere\.com\/book\/adelaide"/);
 });
 
-test("initial HTML never reveals private contact and renders optional event fields, Uniform choices, and rules feedback", async () => { const { env } = setup(), response = await worker.fetch(new Request("https://contact.example/book/adelaide"), env), body = await response.text(); assert.match(body, /Booking rules/); assert.match(body, /I have read and agree to these rules/); assert.match(body, /name="endTime"/); assert.match(body, /<legend>Uniform<\/legend>/); assert.match(body, /type="checkbox" name="wear"/); assert.match(body, /Don’t skip the fine print, read the rules\./); assert.match(body, /These details are correct—send my enquiry/); assert.match(response.headers.get("content-security-policy"), /script-src 'nonce-[^']+' https:\/\/challenges\.cloudflare\.com/); assert.doesNotMatch(body, /400000000|adelaide@example\.com/); });
+test("initial HTML never reveals private contact and renders bounded time choices, optional event fields, Uniform choices, and rules feedback", async () => { const { env } = setup(), response = await worker.fetch(new Request("https://contact.example/book/adelaide"), env), body = await response.text(), start = body.match(/<select name="time" required>([\s\S]*?)<\/select>/)?.[1], end = body.match(/<select name="endTime">([\s\S]*?)<\/select>/)?.[1]; assert.ok(start); assert.ok(end); assert.equal((start.match(/<option /g) ?? []).length, 49); assert.equal((end.match(/<option /g) ?? []).length, 49); for (const options of [start, end]) { assert.match(options, /^<option value="">Select time<\/option><option value="00:00">00:00<\/option>/); assert.match(options, /<option value="23:30">23:30<\/option>$/); } assert.match(body, /Booking rules/); assert.match(body, /I have read and agree to these rules/); assert.match(body, /<legend>Uniform<\/legend>/); assert.match(body, /type="checkbox" name="wear"/); assert.match(body, /Don’t skip the fine print, read the rules\./); assert.match(body, /These details are correct—send my enquiry/); assert.match(response.headers.get("content-security-policy"), /script-src 'nonce-[^']+' https:\/\/challenges\.cloudflare\.com/); assert.doesNotMatch(body, /400000000|adelaide@example\.com/); });
 test("rules warning requires a prior open but permits a checked acknowledgement after closing", async () => {
   const { env } = setup(), html = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), env)).text(), script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script><\/main>/)?.[1];
   assert.ok(script);
@@ -74,7 +74,7 @@ test("successful validated submission offers both recipient-bound manual drafts 
   try {
     const links = bookingLinks(profile.channels.sms, "Adelaide", { firstName: "Ava", lastName: "Jones", date: "2026-10-01", time: "19:30", timezone: "Australia/Perth", suburb: "Perth", address: "1 Main St" });
     const x = setup(profile, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ ok: true, ...links }));
-    const response = await post(await data(x.env), x.env);
+    const response = await post(await data(x.env, form => form.set("endTime", "21:30")), x.env);
     assert.equal(response.status, 200);
     const html = await response.text();
     assert.match(html, /Continue in WhatsApp/);
@@ -84,6 +84,8 @@ test("successful validated submission offers both recipient-bound manual drafts 
     assert.match(html, /data-button-style="soft-card-icon"/);
     assert.doesNotMatch(html, /adelaide@example.com|http-equiv=.refresh/i);
     assert.equal(x.calls.filter(url => url.endsWith("/submit")).length, 1);
+    assert.equal(x.submissions[0].enquiry.time, "19:30");
+    assert.equal(x.submissions[0].enquiry.endTime, "21:30");
   } finally { globalThis.fetch = old; }
 });
 
@@ -114,10 +116,28 @@ test("configured hidden fields are dropped and required visible fields reject bl
   try {
     const links = bookingLinks(profile.channels.sms, "Adelaide", { firstName: "Ava", lastName: "Jones", email: "ava@example.com", consent: true, acknowledged: true });
     const x = setup(configured, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ ok: true, ...links }));
+    assert.match(await (await worker.fetch(new Request("https://contact.example/book/adelaide"), x.env)).text(), /<textarea name="specialRequests" maxlength="2000" required><\/textarea>/);
     assert.equal((await post(await data(x.env, f => { f.set("specialRequests", "Quiet arrival"); f.set("address", "malicious hidden address"); f.set("endTime", "23:59"); f.set("guests", "999"); }), x.env)).status, 200);
     assert.deepEqual(x.submissions[0].enquiry, { firstName: "Ava", lastName: "Jones", email: "ava@example.com", specialRequests: "Quiet arrival", consent: true, acknowledged: true });
     const missing = setup(configured);
     assert.equal((await post(await data(missing.env), missing.env)).status, 400);
+  } finally { globalThis.fetch = old; }
+});
+
+test("optional and hidden special requests round-trip through rendering and submission", async () => {
+  const old = globalThis.fetch; globalThis.fetch = async () => Response.json({ success: true, action: "booking", hostname: "contact.example" });
+  try {
+    for (const [setting, rendered, submitted] of [[{ visible: true, required: false }, /<textarea name="specialRequests" maxlength="2000"><\/textarea>/, "Optional note"], [{ visible: false, required: false }, null, undefined]]) {
+      const fields = Object.fromEntries(bookingFieldNames.map(name => [name, { visible: false, required: false }]));
+      fields.specialRequests = setting;
+      const configured = { ...profile, config: validateBookingConfig({ ...profile.config, fields }) }, x = setup(configured, url => url.endsWith("/check") ? Response.json({ ok: true, appearance }) : Response.json({ ok: true, sms: "sms:+61400000000?body=x", whatsapp: "https://wa.me/61400000000?text=x" }));
+      const html = await (await worker.fetch(new Request("https://contact.example/book/adelaide"), x.env)).text();
+      if (rendered) assert.match(html, rendered); else assert.doesNotMatch(html, /name="specialRequests"/);
+      const response = await post(await data(x.env, form => form.set("specialRequests", "Optional note")), x.env);
+      assert.equal(response.status, 200);
+      assert.equal(x.submissions[0].enquiry.specialRequests, submitted);
+      if (setting.visible) assert.equal((await post(await data(x.env), x.env)).status, 200);
+    }
   } finally { globalThis.fetch = old; }
 });
 

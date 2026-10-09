@@ -54,7 +54,7 @@ function fields(value: unknown): Record<BookingField, BookingFieldSettings> {
     }
     const setting = object(input[name]);
     if (typeof setting.visible !== "boolean" || typeof setting.required !== "boolean") throw new Error("Invalid booking field setting.");
-    result[name] = { visible: name === "specialRequests" ? true : setting.visible, required: name === "specialRequests" ? true : setting.required };
+    result[name] = { visible: setting.visible, required: setting.required };
   }
   return result;
 }
