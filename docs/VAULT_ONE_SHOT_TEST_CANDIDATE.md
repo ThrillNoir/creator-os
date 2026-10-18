@@ -2,7 +2,7 @@
 
 This local 1.1.3 extension candidate permits one **manual** private Fansly vault upload attempt while message sends and automatic conversation collection remain disabled. It is an offline-tested candidate only. It has not been installed, paired, or used against Fansly. The installed 1.1.2 inspection build and its pairing remain unchanged. The creator-role server/UI requirement is tracked separately in `CREATOR_VAULT_UPLOAD_REQUIREMENT.md`; this candidate does not grant creator-role upload access.
 
-The distributable is `../thot-bridge-vault-once-1.1.3.zip`, containing exactly the five extension files under one top-level folder. Its SHA-256 is `cebb89e05209ae1510b5c67a0f939cc43f4e716498fd98f0591e8ab1ba9909c3`; the adjacent `../THOT-BRIDGE-VAULT-ONCE-1.1.3-SHA256SUMS.txt` lists the ZIP and each file. The operator should verify the ZIP digest and extracted file digests before copying anything into the loaded extension directory.
+The distributable is `../../thot-bridge-vault-once-1.1.3.zip` relative to this document, containing exactly the five extension files under one top-level folder. Its SHA-256 is `cebb89e05209ae1510b5c67a0f939cc43f4e716498fd98f0591e8ab1ba9909c3`; the adjacent `../../THOT-BRIDGE-VAULT-ONCE-1.1.3-SHA256SUMS.txt` lists the ZIP and each file. The operator should verify the ZIP digest and extracted file digests before copying anything into the loaded extension directory.
 
 ## Scope and preflight for a later approved test
 
