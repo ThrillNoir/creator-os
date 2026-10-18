@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
   const destination = requestedDestination as FanslyPairingDestination;
   try {
-    const pairingUrl = await issueFanslyBridgePairing(destination);
+    const pairingUrl = await issueFanslyBridgePairing(destination, String(formData.get("installationId") ?? ""));
     return NextResponse.redirect(pairingUrl, 303);
   } catch {
     const returnUrl = new URL(destination === "messages" ? "/messages?platform=fansly&saved=fansly_pair_failed" : "/operations?platform=fansly&section=create&saved=fansly_pair_failed", requestUrl);

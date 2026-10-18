@@ -240,7 +240,12 @@ export async function getVaultOperations(creatorId: string) {
       FROM vault_upload_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
       WHERE j.creator_id=? ORDER BY j.created_at DESC LIMIT 120
     `).bind(creatorId).all<VaultUploadJob>(),
-    DB.prepare("SELECT status,expires_at,last_seen_at,created_at FROM bridge_credentials WHERE creator_id=? AND platform='fansly' ORDER BY created_at DESC LIMIT 1").bind(creatorId).first<{ status: string; expires_at: string; last_seen_at: string | null; created_at: string }>(),
+    DB.prepare(`SELECT bc.status,bc.expires_at,bc.last_seen_at,bc.created_at,bp.status AS profile_status,abp.verified_at FROM bridge_credentials bc
+      JOIN account_browser_profiles abp ON abp.creator_id=bc.creator_id AND abp.account_id=bc.account_id AND abp.profile_id=bc.profile_id
+      JOIN browser_profiles bp ON bp.id=bc.profile_id AND bp.creator_id=bc.creator_id AND bp.status<>'revoked'
+      WHERE bc.creator_id=? AND bc.platform='fansly' AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP
+      ORDER BY (bp.status='paired' AND bc.last_seen_at IS NOT NULL AND abp.verified_at IS NOT NULL) DESC,bc.created_at DESC LIMIT 1`).bind(creatorId)
+      .first<{ status: string; expires_at: string; last_seen_at: string | null; created_at: string; profile_status: string; verified_at: string | null }>(),
     DB.prepare(`
       SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
         c.safety,c.is_teaser,c.is_multi,c.notes,

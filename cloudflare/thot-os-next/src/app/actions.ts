@@ -1120,12 +1120,12 @@ export async function createFanslyVaultJobsAction(formData: FormData) {
   redirect(`/operations?platform=fansly&section=queue&saved=${created ? "vault_queued" : "already_queued"}`);
 }
 
-export async function openFanslyVaultAction() {
-  redirect(await issueFanslyBridgePairing("vault"));
+export async function openFanslyVaultAction(formData: FormData) {
+  redirect(await issueFanslyBridgePairing("vault", String(formData.get("installationId") ?? "")));
 }
 
-export async function openFanslyMessagesAction() {
-  redirect(await issueFanslyBridgePairing("messages"));
+export async function openFanslyMessagesAction(formData: FormData) {
+  redirect(await issueFanslyBridgePairing("messages", String(formData.get("installationId") ?? "")));
 }
 
 export async function retryFanslyVaultJobAction(formData: FormData) {

@@ -9,7 +9,7 @@ type AdminCreator = { id: string; name: string; status: string; workflow_state: 
 type Membership = { user_email: string; display_name: string; role: CreatorRole; status: string; created_at: string; updated_at: string };
 type BrowserProfile = { id: string; label: string; status: string; last_seen_at: string | null; assigned_accounts: number; verified_accounts: number };
 type Account = { id: string; platform: string; label: string; handle: string; connection_status: string; publishing_mode: string };
-type Assignment = { account_id: string; platform: string; account_label: string; handle: string; profile_label: string; profile_status: string; verified_at: string | null; credential_active: number; credential_last_seen_at: string | null };
+type Assignment = { account_id: string; platform: string; account_label: string; handle: string; profile_label: string; profile_status: string; verified_at: string | null; credential_id: string | null; credential_last_seen_at: string | null };
 type AuditRow = { id: string; actor: string; actor_role: string; event_type: string; target: string; created_at: string; source: string };
 type Invitation = { id: string; invited_email: string; status: string; expires_at: string; sent_at: string | null; created_at: string };
 
@@ -46,8 +46,9 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
       WHERE bp.creator_id=? AND bp.status<>'revoked' GROUP BY bp.id,bp.label,bp.status,bp.last_seen_at ORDER BY bp.label`).bind(creatorId).all<BrowserProfile>(),
     DB.prepare("SELECT id,platform,label,handle,connection_status,publishing_mode FROM operational_accounts WHERE creator_id=? ORDER BY platform,label").bind(creatorId).all<Account>(),
     DB.prepare(`SELECT abp.account_id,abp.platform,oa.label AS account_label,oa.handle,bp.label AS profile_label,bp.status AS profile_status,abp.verified_at,
-      EXISTS(SELECT 1 FROM bridge_credentials bc WHERE bc.creator_id=abp.creator_id AND bc.account_id=abp.account_id AND bc.profile_id=abp.profile_id
-        AND bc.status='active' AND bc.revoked_at IS NULL AND unixepoch(bc.expires_at)>unixepoch(CURRENT_TIMESTAMP)) AS credential_active,
+      (SELECT bc.id FROM bridge_credentials bc WHERE bc.creator_id=abp.creator_id AND bc.account_id=abp.account_id AND bc.profile_id=abp.profile_id
+        AND bc.status='active' AND bc.revoked_at IS NULL AND unixepoch(bc.expires_at)>unixepoch(CURRENT_TIMESTAMP)
+        ORDER BY bc.created_at DESC,bc.id DESC LIMIT 1) AS credential_id,
       (SELECT MAX(bc.last_seen_at) FROM bridge_credentials bc WHERE bc.creator_id=abp.creator_id AND bc.account_id=abp.account_id AND bc.profile_id=abp.profile_id) AS credential_last_seen_at
       FROM account_browser_profiles abp
       JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id
@@ -69,7 +70,7 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
   if (!selectedCreator) throw new Error("The selected creator is outside this administrator scope.");
   const activeMemberships = memberships.results.filter((membership) => membership.status === "active");
   const activePlatforms = [...new Set(accounts.results.map((account) => account.platform))];
-  const verifiedPairings = assignments.results.filter((assignment) => assignment.verified_at && assignment.credential_active).length;
+  const verifiedPairings = assignments.results.filter((assignment) => assignment.verified_at && assignment.credential_id).length;
   const onboardingReviews = creators.results.filter((creator) => creator.workflow_state === "creator_review" || creator.workflow_state === "admin_review");
   const saveMembership = saveCreatorMembershipAction.bind(null, creatorId);
   const suspendMembership = suspendCreatorMembershipAction.bind(null, creatorId);
@@ -125,7 +126,7 @@ export default async function CreatorsPage({ searchParams }: { searchParams: Pro
       <form action={registerProfile} className="inline-form"><label>Profile label<input name="label" required maxLength={80} placeholder={`${selectedCreator.name} · Chrome`} /></label><label>Extension installation ID<input name="installationId" required maxLength={36} minLength={36} placeholder="Copy from the extension popup" autoComplete="off" /></label><button className="primary" type="submit">Register profile</button></form>
     </section><section className="panel"><div className="section-heading"><div><h2>Platform accounts and pairing</h2><p>A platform handle is descriptive only; verified profile assignment is the identity boundary.</p></div><span>{accounts.results.length} accounts</span></div>
       {accounts.results.map((account) => <article className="identity-row" key={account.id}><div><strong>{account.platform} · {account.label}</strong><small>{account.handle || "No public handle"} · {statusLabel(account.connection_status)} · {statusLabel(account.publishing_mode)}</small></div></article>)}
-      {assignments.results.map((item) => <article className="identity-row pairing-row" key={item.account_id}><div><strong>{item.platform} · {item.account_label}</strong><small>{item.profile_label} · {item.profile_status}</small><span>{item.credential_active ? "Active revocable credential" : item.verified_at ? "Extension verified · no active credential" : "Pairing verification pending"}{item.credential_last_seen_at ? ` · last used ${item.credential_last_seen_at}` : ""}</span></div>{item.credential_active ? <form action={revokeBridge} className="confirmed-action"><input type="hidden" name="accountId" value={item.account_id} /><label><input type="checkbox" name="confirmation" value="revoke-bridge" required /> Confirm immediate credential revocation</label><button className="danger-action" type="submit">Revoke bridge</button></form> : null}</article>)}
+      {assignments.results.map((item) => <article className="identity-row pairing-row" key={item.account_id}><div><strong>{item.platform} · {item.account_label}</strong><small>{item.profile_label} · {item.profile_status}</small><span>{item.credential_id ? "Active revocable credential" : item.verified_at ? "Extension verified · no active credential" : "Pairing verification pending"}{item.credential_last_seen_at ? ` · last used ${item.credential_last_seen_at}` : ""}</span></div>{item.credential_id ? <form action={revokeBridge} className="confirmed-action"><input type="hidden" name="accountId" value={item.account_id} /><input type="hidden" name="credentialId" value={item.credential_id} /><label><input type="checkbox" name="confirmation" value="revoke-bridge" required /> Revoke this profile’s credential only</label><button className="danger-action" type="submit">Revoke bridge</button></form> : null}</article>)}
       <form action={assignProfile} className="inline-form"><label>Platform account<select name="accountId" required>{accounts.results.map((account) => <option value={account.id} key={account.id}>{account.platform} · {account.label} · {account.handle}</option>)}</select></label><label>Chrome profile<select name="profileId" required>{profiles.results.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><button className="primary" type="submit" disabled={!accounts.results.length || !profiles.results.length}>Assign profile</button></form>
     </section></div>
 

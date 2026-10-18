@@ -199,18 +199,36 @@ export async function assignBrowserProfileAction(creatorId: string, formData: Fo
   const accountId = String(formData.get("accountId") ?? "");
   const profileId = String(formData.get("profileId") ?? "");
   const { DB } = cloudflareEnv();
-  const [account, profile] = await Promise.all([
+  const [account, profile, current] = await Promise.all([
     DB.prepare("SELECT id,platform FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, context.creator.creator_id).first<{ id: string; platform: string }>(),
     DB.prepare("SELECT id FROM browser_profiles WHERE id=? AND creator_id=? AND status<>'revoked'").bind(profileId, context.creator.creator_id).first<{ id: string }>(),
+    DB.prepare(`SELECT abp.profile_id,EXISTS(SELECT 1 FROM bridge_credentials bc
+      WHERE bc.creator_id=abp.creator_id AND bc.account_id=abp.account_id AND bc.profile_id=abp.profile_id
+        AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP) AS has_live_credential
+      FROM account_browser_profiles abp WHERE abp.creator_id=? AND abp.account_id=?`)
+      .bind(context.creator.creator_id, accountId).first<{ profile_id: string; has_live_credential: number }>(),
   ]);
   if (!account || !profile) throw new Error("Choose an available account and Chrome profile.");
+  if (current && current.profile_id !== profile.id && current.has_live_credential) {
+    throw new Error("This account has a live bridge credential. Keep its assigned profile until a supervised cutover is approved.");
+  }
   const actor = humanAuditActor(context);
-  await DB.batch([
+  const auditDetail = JSON.stringify({ profileId: profile.id, platform: account.platform, administrativeAction: true });
+  const results = await DB.batch([
     DB.prepare(`INSERT INTO account_browser_profiles (creator_id,account_id,platform,profile_id,assigned_by)
-      VALUES (?,?,?,?,?) ON CONFLICT(creator_id,account_id) DO UPDATE SET profile_id=excluded.profile_id,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP,verified_at=NULL`)
+      VALUES (?,?,?,?,?) ON CONFLICT(creator_id,account_id) DO UPDATE SET profile_id=excluded.profile_id,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP,verified_at=NULL
+      WHERE account_browser_profiles.profile_id=excluded.profile_id OR NOT EXISTS (
+        SELECT 1 FROM bridge_credentials bc WHERE bc.creator_id=account_browser_profiles.creator_id
+          AND bc.account_id=account_browser_profiles.account_id AND bc.profile_id=account_browser_profiles.profile_id
+          AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP)`)
       .bind(context.creator.creator_id, account.id, account.platform, profile.id, context.email),
-    identityAuditStatement(DB, actor, "browser_profile_assigned", account.id, { profileId: profile.id, platform: account.platform, administrativeAction: true }),
+    DB.prepare(`INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail)
+      SELECT ?,?,?,?,?,?,? WHERE EXISTS (
+        SELECT 1 FROM account_browser_profiles WHERE creator_id=? AND account_id=? AND profile_id=?)`)
+      .bind(crypto.randomUUID(), actor.creatorId, actor.identity, actor.role, "browser_profile_assigned", account.id, auditDetail,
+        context.creator.creator_id, account.id, profile.id),
   ]);
+  if (!results[0]?.meta?.changes) throw new Error("The bridge became active while the profile was being changed. Its assignment was preserved.");
   revalidatePath("/creators");
 }
 
@@ -218,14 +236,34 @@ export async function revokeBridgeCredentialsAction(creatorId: string, formData:
   requireConfirmation(formData, "revoke-bridge");
   const context = await requireCreatorContext("manage_identity", creatorId);
   const accountId = String(formData.get("accountId") ?? "");
+  const credentialId = String(formData.get("credentialId") ?? "");
+  if (!credentialId) throw new Error("Choose the exact bridge credential to revoke.");
   const { DB } = cloudflareEnv();
-  const account = await DB.prepare("SELECT id,platform FROM operational_accounts WHERE id=? AND creator_id=?").bind(accountId, context.creator.creator_id).first<{ id: string; platform: string }>();
-  if (!account) throw new Error("That account is outside this creator workspace.");
+  const credential = await DB.prepare(`SELECT bc.id,bc.profile_id,bc.platform FROM bridge_credentials bc
+    JOIN account_browser_profiles abp ON abp.creator_id=bc.creator_id AND abp.account_id=bc.account_id AND abp.profile_id=bc.profile_id
+    WHERE bc.id=? AND bc.creator_id=? AND bc.account_id=? AND bc.status='active' AND bc.revoked_at IS NULL
+      AND bc.expires_at>CURRENT_TIMESTAMP`)
+    .bind(credentialId, context.creator.creator_id, accountId).first<{ id: string; profile_id: string; platform: string }>();
+  if (!credential) throw new Error("That active bridge credential is no longer assigned to this creator account.");
   const actor = humanAuditActor(context);
-  await DB.batch([
-    DB.prepare("UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP WHERE creator_id=? AND account_id=? AND status='active'").bind(context.creator.creator_id, account.id),
-    identityAuditStatement(DB, actor, "bridge_credentials_revoked", account.id, { platform: account.platform, confirmed: true, administrativeAction: true }),
+  const auditDetail = JSON.stringify({
+    platform: credential.platform, profileId: credential.profile_id, credentialId: credential.id,
+    confirmed: true, administrativeAction: true,
+  });
+  const results = await DB.batch([
+    DB.prepare(`UPDATE bridge_credentials SET status='revoked',revoked_at=CURRENT_TIMESTAMP
+      WHERE id=? AND creator_id=? AND account_id=? AND profile_id=? AND status='active' AND revoked_at IS NULL
+        AND expires_at>CURRENT_TIMESTAMP AND EXISTS (
+          SELECT 1 FROM account_browser_profiles abp WHERE abp.creator_id=bridge_credentials.creator_id
+            AND abp.account_id=bridge_credentials.account_id AND abp.profile_id=bridge_credentials.profile_id)`)
+      .bind(credential.id, context.creator.creator_id, accountId, credential.profile_id),
+    DB.prepare(`INSERT INTO identity_audit_events (id,creator_id,actor_email,actor_role,event_type,subject,detail)
+      SELECT ?,?,?,?,?,?,? WHERE changes()=1`)
+      .bind(crypto.randomUUID(), actor.creatorId, actor.identity, actor.role, "bridge_credentials_revoked", accountId, auditDetail),
   ]);
+  if (results[0]?.meta?.changes !== 1 || results[1]?.meta?.changes !== 1) {
+    throw new Error("That bridge credential changed before revocation. Review its current state.");
+  }
   revalidatePath("/creators");
 }
 
