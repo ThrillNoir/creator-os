@@ -316,6 +316,7 @@ body {
 .os-cloud-shell .connected,
 .os-cloud-shell .ready { border-color: var(--foreground); background: var(--success); color: var(--success-foreground); }
 .os-cloud-shell .attention { border-color: var(--foreground); background: var(--warning); color: var(--warning-foreground); }
+.os-cloud-shell .connection-banner.attention div span { color: var(--warning-foreground); }
 .os-cloud-shell .blocked,
 .os-cloud-shell .error { border-color: var(--foreground); background: var(--destructive); color: var(--destructive-foreground); }
 .os-cloud-shell .account-status { border: 1px solid var(--foreground); background: var(--muted-surface); color: var(--foreground); }

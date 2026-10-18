@@ -201,7 +201,7 @@ test("Vault Operations exposes the signed R2-backed Fansly queue", async () => {
   assert.match(bridge, /o\.object_key=a\.media_r2_key/);
   assert.match(bridge, /status='claimed'/);
   assert.match(bridge, /bridge_credentials/);
-  assert.match(manifest, /"version": "1\.1\.0"/);
+  assert.match(manifest, /"version": "1\.1\.3"/);
   assert.match(background, /creator_os_bridge_pair/);
   assert.doesNotMatch([bridge, manifest, background].join("\n"), /dropbox|localhost|reddit|onlyfans/i);
 });
@@ -267,7 +267,7 @@ test("Telegram and Fansly operate inside the unified thread with explicit device
   assert.match(extension, /textarea\.message-input/);
   assert.match(extension, /processFanslyMessageOutbox/);
   assert.match(extension, /syncFanslyFeed/);
-  assert.match(manifest, /"version": "1\.1\.0"/);
+  assert.match(manifest, /"version": "1\.1\.3"/);
 });
 
 test("Instagram replies use one-step Enter sending with subscriptions and receipts", async () => {

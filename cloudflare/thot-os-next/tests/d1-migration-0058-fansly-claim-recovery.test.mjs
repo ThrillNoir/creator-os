@@ -9,7 +9,7 @@ test("the paired extension returns the owner token for both browser receipts", a
   const extension = await readFile(new URL("../../../public/local-bridge-extension/background.js", import.meta.url), "utf8");
   const vaultUi = await readFile(new URL("../../../public/local-bridge-extension/fansly-vault.js", import.meta.url), "utf8");
   const manifest = JSON.parse(await readFile(new URL("../../../public/local-bridge-extension/manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.version, "1.1.3");
   assert.match(extension, /x-thot-os-message-client":"explicit-v5"/);
   assert.match(extension, /jobId:job\.id,claimToken:job\.claimToken/);
   assert.match(extension, /threadId:pending\.id,claimToken:pending\.claimToken/);

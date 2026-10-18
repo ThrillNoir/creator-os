@@ -67,6 +67,18 @@ test('verified creator gets native vault handoff without browser pairing control
   } finally { pairing=null; }
 });
 
+test('paired creator without a check-in is asked to inspect the assigned browser', async () => {
+  pairing={profile_status:'paired',last_seen_at:null,verified_at:'2026-01-01'};
+  try {
+    const html=renderToStaticMarkup(await exports.VaultWorkspace({creatorId:'own',section:'queue',canManageIdentity:false,canApprove:false,isCreator:true}));
+    assert.match(html,/Check your assigned Fansly browser/);
+    assert.match(html,/no bridge check-in is recorded/);
+    assert.match(html,/Check-in pending/);
+    assert.doesNotMatch(html,/Pairing pending/);
+    assert.doesNotMatch(html,/href="https:\/\/fansly.com\/creator\/vault"/);
+  } finally { pairing=null; }
+});
+
 test('verified creator queued-success explains popup arming and one overlay click', async () => {
   pairing={profile_status:'paired',last_seen_at:'2026-01-01',verified_at:'2026-01-01'};
   try {
