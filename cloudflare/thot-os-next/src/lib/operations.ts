@@ -233,19 +233,24 @@ export async function getInstagramAnalytics(creatorId: string, accountId?: strin
 export async function getVaultOperations(creatorId: string) {
   const base = await getPlatformOperations(creatorId, "fansly");
   const { DB } = cloudflareEnv();
-  const [accounts, jobs, pairing, assets] = await Promise.all([
+  const [accounts, jobs, pairing, profile, assets] = await Promise.all([
     DB.prepare("SELECT * FROM operational_accounts WHERE creator_id=? AND platform='fansly' AND is_active=1 ORDER BY label").bind(creatorId).all<OperationalAccount>(),
     DB.prepare(`
       SELECT j.id,j.platform,j.status,j.asset_id,a.basename,a.bytes,j.error,j.receipt,j.approved_at,j.claimed_at,j.completed_at,j.created_at
       FROM vault_upload_jobs j JOIN assets a ON a.id=j.asset_id AND a.creator_id=j.creator_id
       WHERE j.creator_id=? ORDER BY j.created_at DESC LIMIT 120
     `).bind(creatorId).all<VaultUploadJob>(),
-    DB.prepare(`SELECT bc.status,bc.expires_at,bc.last_seen_at,bc.created_at,bp.status AS profile_status,abp.verified_at FROM bridge_credentials bc
+    DB.prepare(`SELECT bc.status,bc.expires_at,bc.last_seen_at,bc.created_at,bp.label AS profile_label,bp.status AS profile_status,abp.verified_at FROM bridge_credentials bc
       JOIN account_browser_profiles abp ON abp.creator_id=bc.creator_id AND abp.account_id=bc.account_id AND abp.profile_id=bc.profile_id
       JOIN browser_profiles bp ON bp.id=bc.profile_id AND bp.creator_id=bc.creator_id AND bp.status<>'revoked'
       WHERE bc.creator_id=? AND bc.platform='fansly' AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP
-      ORDER BY (bp.status='paired' AND bc.last_seen_at IS NOT NULL AND abp.verified_at IS NOT NULL) DESC,bc.created_at DESC LIMIT 1`).bind(creatorId)
-      .first<{ status: string; expires_at: string; last_seen_at: string | null; created_at: string; profile_status: string; verified_at: string | null }>(),
+        AND bc.account_id=(SELECT id FROM operational_accounts WHERE creator_id=? AND platform='fansly' AND is_active=1 ORDER BY label LIMIT 1)
+      ORDER BY (bp.status='paired' AND bc.last_seen_at IS NOT NULL AND abp.verified_at IS NOT NULL) DESC,bc.created_at DESC LIMIT 1`).bind(creatorId, creatorId)
+      .first<{ status: string; expires_at: string; last_seen_at: string | null; created_at: string; profile_label: string; profile_status: string; verified_at: string | null }>(),
+    DB.prepare(`SELECT bp.label,bp.status,abp.verified_at FROM account_browser_profiles abp
+      JOIN browser_profiles bp ON bp.id=abp.profile_id AND bp.creator_id=abp.creator_id
+      WHERE abp.creator_id=? AND abp.account_id=(SELECT id FROM operational_accounts WHERE creator_id=? AND platform='fansly' AND is_active=1 ORDER BY label LIMIT 1)
+      LIMIT 1`).bind(creatorId, creatorId).first<{ label: string; status: string; verified_at: string | null }>(),
     DB.prepare(`
       SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
         c.safety,c.is_teaser,c.is_multi,c.notes,
@@ -256,7 +261,7 @@ export async function getVaultOperations(creatorId: string) {
       ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120
     `).bind(creatorId).all<AssetRow>(),
   ]);
-  return { ...base, assets: assets.results, accounts: accounts.results, jobs: jobs.results, pairing };
+  return { ...base, assets: assets.results, accounts: accounts.results, jobs: jobs.results, pairing, profile };
 }
 
 export async function getRedditSchedulerStatus(creatorId: string): Promise<RedditSchedulerStatus | null> {

@@ -44,6 +44,7 @@ button, input, textarea, select { font: inherit; }
 .roadmap li.done { color: var(--green); }
 .roadmap li.current { color: #d4c8ff; }
 .success { margin: 24px 0 16px; padding: 13px 15px; border: 1px solid #285c43; border-radius: 10px; background: #14271f; color: var(--green); }
+.success a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .library-panel { margin-top: 26px; }
 .library-page-header { align-items: center; }
 .library-sync-action { display: grid; justify-items: end; gap: 7px; }
@@ -437,6 +438,26 @@ button, input, textarea, select { font: inherit; }
 .ops-subnav { display: flex; gap: 6px; margin: 0 0 16px; padding: 5px; width: fit-content; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .ops-subnav a { flex: none; padding: 9px 12px; border-radius: 7px; color: var(--muted); font-weight: 700; }
 .ops-subnav a.active { background: var(--purple); color: white; }
+.fansly-journey { margin: 0 0 16px; padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+.fansly-journey .section-heading { margin-bottom: 14px; }
+.fansly-journey .section-heading p { margin-top: 5px; color: var(--muted); }
+.fansly-journey-steps { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.fansly-journey-steps li { display: flex; gap: 8px; min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel2); }
+.fansly-step-mark { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--panel); color: var(--purple2); font-size: 12px; font-weight: 800; }
+.fansly-step-done .fansly-step-mark { color: var(--green); }
+.fansly-step-blocked .fansly-step-mark { color: var(--destructive); }
+.fansly-journey-steps strong,.fansly-journey-steps small { display: block; overflow-wrap: anywhere; }
+.fansly-journey-steps strong { font-size: 12px; }
+.fansly-journey-steps small { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.fansly-last-seen { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+.fansly-next-action { display: flex; gap: 10px; margin: 14px 0 0; padding: 11px 13px; border-left: 3px solid var(--purple2); border-radius: 6px; background: var(--panel2); }
+.fansly-next-action strong { flex: none; }
+.fansly-latest-result { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.fansly-latest-result h2 { margin: 5px 0; overflow-wrap: anywhere; }
+.fansly-latest-result p { margin: 6px 0; }
+.fansly-latest-result small { color: var(--muted); }
+.fansly-latest-result .secondary-action { flex: none; }
+.post-row[id^="vault-job-"] { scroll-margin-top: 24px; }
 .connection-banner { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-bottom: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
 .connection-banner.blocked { border-color: #673247; background: #25131b; }
 .connection-banner.attention { border-color: #654b1d; background: #261e11; }
@@ -770,6 +791,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .search-field { grid-column: 1 / -1; }
   .ops-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .ops-asset-picker { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .fansly-journey-steps { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .message-streams { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .message-workspace { grid-template-columns: 1fr; }
   .message-authority { grid-column: auto; }
@@ -801,6 +823,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .growth-summary { grid-template-columns: 1fr; }
   .launch-summary { grid-template-columns: 1fr; }
   .ops-asset-picker { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .fansly-journey-steps { grid-template-columns: 1fr; }
+  .fansly-next-action,.fansly-latest-result { align-items: stretch; flex-direction: column; }
+  .fansly-latest-result .secondary-action { width: 100%; }
   .reddit-fields { grid-template-columns: 1fr; }
   .reddit-fields .wide { grid-column: auto; }
   .post-row { grid-template-columns: auto minmax(0,1fr); }

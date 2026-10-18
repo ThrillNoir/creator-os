@@ -68,26 +68,34 @@ test('existing scoped vault queries hide foreign jobs, receipts, and browser ass
  const vault=operations.slice(operations.indexOf('export async function getVaultOperations('),operations.indexOf('export async function getRedditSchedulerStatus('));
  const jobSql=vault.match(/DB\.prepare\(`(\s*SELECT j\.id[\s\S]*?)`\)/)[1];
  const profileSql=vault.match(/DB\.prepare\(`(SELECT bc\.status[\s\S]*?)`\)/)[1];
+ const assignmentSql=vault.match(/DB\.prepare\(`(SELECT bp\.label[\s\S]*?)`\)/)[1];
  const db=new Database(':memory:');
  try{
  db.exec(`CREATE TABLE assets(id TEXT,creator_id TEXT,basename TEXT,bytes INTEGER);
  CREATE TABLE vault_upload_jobs(id TEXT,creator_id TEXT,platform TEXT,status TEXT,asset_id TEXT,error TEXT,receipt TEXT,approved_at TEXT,claimed_at TEXT,completed_at TEXT,created_at TEXT);
  CREATE TABLE bridge_credentials(creator_id TEXT,account_id TEXT,profile_id TEXT,platform TEXT,status TEXT,expires_at TEXT,last_seen_at TEXT,created_at TEXT);
  CREATE TABLE account_browser_profiles(creator_id TEXT,account_id TEXT,profile_id TEXT,verified_at TEXT);
- CREATE TABLE browser_profiles(id TEXT,creator_id TEXT,status TEXT);`);
+ CREATE TABLE browser_profiles(id TEXT,creator_id TEXT,label TEXT,status TEXT);
+ CREATE TABLE operational_accounts(id TEXT,creator_id TEXT,platform TEXT,is_active INTEGER,label TEXT);`);
  for(const id of ['one','two']){
  db.prepare('INSERT INTO assets VALUES(?,?,?,1)').run(id+'-asset',id,id+'-private');
  db.prepare("INSERT INTO vault_upload_jobs VALUES(?,?,'fansly','verified',?,NULL,?,NULL,NULL,NULL,'2026-01-01')").run(id+'-job',id,id+'-asset',JSON.stringify({mediaId:id+'-receipt'}));
  db.prepare("INSERT INTO bridge_credentials VALUES(?,?,?,'fansly','active','2999-01-01',?,'2026-01-01')").run(id,id+'-account',id+'-profile',id+'-last-seen');
  db.prepare('INSERT INTO account_browser_profiles VALUES(?,?,?,?)').run(id,id+'-account',id+'-profile',id+'-verified');
- db.prepare("INSERT INTO browser_profiles VALUES(?,?,'paired')").run(id+'-profile',id);
+ db.prepare("INSERT INTO browser_profiles VALUES(?,?,?,'paired')").run(id+'-profile',id,id+' Chrome');
+ db.prepare("INSERT INTO operational_accounts VALUES(?,?,'fansly',1,?)").run(id+'-account',id,id+' Fansly');
  }
+ db.exec(`INSERT INTO operational_accounts VALUES('one-other-account','one','fansly',1,'zzz second Fansly');
+ INSERT INTO browser_profiles VALUES('one-other-profile','one','Other Chrome','paired');
+ INSERT INTO account_browser_profiles VALUES('one','one-other-account','one-other-profile','one-other-verified');
+ INSERT INTO bridge_credentials VALUES('one','one-other-account','one-other-profile','fansly','active','2999-01-01','one-other-last-seen','2026-02-01');`);
  for(const id of ['one','two']){
  const jobs=db.prepare(jobSql).all(id);
  assert.equal(jobs.length,1);assert.equal(jobs[0].id,id+'-job');assert.equal(JSON.parse(jobs[0].receipt).mediaId,id+'-receipt');
- const profile=db.prepare(profileSql).get(id);assert.equal(profile.last_seen_at,id+'-last-seen');assert.equal(profile.verified_at,id+'-verified');
+ const profile=db.prepare(profileSql).get(id,id);assert.equal(profile.last_seen_at,id+'-last-seen');assert.equal(profile.verified_at,id+'-verified');
+ const assignment=db.prepare(assignmentSql).get(id,id);assert.equal(assignment.label,id+' Chrome');
  }
- assert.deepEqual(db.prepare(jobSql).all('foreign'),[]);assert.equal(db.prepare(profileSql).get('foreign'),undefined);
+ assert.deepEqual(db.prepare(jobSql).all('foreign'),[]);assert.equal(db.prepare(profileSql).get('foreign','foreign'),undefined);assert.equal(db.prepare(assignmentSql).get('foreign','foreign'),undefined);
  }finally{db.close()}
 });
 

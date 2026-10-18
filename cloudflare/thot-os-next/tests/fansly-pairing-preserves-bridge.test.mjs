@@ -217,19 +217,21 @@ test("credential arriving during admin reassignment blocks the change and its su
 });
 
 test("vault health selects only the currently assigned credential and distinguishes pending from verified", () => {
-  const query = operationsSource.match(/DB\.prepare\(`(SELECT bc\.status,bc\.expires_at,bc\.last_seen_at,bc\.created_at[\s\S]*?)`\)\.bind\(creatorId\)/)?.[1];
+  const query = operationsSource.match(/DB\.prepare\(`(SELECT bc\.status,bc\.expires_at,bc\.last_seen_at,bc\.created_at[\s\S]*?)`\)\.bind\(creatorId, creatorId\)/)?.[1];
   assert.ok(query, "vault pairing health query exists");
   const sqlite = new Database(":memory:");
   try {
     sqlite.exec(`
       CREATE TABLE bridge_credentials (creator_id TEXT,account_id TEXT,profile_id TEXT,platform TEXT,status TEXT,expires_at TEXT,last_seen_at TEXT,created_at TEXT);
       CREATE TABLE account_browser_profiles (creator_id TEXT,account_id TEXT,profile_id TEXT,verified_at TEXT);
-      CREATE TABLE browser_profiles (id TEXT,creator_id TEXT,status TEXT);
-      INSERT INTO browser_profiles VALUES ('old','adelaide','paired'),('new','adelaide','registered');
+      CREATE TABLE browser_profiles (id TEXT,creator_id TEXT,label TEXT,status TEXT);
+      CREATE TABLE operational_accounts (id TEXT,creator_id TEXT,platform TEXT,is_active INTEGER,label TEXT);
+      INSERT INTO operational_accounts VALUES ('account','adelaide','fansly',1,'Fansly');
+      INSERT INTO browser_profiles VALUES ('old','adelaide','Old Chrome','paired'),('new','adelaide','New Chrome','registered');
       INSERT INTO account_browser_profiles VALUES ('adelaide','account','old',CURRENT_TIMESTAMP);
       INSERT INTO bridge_credentials VALUES ('adelaide','account','old','fansly','active',datetime('now','+30 days'),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
     `);
-    const read = () => sqlite.prepare(query).get("adelaide") ?? null;
+    const read = () => sqlite.prepare(query).get("adelaide", "adelaide") ?? null;
     assert.equal(read().profile_status, "paired");
     sqlite.prepare("UPDATE account_browser_profiles SET profile_id='new',verified_at=NULL").run();
     assert.equal(read(), null, "a formerly paired but displaced profile is not current health");

@@ -5,7 +5,7 @@ import React from 'react';
 import * as jsxRuntime from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { canRetryVaultJob, vaultJobStatusCopy } from '../src/lib/vault-job-status.ts';
+import { canRetryVaultJob, vaultJobNextAction, vaultJobStatusCopy } from '../src/lib/vault-job-status.ts';
 
 const source = await readFile(new URL('../src/app/operations/page.tsx', import.meta.url), 'utf8');
 const start = source.indexOf('async function VaultWorkspace(');
@@ -19,11 +19,12 @@ const jobs = [
 let pairing = null;
 const dependencies = {
   getVaultOperations: async () => ({ accounts: [{platform: "fansly", handle: "@synthetic"}], assets: [{id:"own-asset",basename:"Synthetic asset",extension:"jpg",safety:"paid-ready"}], jobs, pairing }),
-  vaultSections: [['queue','Upload queue'],['create','Send to vault']],
+  vaultSections: [['queue','Upload queue'],['create','Prepare upload']],
   Link: ({children,...props}) => React.createElement('a',props,children),
+  FanslyJourneySummary: ({creatorName}) => React.createElement('section',{'aria-label':'Fansly setup'},creatorName),
   Image: () => null, formatDate: () => 'Synthetic date', statusClass: () => '',
   retryFanslyVaultJobAction: '/synthetic-retry', createFanslyVaultJobsAction: '/synthetic-approve', createOwnFanslyVaultJobAction: '/synthetic-own',
-  objectIdFor: () => null, canRetryVaultJob, vaultJobStatusCopy,
+  objectIdFor: () => null, canRetryVaultJob, vaultJobNextAction, vaultJobStatusCopy,
 };
 const exports = {};
 new Function('require','exports',...Object.keys(dependencies),code)((name)=> { if(name==='react/jsx-runtime')return jsxRuntime;throw new Error(name); },exports,...Object.values(dependencies));
@@ -49,11 +50,11 @@ test('creator and viewer workspaces explain agency approval without exposing ret
 test('creator can send one asset without staff approval, retry, or pairing controls', async () => {
   const html = renderToStaticMarkup(await exports.VaultWorkspace({creatorId:'own',section:'create',canManageIdentity:false,canApprove:false,isCreator:true}));
   assert.match(html,/action="\/synthetic-own"/);
-  assert.match(html,/Send one asset to my vault/);
-  assert.match(html,/Inspection mode does not upload automatically/);
+  assert.match(html,/Queue one asset for Fansly/);
+  assert.match(html,/browser handoff is not verified/);
   assert.match(html,/type="radio"[^>]*name="assetId"/);
   assert.doesNotMatch(html,/type="checkbox" name="assetId"/);
-  assert.match(html,/Ask your agency operator/);
+  assert.match(html,/Ask an agency administrator/);
   assert.doesNotMatch(html,/Agency approval required|Approve selected for Fansly|installationId|synthetic-retry/);
 });
 
@@ -77,6 +78,6 @@ test('verified creator queued-success explains popup arming and one overlay clic
 });
 test('unverified creator queued-success directs operator setup without promising a vault link', async () => {
   const html=renderToStaticMarkup(await exports.VaultWorkspace({creatorId:'own',section:'queue',saved:'vault_queued',canManageIdentity:false,canApprove:false,isCreator:true}));
-  assert.match(html,/Ask your agency operator to set up your assigned browser before completing the upload/);
+  assert.match(html,/Ask an agency administrator to set up your assigned browser before completing the upload/);
   assert.doesNotMatch(html,/Open your signed vault below|href="https:\/\/fansly.com\/creator\/vault"/);
 });

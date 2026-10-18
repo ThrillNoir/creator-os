@@ -38,3 +38,22 @@ export function canRetryVaultJob(status: string, receipt: unknown): boolean {
   if (!record) return false;
   return record.outcome !== "uncertain" && record.reconciliationRequired !== true && record.uploadStarted !== true;
 }
+
+export function vaultJobNextAction(status: string, receipt: unknown, isCreator: boolean): string {
+  if ((status === "claimed" || status === "failed") && hasUncertainReceipt(receipt)) {
+    return "Ask an agency administrator to reconcile this upload against the native Fansly vault before any retry.";
+  }
+  if (status === "verified") {
+    return "The saved vault receipt is recorded. Returning to Inspection mode after a one-shot upload is expected.";
+  }
+  if (status === "approved") {
+    return "Open the assigned signed-in Fansly browser, check the extension popup, and complete the permitted manual upload.";
+  }
+  if (status === "claimed" || status === "staged") {
+    return "Wait for the final receipt. Check the current job before attempting any further upload.";
+  }
+  if (status === "failed") {
+    return isCreator ? "Ask an agency operator to review this failed upload before another attempt." : "Review the failure and native vault before using the available retry control.";
+  }
+  return "Review the current job and its receipt before taking another action.";
+}
