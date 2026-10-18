@@ -1,13 +1,15 @@
 # THOT OS Deployment & Environment Architecture
 
-Status: Phase 1A local safeguards completed on 2026-08-15. This document records the intended authority model and the verified staging inventory. It does not claim that a deployment, migration, queue, or publishing flow was run during this phase.
+Status: Phase 1A local safeguards completed on 2026-08-15. The staging inventory below is a dated observation, not a current remote check. Use [`config/deployments.json`](../config/deployments.json) for configured targets and the [Stage 5 production-foundations record](STAGE_5_PRODUCTION_FOUNDATIONS.md) for its 2026-08-19 provisioning evidence. This document does not independently verify current remote state or authorise a deployment.
+
+As recorded on 2026-10-18, the registry contains a production D1 database, two private R2 buckets, public KV and Analytics Engine resources, and one deployable **route-less public-links Worker**. It has no private production Web/control component. The public domain is reserved but unattached, and the [Stage 6 boundary](STAGE_6_PUBLIC_DOMAIN_BOUNDARY.md) leaves the private dashboard hostname unselected. The Stage 5 record reports no production Access application, creator data, or creator profile launch at the time of provisioning. Recheck the registry, tooling and fresh authorised remote observations before any release.
 
 ## Authority model
 
 ```mermaid
 flowchart LR
   L["Local development\nlocalhost, SQLite fixture/scratch"] -->|"explicit, reviewed deployment"| S["Cloudflare staging\nreal integration environment"]
-  S -. "future manual approval only" .-> P["Production\nnot provisioned"]
+  S -. "separate approved release only" .-> P["Production foundations\nprivate launch absent"]
 
   S --> W["Canonical OpenNext web Worker"]
   S --> X["Scheduler and bridge Workers"]
@@ -20,15 +22,17 @@ flowchart LR
 
 The canonical remote application is `cloudflare/thot-os-next`. Cloudflare D1 is the authoritative operational database, and Cloudflare R2 is the authoritative remote object store. Local Node remains an explicitly bounded executor for browser, CLI, and local-machine capabilities. The root Next/SQLite application is not a future remote control plane: SQLite remains a protected migration source, sanitised fixture, and non-authoritative Local Node scratch store.
 
-The public creator-link surface is a separate, currently disabled Workers
-Static Assets component. It receives only an approved KV projection and writes
-aggregate click trends to Analytics Engine; it must never bind canonical D1,
-private R2, Dropbox, provider credentials, or the Access-protected admin
-application. Its paired private control Worker uses a Workflow to publish an
-approved profile version. See [the rebuild cutover](THOT_OS_REBUILD_CUTOVER.md)
-before provisioning either component.
+The public creator-link surface is a separate Workers Static Assets component.
+Its production foundation is route-less and has no creator profile projection.
+When launched, it may receive only an approved KV projection and write aggregate
+click trends to Analytics Engine; it must never bind canonical D1, private R2,
+Dropbox, provider credentials, or the Access-protected admin application. The
+staging private control Worker uses a Workflow to publish an approved profile
+version. See [the rebuild cutover](THOT_OS_REBUILD_CUTOVER.md) for the original
+design and [the Stage 6 boundary](STAGE_6_PUBLIC_DOMAIN_BOUNDARY.md) for the
+later production hostname split.
 
-`config/deployments.json` is the machine-readable source of truth for component ownership. It contains names and identifiers only; it must never contain credential values.
+`config/deployments.json` is the machine-readable source of truth for component ownership. It contains target configuration, ownership boundaries, resource names and identifiers, and required secret names; it must never contain credential values.
 
 ## Environments
 
@@ -36,9 +40,9 @@ before provisioning either component.
 | --- | --- | --- |
 | Local | Loopback development, local SQLite fixture/scratch, local mocks/test providers. Local code must not inherit Cloudflare staging credentials. | No Cloudflare deployment target. An action against staging requires an explicit environment argument and a reviewed runbook. |
 | Staging | The one real Cloudflare integration environment. D1 `thot-os-staging`; four R2 buckets; four queues; the Workers below. | Explicit `--environment staging`, static preflight, clean Git tree for a plan/receipt, then separately approved manual deployment and smoke test. |
-| Production | Naming/ownership contract only. No production Worker, D1, R2, queue, route, credential, or deployment exists. | Disabled in the registry. It cannot pass the preflight until separately provisioned and reviewed. |
+| Production | Stage 5 foundations recorded: D1 `thot-os-production`; private media and preview R2 buckets; public KV and Analytics Engine; a route-less public-links Worker. No private Web/control Worker, Access application, creator data, or attached domain is recorded. | Only the public-links foundation is marked deployable in the registry. A private control-plane release and any public route require their own reviewed target, security boundary, approval, and fresh remote checks. |
 
-The production naming contract uses `thot-os-<component>-production`, with separate D1, R2, and queue names ending in `-production`. It is deliberately not a copy of staging configuration: it has no account identifier or deployable components until production is formally created.
+The production naming contract uses `thot-os-<component>-production`. The registry has a production account identifier and distinct D1, R2, KV, and Analytics resources; no production queues or private Web/control component are configured. Production is not a copy of staging configuration.
 
 ## Staging component ownership
 
@@ -73,7 +77,8 @@ The Phase 2A sequence is `EXPAND (0028–0031) → verify → COMPATIBILITY (003
 after `0031`: it does not alter the live `identity_audit_service_scope` trigger
 or activate credentials. The compatibility migration is a distinct approval
 because SQLite replaces triggers by drop/recreate. Activation and Worker
-traffic changes require both prior boundaries; production remains disabled.
+traffic changes require both prior boundaries. This sequence concerns staging;
+it does not activate a private production control plane.
 
 The EXPAND boundary must use the repository-owned bounded executor described
 in [THOT_OS_BOUNDED_D1_MIGRATIONS.md](THOT_OS_BOUNDED_D1_MIGRATIONS.md), not
@@ -182,7 +187,7 @@ Rollback is a separately approved deployment of the previous known-good applicat
 
 The existing pull-request workflow now runs the static staging preflight with no Cloudflare credential. It remains read-only: it does not deploy, contact Cloudflare, or run a migration.
 
-The next delivery pipeline should be: pull request verification → merge to a protected branch → explicit staging deployment approval → protected smoke test → receipt → explicit production approval. Production remains absent and manual until a separately reviewed provisioning phase creates isolated resources, a production registry entry, and an approval boundary.
+The next delivery pipeline should be: pull request verification → merge to a protected branch → explicit staging deployment approval → protected smoke test → receipt → explicit production approval. Stage 5 production foundations are recorded in the registry, but the private production Web/control plane, Access boundary, dashboard hostname, and creator launch still need separate review and approval. The existing route-less public-links foundation is not a private application launch.
 
 Current interactive developer authentication is broader than a deploy identity should be. Before staging automation, create a scoped non-human deployment identity limited to this Cloudflare account and only the Workers, D1, R2, Queues, and read-only verification operations actually required. Keep production credentials distinct and available only in a manually approved production environment. Do not rotate current credentials as part of this phase.
 
@@ -190,7 +195,7 @@ Current interactive developer authentication is broader than a deploy identity s
 
 None are required to establish the local collision safeguard, registry, preflight, provenance design, receipt design, or CI validation. No remote resource was created, renamed, modified, deployed, or deleted in Phase 1A.
 
-Before the next real staging deployment, an operator must perform the controlled flow above and confirm the live Worker inventory and Access policy immediately before deployment. A later dedicated phase must decide whether to provision the uniquely named legacy Worker (only if it is genuinely needed) or retire its source after exit criteria are met. Production requires a separate provisioning and security review; it must never reuse staging names, identifiers, queues, or credentials.
+Before the next real staging deployment, an operator must perform the controlled flow above and confirm the live Worker inventory and Access policy immediately before deployment. A later dedicated phase must decide whether to provision the uniquely named legacy Worker (only if it is genuinely needed) or retire its source after exit criteria are met. Any private production release requires its own provisioning and security review; it must never reuse staging names, identifiers, queues, or credentials.
 # Canonical service-auth activation
 
 The service-auth activation plan is not a deployment. Before any Worker traffic
