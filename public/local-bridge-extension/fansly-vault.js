@@ -29,20 +29,29 @@
     const button=root.querySelector("button");
     const setStatus=(text,kind="")=>{status.textContent=text;status.className=`status ${kind}`.trim();};
     let paired=false;
+    let inspectionMode=false;
+    let vaultOnce=false;
     let lastPaired;
     let lastNotice="";
     let processing=false;
     const refreshPairing=async()=>{
       const bridge=await send({type:"creator-os-vault-status"});
       paired=Boolean(bridge?.ok&&bridge?.paired);
-      if(paired){
-        identity.textContent=`Paired workspace: ${bridge.creatorId||"creator"}`;
+      inspectionMode=Boolean(bridge?.inspectionMode);
+      vaultOnce=Boolean(bridge?.vaultOnce);
+      if(inspectionMode){
+        identity.textContent=paired?`Paired workspace: ${bridge.creatorId||"creator"} · Inspection mode`:"Inspection mode · profile not paired";
+        if(!processing)setStatus("Inspection mode: uploads, sends and automatic conversation collection are disabled.");
+        if(!processing)button.textContent="Upload disabled in inspection mode";
+        lastNotice="";
+      }else if(paired){
+        identity.textContent=`Paired workspace: ${bridge.creatorId||"creator"}${vaultOnce?" · One manual vault upload armed":""}`;
         const legacyCount=Number(bridge?.legacyReconciliationCount||0);
         const notice=bridge?.updateRequired?"Update the THOT OS bridge extension to sync or send messages.":legacyCount>0?`${legacyCount} older message claim${legacyCount===1?"":"s"} need human reconciliation; nothing will be retried automatically.`:"";
         if(!processing&&notice&&notice!==lastNotice)setStatus(notice,"error");
-        if(!processing&&!notice&&lastPaired!==true)setStatus("Queue an asset in Creator OS, then press the button below.");
+        if(!processing&&!notice&&(lastPaired!==true||vaultOnce))setStatus(vaultOnce?"Only the approved test asset should be waiting. One click attempts one private vault upload; sends and collection remain disabled.":"Queue an asset in Creator OS, then press the button below.");
         lastNotice=notice;
-        if(!processing)button.textContent="Upload approved content";
+        if(!processing)button.textContent=vaultOnce?"Attempt one private vault upload":"Upload approved content";
       }else{
         identity.textContent="This profile is not paired.";
         if(!processing&&lastPaired!==false)setStatus("Open this creator's Fansly vault from Creator OS to pair it.","error");
@@ -50,10 +59,10 @@
         lastNotice="";
       }
       lastPaired=paired;
-      button.disabled=processing||!paired;
+      button.disabled=processing||!paired||inspectionMode;
     };
     button.addEventListener("click",async()=>{
-      if(!paired)return;
+      if(!paired||inspectionMode)return;
       processing=true;
       button.classList.add("busy");
       button.textContent="Preparing upload…";
@@ -67,8 +76,7 @@
       else setStatus(result?.error||"The upload could not be prepared.","error");
       processing=false;
       button.classList.remove("busy");
-      button.textContent=paired?"Upload approved content":"Pair profile in Creator OS";
-      button.disabled=!paired;
+      await refreshPairing();
     });
     await refreshPairing();
     const pairingTimer=setInterval(()=>{

@@ -2,6 +2,22 @@ const getStoredBridge=async()=>{
   const stored=await chrome.storage.local.get("creatorOsBridge");
   return stored.creatorOsBridge?.platform==="fansly"?stored.creatorOsBridge:undefined;
 };
+const BRIDGE_MODE_KEY="creatorOsBridgeMode";
+const VAULT_ARMED_AT_KEY="creatorOsVaultOnceArmedAt";
+const VAULT_CONSUMED_KEY="creatorOsVaultOnceConsumed";
+const getBridgeMode=async()=>{
+  const stored=await chrome.storage.local.get([BRIDGE_MODE_KEY,VAULT_ARMED_AT_KEY,VAULT_CONSUMED_KEY,"creatorOsBridge"]);
+  if(stored[BRIDGE_MODE_KEY]==="active"||stored[BRIDGE_MODE_KEY]==="inspection")return stored[BRIDGE_MODE_KEY];
+  if(stored[BRIDGE_MODE_KEY]==="vault_once"){
+    const armedAt=Number(stored[VAULT_ARMED_AT_KEY]||0);
+    if(armedAt>0&&Date.now()-armedAt<10*60*1000&&!(stored[VAULT_CONSUMED_KEY]&&!vaultUploadRunning))return "vault_once";
+  }
+  const mode=stored[BRIDGE_MODE_KEY]==="vault_once"?"inspection":stored.creatorOsBridge?.platform==="fansly"&&stored.creatorOsBridge?.token?"active":"inspection";
+  await chrome.storage.local.set({[BRIDGE_MODE_KEY]:mode,[VAULT_ARMED_AT_KEY]:0,[VAULT_CONSUMED_KEY]:false});
+  return mode;
+};
+const isInspectionMode=async()=>await getBridgeMode()!=="active";
+const isVaultUploadBlocked=async()=>!["active","vault_once"].includes(await getBridgeMode());
 const setStoredBridge=(config)=>chrome.storage.local.set({creatorOsBridge:config});
 const removeStoredBridge=()=>chrome.storage.local.remove("creatorOsBridge");
 const getInstallationId=async()=>{
@@ -37,6 +53,7 @@ chrome.tabs.onUpdated.addListener(async(tabId,changeInfo,tab)=>{
   const url=changeInfo.url||tab.url||"";
   if(!/^https:\/\/thot-os-vault-bridge-staging\.thot-os\.workers\.dev\/pair(?:#|$)/.test(url)||!url.includes("creator_os_bridge_pair="))return;
   try{
+    await getBridgeMode();
     const parsed=new URL(url);
     const parameters=new URLSearchParams(parsed.hash.slice(1));
     const token=parameters.get("creator_os_bridge_pair");
@@ -184,6 +201,7 @@ const sendPreparedMessage = async (body) => {
 };
 
 const processOutbox = async (tabId,url,config) => {
+  if(await isInspectionMode())return;
   const activeThread=new URL(url).pathname.replace(/\/+$/,"/");
   const response=await messageBridgeRequest(config,`/outbox?thread=${encodeURIComponent(activeThread)}`);
   if(await markBridgeUpdateRequired(response))return;
@@ -191,6 +209,7 @@ const processOutbox = async (tabId,url,config) => {
   await clearBridgeNotice();
   const {job}=await response.json();
   if(!job)return;
+  if(await isInspectionMode())return;
   const executed=await chrome.scripting.executeScript({target:{tabId},func:sendPreparedMessage,args:[job.body]});
   const receipt=executed?.[0]?.result??{sent:false,error:"No browser execution receipt."};
   await messageBridgeRequest(config,"/outbox",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jobId:job.id,claimToken:job.claimToken,sent:Boolean(receipt.sent),error:receipt.error,receipt})});
@@ -295,10 +314,11 @@ const downloadBridgeMedia=async(config,job)=>{
     throw error;
   }
 };
-const attachLocalFileToNativeInput=async(tabId,localMediaPath)=>{
+const attachLocalFileToNativeInput=async(tabId,localMediaPath,ensureActive=async()=>{})=>{
   const target={tabId};
   let attached=false;
   try{
+    await ensureActive();
     await chrome.debugger.attach(target,"1.3");attached=true;
     await chrome.debugger.sendCommand(target,"DOM.enable");
     const remote=await chrome.debugger.sendCommand(target,"Runtime.evaluate",{
@@ -306,6 +326,7 @@ const attachLocalFileToNativeInput=async(tabId,localMediaPath)=>{
       returnByValue:false,
     });
     if(!remote?.result?.objectId)throw new Error("Fansly did not expose exactly one active native media input.");
+    await ensureActive();
     await chrome.debugger.sendCommand(target,"DOM.setFileInputFiles",{files:[localMediaPath],objectId:remote.result.objectId});
   }finally{if(attached)await chrome.debugger.detach(target).catch(()=>{});}
 };
@@ -316,15 +337,24 @@ const vaultPlatformForUrl=(url)=>{
   return parsed.hostname==="fansly.com"&&/\/(?:vault|media)(?:\/|$)/i.test(parsed.pathname);
 };
 const processVaultQueue=async(tabId,url)=>{
+  const initialMode=await getBridgeMode();
+  if(initialMode!=="active"&&initialMode!=="vault_once")return {ok:false,state:"inspection_mode",error:"Inspection mode blocks uploads. No job was claimed."};
   if(!vaultPlatformForUrl(url))return {ok:false,state:"wrong_page",error:"Open the Fansly vault first."};
   if(vaultUploadRunning)return {ok:false,state:"busy",error:"A vault upload is already in progress."};
   vaultUploadRunning=true;
-  let config,job,uploadStarted=false;
+  let config,job,uploadStarted=false,inspectionAborted=false;
+  const ensureActiveBeforeAttachment=async()=>{
+    if(!await isVaultUploadBlocked())return;
+    inspectionAborted=true;
+    throw new Error("Inspection mode stopped this upload before native attachment.");
+  };
   try{
+    if(initialMode==="vault_once")await chrome.storage.local.set({[VAULT_CONSUMED_KEY]:true});
     const prepared=await chrome.scripting.executeScript({target:{tabId},func:prepareFanslyVault});
     const preparation=prepared?.[0]?.result??{ready:false,error:"The Fansly preparation step did not return a result."};
     if(!preparation.ready)return {ok:false,state:"not_ready",error:preparation.error,receipt:preparation.receipt};
     config=await claim();
+    await ensureActiveBeforeAttachment();
     const response=await bridgeRequest(config,"/jobs/claim",{headers:{"x-thot-os-vault-client":"explicit-v4"}});
     if(response.status===401){await removeStoredBridge();return {ok:false,state:"unpaired",error:"This Chrome profile must be paired again."};}
     if(!response.ok)return {ok:false,state:"bridge_error",error:`THOT OS returned ${response.status}.`};
@@ -333,14 +363,16 @@ const processVaultQueue=async(tabId,url)=>{
     if(!job)return queue.reconciliationRequired
       ?{ok:false,state:"uncertain",error:"A previous upload may have completed without a receipt. Verify Fansly’s vault before asking an administrator to reconcile it."}
       :{ok:true,state:"empty"};
+    await ensureActiveBeforeAttachment();
     const baselineResults=await chrome.scripting.executeScript({target:{tabId},func:readFanslyVaultState});
     const baseline=baselineResults?.[0]?.result;
     if(!baseline)throw new Error("Fansly did not return its saved-vault baseline before attachment.");
     const download=await downloadBridgeMedia(config,job);
     let result;
     try{
+      await ensureActiveBeforeAttachment();
       uploadStarted=true;
-      await attachLocalFileToNativeInput(tabId,download.localMediaPath);
+      await attachLocalFileToNativeInput(tabId,download.localMediaPath,ensureActiveBeforeAttachment);
       const executed=await chrome.scripting.executeScript({target:{tabId},func:verifyFanslyVaultAttachment,args:[job.basename,baseline]});
       result=executed?.[0]?.result??{status:"failed",error:"Fansly did not return an attachment receipt."};
       result.receipt={...(result.receipt??{}),bytes:download.downloadBytes,nativeAttachment:true,uploadStarted:true,
@@ -353,24 +385,53 @@ const processVaultQueue=async(tabId,url)=>{
     if(recorded?.status==="claimed")return {ok:false,state:"uncertain",error:"Fansly may have saved the file, but Creator OS could not verify the receipt. Check the vault before retrying."};
     return {ok:false,state:"failed",filename:job.basename,error:result.error||"Creator OS did not verify the Fansly receipt."};
   }catch(error){
-    if(config?.token&&job?.id)await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:error instanceof Error?error.message:String(error),receipt:{url,uploadStarted,outcome:uploadStarted?"uncertain":"failed",reconciliationRequired:uploadStarted}})}).catch(()=>{});
+    const outcomeUncertain=uploadStarted&&!inspectionAborted;
+    if(config?.token&&job?.id)await bridgeRequest(config,`/jobs/${encodeURIComponent(job.id)}/receipt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({status:"failed",error:error instanceof Error?error.message:String(error),receipt:{url,uploadStarted:outcomeUncertain,outcome:outcomeUncertain?"uncertain":"failed",reconciliationRequired:outcomeUncertain}})}).catch(()=>{});
+    if(inspectionAborted)return {ok:false,state:"inspection_mode",error:"Inspection mode stopped this upload before native attachment. Check the queued job before retrying."};
     return {ok:false,state:uploadStarted?"uncertain":"failed",error:uploadStarted?"The upload outcome is uncertain. Verify Fansly’s vault before retrying.":error instanceof Error?error.message:String(error)};
-  }finally{vaultUploadRunning=false;}
+  }finally{
+    if(initialMode==="vault_once")await chrome.storage.local.set({[BRIDGE_MODE_KEY]:"inspection",[VAULT_ARMED_AT_KEY]:0,[VAULT_CONSUMED_KEY]:false});
+    vaultUploadRunning=false;
+  }
 };
 
 chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(message?.type==="creator-os-vault-once-arm"){
+    Promise.all([getBridgeMode(),getStoredBridge()]).then(async([mode,bridge])=>{
+      if(mode!=="inspection"||!bridge?.token)return {ok:false,error:"Pair this profile and keep it in inspection mode before arming a vault test."};
+      await chrome.storage.local.set({[BRIDGE_MODE_KEY]:"vault_once",[VAULT_ARMED_AT_KEY]:Date.now(),[VAULT_CONSUMED_KEY]:false});
+      return {ok:true,mode:"vault_once"};
+    }).then(sendResponse).catch(()=>sendResponse({ok:false,error:"The vault test could not be armed."}));
+    return true;
+  }
+  if(message?.type==="creator-os-vault-once-cancel"){
+    getBridgeMode().then(async(mode)=>{
+      if(mode!=="vault_once")return {ok:false,error:"No one-shot vault test is armed."};
+      await chrome.storage.local.set({[BRIDGE_MODE_KEY]:"inspection",[VAULT_ARMED_AT_KEY]:0,[VAULT_CONSUMED_KEY]:false});
+      return {ok:true,mode:"inspection"};
+    }).then(sendResponse).catch(()=>sendResponse({ok:false,error:"The vault test could not be cancelled."}));
+    return true;
+  }
+  if(message?.type==="creator-os-inspection-status"){
+    getBridgeMode().then((mode)=>sendResponse({ok:true,mode})).catch(()=>sendResponse({ok:false,mode:"inspection"}));
+    return true;
+  }
   if(message?.type==="creator-os-vault-status"){
-    getStoredBridge().then(async(config)=>{
-      if(!config?.token)return {ok:true,paired:false};
+    getBridgeMode().then(async(mode)=>{
+      const inspectionMode=mode==="inspection";
+      const vaultOnce=mode==="vault_once";
+      const config=await getStoredBridge();
+      if(!config?.token)return {ok:true,paired:false,inspectionMode,vaultOnce};
+      if(inspectionMode)return {ok:true,paired:true,inspectionMode,vaultOnce,creatorId:config.creatorId,accountId:config.accountId};
       try{
         const response=await bridgeRequest(config,"/status",{headers:{"x-thot-os-message-client":"explicit-v5"}});
         const detail=await response.json().catch(()=>({}));
         const storedNotice=await chrome.storage.local.get("creatorOsBridgeNotice");
-        if(response.status===401)return {ok:true,paired:false};
-        if(!response.ok)return {ok:true,paired:true,creatorId:config.creatorId,accountId:config.accountId,bridgeError:detail?.error||`THOT OS returned ${response.status}.`};
-        return {ok:true,paired:true,creatorId:config.creatorId,accountId:config.accountId,updateRequired:Boolean(detail?.messageClientUpdateRequired||storedNotice?.creatorOsBridgeNotice?.kind==="update_required"),legacyReconciliationCount:Number(detail?.legacyReconciliationCount||0)};
-      }catch(error){return {ok:true,paired:true,creatorId:config.creatorId,accountId:config.accountId,bridgeError:error instanceof Error?error.message:"THOT OS status is unavailable."};}
-    }).then(sendResponse).catch(()=>sendResponse({ok:false,paired:false}));
+        if(response.status===401)return {ok:true,paired:false,inspectionMode,vaultOnce};
+        if(!response.ok)return {ok:true,paired:true,inspectionMode,vaultOnce,creatorId:config.creatorId,accountId:config.accountId,bridgeError:detail?.error||`THOT OS returned ${response.status}.`};
+        return {ok:true,paired:true,inspectionMode,vaultOnce,creatorId:config.creatorId,accountId:config.accountId,updateRequired:Boolean(detail?.messageClientUpdateRequired||storedNotice?.creatorOsBridgeNotice?.kind==="update_required"),legacyReconciliationCount:Number(detail?.legacyReconciliationCount||0)};
+      }catch(error){return {ok:true,paired:true,inspectionMode,vaultOnce,creatorId:config.creatorId,accountId:config.accountId,bridgeError:error instanceof Error?error.message:"THOT OS status is unavailable."};}
+    }).then(sendResponse).catch(()=>sendResponse({ok:false,paired:false,inspectionMode:true}));
     return true;
   }
   if(message?.type!=="creator-os-process-fansly-vault")return;
@@ -381,6 +442,7 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
 
 const backgroundTabIds=new Set();
 const syncTab=async(tabId,url,backgroundCollection=false,claimToken="")=>{
+  if(await isInspectionMode())return false;
   if(!url.includes("fansly.com/messages"))return false;
   try{
     const config=await claim();
@@ -407,6 +469,7 @@ const syncTab=async(tabId,url,backgroundCollection=false,claimToken="")=>{
 };
 
 const collectNextPendingThread=async()=>{
+  if(await isInspectionMode())return;
   const config=await getStoredBridge();
   if(!config?.token)return;
   let createdTab,pending;
@@ -432,6 +495,7 @@ const collectNextPendingThread=async()=>{
 
 let fanslyMessageOutboxRunning=false;
 const processFanslyMessageOutbox=async()=>{
+  if(await isInspectionMode())return {ok:false,state:"inspection_mode"};
   if(fanslyMessageOutboxRunning)return {ok:false,state:"busy"};
   fanslyMessageOutboxRunning=true;
   let createdTab;
@@ -472,11 +536,13 @@ chrome.tabs.onUpdated.addListener((tabId,changeInfo,tab)=>{
   if(changeInfo.status==="complete"&&tab.url&&!backgroundTabIds.has(tabId))syncTab(tabId,tab.url);
 });
 const syncOpenMessageTabs=async()=>{
+  if(await isInspectionMode())return;
   const tabs=await chrome.tabs.query({url:["https://fansly.com/messages","https://fansly.com/messages/*"]});
   for(const tab of tabs)if(tab.id&&tab.url)await syncTab(tab.id,tab.url);
 };
 let fanslyFeedSyncRunning=false;
 const syncFanslyFeed=async()=>{
+  if(await isInspectionMode())return;
   if(fanslyFeedSyncRunning)return;
   fanslyFeedSyncRunning=true;
   try{
@@ -501,8 +567,12 @@ const syncFanslyFeed=async()=>{
 };
 
 
-const runFanslyJobs=()=>Promise.allSettled([processFanslyMessageOutbox(),syncFanslyFeed(),collectNextPendingThread()]);
-const createBridgeAlarms=()=>{
+const runFanslyJobs=async()=>{
+  if(await isInspectionMode())return [];
+  return Promise.allSettled([processFanslyMessageOutbox(),syncFanslyFeed(),collectNextPendingThread()]);
+};
+const createBridgeAlarms=async()=>{
+  if(await isInspectionMode())return;
   chrome.alarms.create("thot-os-fansly-sync",{periodInMinutes:0.5});
 };
 chrome.runtime.onInstalled.addListener(()=>{createBridgeAlarms();syncOpenMessageTabs();});

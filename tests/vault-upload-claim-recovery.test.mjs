@@ -125,10 +125,11 @@ test("extension only reports a Fansly upload as staged after server verification
   const end = extensionSource.indexOf("\n\nchrome.runtime.onMessage.addListener", start);
   assert.ok(start >= 0 && end > start, "extension queue handler boundaries exist");
   const body = extensionSource.slice(start, end);
-  async function run(serverStatus) {
+  async function run(serverStatus, mode = "active") {
     let executeCount = 0;
     let receiptPayload;
-    const chrome = { scripting: { executeScript: async () => {
+    const storage = {};
+    const chrome = { storage: { local: { set: async (values) => Object.assign(storage, values) } }, scripting: { executeScript: async () => {
       executeCount++;
       if (executeCount === 1) return [{ result: { ready: true } }];
       if (executeCount === 2) return [{ result: { savedMediaIds: [] } }];
@@ -139,12 +140,12 @@ test("extension only reports a Fansly upload as staged after server verification
       receiptPayload = JSON.parse(options.body);
       return { ok: true, status: 200, json: async () => ({ ok: true, status: serverStatus }) };
     };
-    const makeHandler = new Function("chrome", "vaultPlatformForUrl", "claim", "bridgeRequest", "prepareFanslyVault", "readFanslyVaultState", "downloadBridgeMedia", "attachLocalFileToNativeInput", "verifyFanslyVaultAttachment", "discardBridgeDownload",
-      `let vaultUploadRunning=false; ${body}; return processVaultQueue;`);
+    const makeHandler = new Function("chrome", "vaultPlatformForUrl", "claim", "bridgeRequest", "prepareFanslyVault", "readFanslyVaultState", "downloadBridgeMedia", "attachLocalFileToNativeInput", "verifyFanslyVaultAttachment", "discardBridgeDownload", "getBridgeMode", "isVaultUploadBlocked",
+      `const BRIDGE_MODE_KEY="creatorOsBridgeMode", VAULT_ARMED_AT_KEY="creatorOsVaultOnceArmedAt", VAULT_CONSUMED_KEY="creatorOsVaultOnceConsumed"; let vaultUploadRunning=false; ${body}; return processVaultQueue;`);
     const handler = makeHandler(chrome, () => true, async () => ({ token: "fixture" }), bridgeRequest,
       () => {}, () => {}, async () => ({ downloadId: "download-1", localMediaPath: "/tmp/photo.jpg", downloadBytes: 12 }),
-      async () => {}, () => {}, async () => {});
-    return { result: await handler(1, "https://fansly.com/creator/vault"), receiptPayload };
+      async () => {}, () => {}, async () => {}, async () => mode, async () => false);
+    return { result: await handler(1, "https://fansly.com/creator/vault"), receiptPayload, storage };
   }
   const uncertain = await run("claimed");
   assert.equal(uncertain.result.state, "uncertain");
@@ -154,4 +155,8 @@ test("extension only reports a Fansly upload as staged after server verification
   const verified = await run("verified");
   assert.equal(verified.result.state, "staged");
   assert.equal(verified.result.ok, true);
+  const oneShot = await run("verified", "vault_once");
+  assert.equal(oneShot.result.state, "staged");
+  assert.equal(oneShot.storage.creatorOsBridgeMode, "inspection", "one-shot attempt returns to inspection after a verified receipt");
+  assert.equal(oneShot.storage.creatorOsVaultOnceConsumed, false);
 });
