@@ -1103,6 +1103,7 @@ async function queueFanslyVaultAssets(identity: Awaited<ReturnType<typeof requir
       JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id
       WHERE a.creator_id=@creator AND a.source_available=1 AND a.id IN (${placeholders})
         AND EXISTS (SELECT 1 FROM asset_destinations d WHERE d.asset_id=a.id AND d.creator_id=a.creator_id AND d.destination IN ('subscription','ppv'))
+        AND (c.is_multi=0 OR EXISTS (SELECT 1 FROM asset_people ap WHERE ap.asset_id=a.id AND ap.creator_id=a.creator_id))
     `).bind(...assetIds).all<{ id: string; extension: string; is_multi: number }>(),
     creatorPrepare(DB, creatorId, `
       SELECT DISTINCT ap.asset_id FROM asset_people ap

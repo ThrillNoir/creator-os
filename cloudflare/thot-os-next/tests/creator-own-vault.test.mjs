@@ -55,6 +55,17 @@ test('inactive account, missing source, destination, consent and unsupported med
  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM vault_upload_events').get().n,0);
  }finally{f.sqlite.close()}}
 });
+test('multi-creator asset needs a linked participant with paid-use consent',async()=>{
+ const f=fixture();try{
+ f.sqlite.prepare("UPDATE asset_classifications SET is_multi=1 WHERE creator_id='one'").run();
+ await assert.rejects(f.own(form('one-asset')),/Every selected asset/);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM vault_upload_jobs').get().n,0);
+ f.sqlite.prepare("INSERT INTO asset_people VALUES('one-asset','one','participant')").run();
+ f.sqlite.prepare("INSERT INTO asset_paid_consent_attestations VALUES('one-asset','one','participant',NULL)").run();
+ await assert.rejects(f.own(form('one-asset')),/saved=vault_queued/);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM vault_upload_jobs').get().n,1);
+ }finally{f.sqlite.close()}
+});
 test('creator cannot call staff action; viewer and staff cannot call creator action',async()=>{
  for(const role of ['creator','viewer','operator','agency_admin']){const f=fixture('one',role);try{
  if(role==='creator')await assert.rejects(f.staff(form('one-asset')),/denied/);
