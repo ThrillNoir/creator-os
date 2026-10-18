@@ -1080,9 +1080,21 @@ export async function validateInstagramReplyTargetAction(formData: FormData) {
 
 export async function createFanslyVaultJobsAction(formData: FormData) {
   const identity = await requireCreatorContext("approve");
-  const creatorId = identity.creator.creator_id;
   const assetIds = [...new Set(values(formData, "assetId"))].slice(0, 50);
   if (!assetIds.length) throw new Error("Choose at least one paid-ready asset.");
+  return queueFanslyVaultAssets(identity, assetIds);
+}
+
+export async function createOwnFanslyVaultJobAction(formData: FormData) {
+  const identity = await requireCreatorContext("mutate");
+  if (identity.creator.role !== "creator") throw new Error("Own-vault uploads require a creator login.");
+  const assetIds = values(formData, "assetId");
+  if (assetIds.length !== 1) throw new Error("Choose exactly one paid-ready asset for your vault.");
+  return queueFanslyVaultAssets(identity, assetIds);
+}
+
+async function queueFanslyVaultAssets(identity: Awaited<ReturnType<typeof requireCreatorContext>>, assetIds: string[]) {
+  const creatorId = identity.creator.creator_id;
   const { DB } = cloudflareEnv();
   const placeholders = assetIds.map(() => "?").join(",");
   const [assets, missingConsent, account] = await Promise.all([
@@ -1097,7 +1109,7 @@ export async function createFanslyVaultJobsAction(formData: FormData) {
       LEFT JOIN asset_paid_consent_attestations pc ON pc.asset_id=ap.asset_id AND pc.creator_id=ap.creator_id AND pc.person_id=ap.person_id AND pc.revoked_at IS NULL
       WHERE ap.creator_id=@creator AND ap.asset_id IN (${placeholders}) AND pc.asset_id IS NULL
     `).bind(...assetIds).all<{ asset_id: string }>(),
-    creatorPrepare(DB, creatorId, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' ORDER BY label LIMIT 1").first<{ id: string }>(),
+    creatorPrepare(DB, creatorId, "SELECT id FROM operational_accounts WHERE creator_id=@creator AND platform='fansly' AND is_active=1 ORDER BY label LIMIT 1").first<{ id: string }>(),
   ]);
   if (!account) throw new Error("This creator’s Fansly vault is not configured.");
   if (assets.results.length !== assetIds.length) throw new Error("Every selected asset must be available and tagged Subscription or PPV.");
