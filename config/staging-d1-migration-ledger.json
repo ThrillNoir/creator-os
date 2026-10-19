@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-10-05T10:03:03.159Z",
+  "observedAt": "2026-10-19T13:14:02.349Z",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
   "migrations": [
     {
@@ -383,13 +383,13 @@
       "sha256": "619236b1e25bc5c01a88e3e96aba7d3388711abc31d17234e65bae545592d3f2",
       "purpose": "Applied approved bounded staging migration: private manual download sale records and correction audit.",
       "remoteId": 67
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0066_creator_portfolio_drafts.sql",
       "sha256": "2316c45b692226e668dbd37cfa634148e78c8a012283428b6b951cf078a627bc",
-      "purpose": "Pending bounded staging migration: private creator-scoped portfolio drafts, labels, and audit events."
+      "purpose": "Applied approved bounded staging migration: private creator-scoped portfolio drafts, labels, and audit events.",
+      "remoteId": 68
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
