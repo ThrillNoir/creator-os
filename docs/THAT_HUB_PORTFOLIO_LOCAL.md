@@ -23,6 +23,14 @@ keys, private URLs, payments or entitlements. The preview server listens only
 on `127.0.0.1` and simulates age entry for synthetic content; that shortcut is
 not part of the Worker.
 
+Each published video preview also has **Message creator for full length**.
+The visitor enters a name, chooses Telegram or email for the creator's reply,
+and sees an editable prepared message with the creator name, preview asset ID,
+and clip title. A submitted enquiry is kept only in the local fixture's memory. The
+fixture resolves the published preview to its synthetic full asset ID on the
+server; the private full asset ID and media URL are not put in the public page.
+No Telegram message, email, payment option, or download link is sent or created.
+
 The More page keeps its creator-selected profile colors and content. Within it,
 the portfolio uses the THOT OS BoldKit card language: square blush disclosure,
 light cards, strong borders, hard shadows, mint filter action, and visible
@@ -37,7 +45,7 @@ node --experimental-strip-types cloudflare/thot-os-adult-gateway/tests/portfolio
 Open `http://127.0.0.1:8790/`, then use **View protected portfolio** or
 **Creator manager**. The local runner requires `ffmpeg` to generate a short
 test-pattern MP4 in memory. Its state resets when the process stops. The
-custom request is kept only in memory; it sends no message.
+custom and full-length requests are kept only in memory; they send no message.
 
 Focused tests:
 
@@ -55,5 +63,9 @@ media delivery with withdrawal/revocation, and a private custom-request inbox
 with rate limits and Turnstile. The manager needs real Access identity and
 creator membership checks. It must not expose verified Library originals to
 visitors. Staging needs route/binding and age-gate tests before deployment.
+The real preview-to-full relationship exists as `asset_classifications.teaser_for_asset_id`,
+but the current application does not read or write it for this portfolio; that
+creator-scoped lookup and a private delivery workflow must be connected before
+the full-length enquiry can become a live feature.
 Payment confirmation, paid downloads, and revenue reconciliation are separate
 follow-on work.

@@ -1,8 +1,8 @@
 export const fixtureCatalog = [
   { id: "studio-portrait", title: "Studio portrait", description: "A soft light portrait study.", kind: "image", section: "Photos", genre: "Portraits" },
-  { id: "after-hours", title: "After hours", description: "A short cinematic mood preview.", kind: "video", section: "Clips", genre: "Performance" },
+  { id: "after-hours", title: "After hours", description: "A short cinematic mood preview.", kind: "video", section: "Clips", genre: "Performance", fullAssetId: "fixture-full-after-hours" },
   { id: "quiet-morning", title: "Quiet morning", description: "A glimpse behind the scenes.", kind: "image", section: "Behind the scenes", genre: "Everyday" },
-  { id: "movement-study", title: "Movement study", description: "A second short preview clip.", kind: "video", section: "Clips", genre: "Everyday" },
+  { id: "movement-study", title: "Movement study", description: "A second short preview clip.", kind: "video", section: "Clips", genre: "Everyday", fullAssetId: "fixture-full-movement-study" },
 ];
 
 const sections = new Set(["Photos", "Clips", "Behind the scenes"]);
@@ -62,6 +62,24 @@ export class PortfolioFixture {
       typeof email !== "string" || email.length > 254 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ||
       acknowledge !== "yes") return false;
     this.requests.push({ requestType, message: message.trim(), email });
+    return true;
+  }
+
+  submitFullLengthRequest(slug, { previewId, name, contactMethod, contact, message }) {
+    const item = slug === this.creatorSlug ? this.items.get(previewId) : null;
+    if (!item?.published || item.kind !== "video" || !item.fullAssetId ||
+      typeof name !== "string" || !name.trim() || name.trim().length > 80 || /[\r\n<>]/.test(name) ||
+      typeof contact !== "string" || !contact.trim() || contact.length > 254 ||
+      typeof message !== "string" || message.trim().length < 10 || message.length > 800 ||
+      !["telegram", "email"].includes(contactMethod)) return false;
+    const address = contact.trim();
+    if (contactMethod === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return false;
+    if (contactMethod === "telegram" && !/^@?[A-Za-z0-9_]{3,64}$/.test(address)) return false;
+    // Resolve the private full-video relationship from the published fixture,
+    // never from a visitor-supplied asset ID or media URL.
+    this.requests.push({ requestType: "full-length", previewId: item.id, fullAssetId: item.fullAssetId,
+      name: name.trim(), contactMethod, contact: address,
+      message: message.trim() });
     return true;
   }
 }

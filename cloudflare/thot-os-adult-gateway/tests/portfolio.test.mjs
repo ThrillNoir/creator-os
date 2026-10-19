@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import defaultWorker, { createAdultGateway } from "../src/index.ts";
-import { validPortfolio } from "../src/portfolio.ts";
+import { fullLengthMessage, validPortfolio } from "../src/portfolio.ts";
 import { PortfolioFixture } from "./portfolio-fixture.mjs";
 
 const profile = {
@@ -101,4 +101,55 @@ test("filters, native video controls, request acknowledgement and reduced motion
   assert.equal(fixture.submitRequest("adelaide", { requestType: "clip", message: "Please make a short clip", email: "", acknowledge: "no" }), false);
   assert.equal(fixture.submitRequest("other", { requestType: "clip", message: "Please make a short clip", email: "", acknowledge: "yes" }), false);
   assert.equal(fixture.submitRequest("adelaide", { requestType: "clip", message: "Please make a short clip", email: "", acknowledge: "yes" }), true);
+});
+
+test("a published clip offers a prepared full-length enquiry without exposing the private asset", async () => {
+  const fixture = new PortfolioFixture();
+  for (const [id, section, genre, order] of [["studio-portrait", "Photos", "Portraits", 1], ["after-hours", "Clips", "Performance", 2]]) {
+    fixture.update("adelaide", id, { selected: true, section, genre, order });
+    fixture.publish("adelaide", id);
+  }
+  const worker = createAdultGateway(async (slug, version) => fixture.projection(slug, version));
+  assert.equal((await view(worker, "/adelaide")).status, 404);
+  const body = await (await view(worker, "/adelaide?section=Clips", await sessionCookie())).text();
+  assert.match(body, /Message creator for full length/);
+  assert.match(body, /name="name" type="text" required/);
+  assert.match(body, /value="telegram">Telegram/);
+  assert.match(body, /value="email">Email/);
+  assert.match(body, /<textarea name="message" required minlength="10" maxlength="800"/);
+  assert.doesNotMatch(body, /<textarea name="message" readonly/);
+  assert.match(body, /Hello Adelaide,/);
+  assert.match(body, /Asset ID: after-hours/);
+  assert.match(body, /Full-length clip: After hours/);
+  assert.doesNotMatch(body, /fixture-full-after-hours|private.*\.mp4|Download full video/);
+  const photo = await (await view(worker, "/adelaide?section=Photos", await sessionCookie())).text();
+  assert.doesNotMatch(photo, /Message creator for full length/);
+});
+
+test("full-length request resolves the published preview to its private full asset server-side", () => {
+  const fixture = new PortfolioFixture();
+  const message = fullLengthMessage("Adelaide Suede", "after-hours", "After hours");
+  const request = { previewId: "after-hours", name: "Alex", contactMethod: "telegram", contact: "@alex_example", message };
+  assert.equal(fixture.submitFullLengthRequest("adelaide", request), false);
+  fixture.update("adelaide", "after-hours", { selected: true, section: "Clips", genre: "Performance", order: 1 });
+  fixture.publish("adelaide", "after-hours");
+  assert.equal(fixture.submitFullLengthRequest("other", request), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, previewId: "studio-portrait" }), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, previewId: "fixture-full-after-hours" }), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, contactMethod: "email" }), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, contact: "bad address" }), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, name: "<script>" }), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, message: "short" }), false);
+  assert.equal(fixture.submitFullLengthRequest("adelaide", request), true);
+  assert.deepEqual(fixture.requests[0], {
+    requestType: "full-length", previewId: "after-hours", fullAssetId: "fixture-full-after-hours",
+    name: "Alex", contactMethod: "telegram", contact: "@alex_example",
+    message,
+  });
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, message: "I would like this clip, please." }), true);
+  assert.equal(fixture.requests[1].fullAssetId, "fixture-full-after-hours");
+  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, contactMethod: "email", contact: "alex@example.com" }), true);
+  assert.equal(fixture.requests[2].contactMethod, "email");
+  fixture.withdraw("adelaide", "after-hours");
+  assert.equal(fixture.submitFullLengthRequest("adelaide", request), false);
 });
