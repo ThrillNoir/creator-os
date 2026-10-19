@@ -44,8 +44,15 @@ rollback no longer depending on legacy authentication.
 
 `npm run services:activate -- --environment staging --activation config/service-auth-activation.staging.json --plan`
 is read-only and default-safe. It uses the repository-owned structured D1 REST
-reader with the scoped D1-read credential held only in the approved macOS
-Keychain item. It verifies the registered staging D1 UUID/name, reads its
+reader with the scoped D1-read credential held only in the approved OS secure
+store item (macOS Keychain or Linux Secret Service). The Linux runner requires
+`secret-tool` and an item with service `thot-os-release-d1-read` and account
+`thot-os-release`; the release tool never accepts a D1 token from its environment.
+Pinned Wrangler 4.125.0 probes `secret-tool --version`, which Ubuntu's
+`libsecret-tools` does not support. The checked-in Linux compatibility command
+answers only that probe and passes every other operation to `/usr/bin/secret-tool`;
+the release subprocess environment puts it on Wrangler's `PATH`.
+It verifies the registered staging D1 UUID/name, reads its
 ordered migration list, and reads only the deterministic activation run,
 canonical-principal, credential-status, grant-status, and audit-event state.
 It emits a redacted exact plan and reports independent `partialExpandReady`,
@@ -70,7 +77,7 @@ npm run services:activation-backup -- \
 ```
 
 It invokes only a read-only remote D1 export through the isolated Wrangler
-Keychain/OAuth boundary, parses the export locally only to verify its ordered
+OS keyring/OAuth boundary, parses the export locally only to verify its ordered
 migration history, and deletes that temporary parse copy. The retained SQL
 export and its `0600` receipt remain in the user-owned `0700` external backup
 directory, never in the repository. The receipt binds its raw-byte SHA-256,
@@ -84,7 +91,7 @@ failure/rollback state. Plain bearers are generated only at the approved
 operation, supplied to Wrangler by stdin, stored only as Cloudflare Web Worker
 secrets, and represented in D1 only by SHA-256 hashes. Mutation and metadata
 Wrangler children strip inherited `CLOUDFLARE_*`, `CF_*`, and `WRANGLER_*`
-variables, then use only the reviewed Keychain/OAuth boundary. Each attempt
+variables, then use only the reviewed OS keyring/OAuth boundary. Each attempt
 generates a fresh receipt-only release-attempt ID. Receipts record names,
 counts, version/deployment metadata, backup and plan references, and
 results—never bearer values or hashes.

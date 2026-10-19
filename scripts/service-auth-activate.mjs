@@ -49,23 +49,29 @@ export function currentGitIdentity() { return { sha: git(["rev-parse", "HEAD"]),
 export function cleanGitTree() { return git(["status", "--porcelain"]) === ""; }
 
 /**
- * Reads the scoped D1-read credential directly into this process. It is never
- * exported into the environment, written to a file, or passed to Wrangler.
+ * Reads the scoped D1-read credential directly into this process from the OS
+ * secure store. It is never exported into the environment, written to a file,
+ * or passed to Wrangler.
  */
-export function readD1ReadTokenFromKeychain({ execFileSyncImpl = execFileSync, keychain = d1ReadKeychain } = {}) {
+export function readD1ReadTokenFromSecureStore({ execFileSyncImpl = execFileSync, keychain = d1ReadKeychain, platform = process.platform } = {}) {
+  const command = platform === "darwin" ? "/usr/bin/security" : platform === "linux" ? "/usr/bin/secret-tool" : null;
+  const args = platform === "darwin"
+    ? ["find-generic-password", "-s", keychain.service, "-a", keychain.account, "-w"]
+    : ["lookup", "service", keychain.service, "account", keychain.account];
   try {
-    const token = String(execFileSyncImpl("/usr/bin/security", ["find-generic-password", "-s", keychain.service, "-a", keychain.account, "-w"], {
+    if (!command) throw new Error("unsupported OS secure store");
+    const token = String(execFileSyncImpl(command, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     })).trim();
     if (!token) throw new Error("empty keychain value");
     return token;
   } catch {
-    throw new Error("Scoped D1 read credential is unavailable from the approved Keychain item.");
+    throw new Error("Scoped D1 read credential is unavailable from the approved OS secure store item.");
   }
 }
 
-export function createActivationD1ReadClient({ readToken = readD1ReadTokenFromKeychain, ...options } = {}) {
+export function createActivationD1ReadClient({ readToken = readD1ReadTokenFromSecureStore, ...options } = {}) {
   return createStructuredD1ReadClient({ token: readToken(), ...options });
 }
 
@@ -75,7 +81,7 @@ export function createActivationD1ReadClient({ readToken = readD1ReadTokenFromKe
  * so an API endpoint, auth mode, credential, output path, or read token cannot
  * change that boundary.
  */
-export function mutationWranglerEnvironment({ baseEnvironment = process.env, accountId } = {}) {
+export function mutationWranglerEnvironment({ baseEnvironment = process.env, accountId, platform = process.platform } = {}) {
   if (typeof accountId !== "string" || accountId.trim() === "") throw new Error("Wrangler mutation requires a reviewed Cloudflare account id.");
   const environment = { ...baseEnvironment };
   for (const key of Object.keys(environment)) {
@@ -83,6 +89,10 @@ export function mutationWranglerEnvironment({ baseEnvironment = process.env, acc
   }
   environment.CLOUDFLARE_ACCOUNT_ID = accountId;
   environment.CLOUDFLARE_AUTH_USE_KEYRING = "true";
+  // Wrangler 4.125.0 treats Ubuntu's secret-tool as absent because it probes
+  // an unsupported --version flag. The checked-in shim answers that probe and
+  // forwards every real keyring operation to /usr/bin/secret-tool.
+  if (platform === "linux") environment.PATH = `${path.join(root, "scripts/secret-tool-compat")}:${environment.PATH ?? "/usr/bin:/bin"}`;
   return environment;
 }
 

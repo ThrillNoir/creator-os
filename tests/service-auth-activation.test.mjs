@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { activationBackupReceiptDigest, activationConfirmation, assertApplyGates, assertPrincipalSecretOwnership, assertRevokeGates, buildActivationPlan, planDigest, redactActivationReceipt, revokeConfirmation, sha256, sha256Bytes, withActivationStatus } from "../scripts/service-auth-activation-lib.mjs";
-import { activationSql, applyActivation, assertApprovedPlanMatchesCurrent, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureActivationWorkerMetadata, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Execute, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
+import { activationSql, applyActivation, assertApprovedPlanMatchesCurrent, assertD1MutationPreflight, assertD1WriteAuthorizationPreflight, canonicalActivationRecords, captureActivationWorkerMetadata, captureStagedWorkerMetadata, captureWorkerMetadata, classifyActivationStatus, classifyWranglerMutationFailure, compareWorkerMetadata, d1Execute, d1Migrations, mutationWranglerEnvironment, parseArgs, parseD1WriteAuthorizationPreflightJson, parseWorkerVersionSecretMetadataJson, parseWorkerVersionsJson, readActivationStatus, readD1ReadTokenFromSecureStore, redactedMutationFailureCategory, revokeActivation, revokeActivationSql, runWranglerMutation, stageWebSecrets } from "../scripts/service-auth-activate.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file) => readFile(path.join(root, file), "utf8").then(JSON.parse);
@@ -394,6 +394,32 @@ test("activation CLI has explicit plan/apply modes and receipts reject secret ma
   assert.throws(() => redactActivationReceipt({ credentials: "not allowed" }), /prohibited/i);
 });
 
+test("scoped D1 read token uses the approved OS secure store and fails closed", () => {
+  const calls = [];
+  const readToken = (platform) => readD1ReadTokenFromSecureStore({
+    platform,
+    execFileSyncImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return "fixture-token\n";
+    },
+  });
+  assert.equal(readToken("darwin"), "fixture-token");
+  assert.deepEqual(calls[0].args, ["find-generic-password", "-s", "thot-os-release-d1-read", "-a", "thot-os-release", "-w"]);
+  assert.equal(calls[0].command, "/usr/bin/security");
+  assert.equal(readToken("linux"), "fixture-token");
+  assert.deepEqual(calls[1].args, ["lookup", "service", "thot-os-release-d1-read", "account", "thot-os-release"]);
+  assert.equal(calls[1].command, "/usr/bin/secret-tool");
+  for (const call of calls) assert.deepEqual(call.options.stdio, ["ignore", "pipe", "pipe"]);
+  assert.throws(() => readD1ReadTokenFromSecureStore({ platform: "linux", execFileSyncImpl: () => "" }), /unavailable from the approved OS secure store/);
+  const error = new Error("Bearer private-fixture-token");
+  assert.throws(() => readD1ReadTokenFromSecureStore({ platform: "linux", execFileSyncImpl: () => { throw error; } }), (failure) => {
+    assert.match(failure.message, /unavailable from the approved OS secure store/);
+    assert.doesNotMatch(failure.message, /private-fixture-token/);
+    return true;
+  });
+  assert.throws(() => readD1ReadTokenFromSecureStore({ platform: "win32", execFileSyncImpl: () => { throw new Error("must not run"); } }), /unavailable from the approved OS secure store/);
+});
+
 test("activation mutations strip read credentials and use the Wrangler keychain OAuth path", async () => {
   const [, , registry] = await Promise.all([json("config/service-auth-activation.staging.json"), json("config/service-principals.json"), json("config/deployments.json")]);
   const environment = mutationWranglerEnvironment({
@@ -445,6 +471,7 @@ test("activation mutations strip read credentials and use the Wrangler keychain 
   assert.equal(environment.WRANGLER_OUTPUT_FILE_PATH, undefined);
   assert.equal(environment.CLOUDFLARE_AUTH_USE_KEYRING, "true");
   assert.equal(environment.CLOUDFLARE_ACCOUNT_ID, registry.environments.staging.accountId);
+  if (process.platform === "linux") assert.equal(environment.PATH, `${path.join(root, "scripts/secret-tool-compat")}:/usr/bin`);
 
   const calls = [];
   runWranglerMutation(["versions", "secret", "bulk"], registry, {
