@@ -385,5 +385,11 @@
       "remoteId": 67
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0066_creator_portfolio_drafts.sql",
+      "sha256": "2316c45b692226e668dbd37cfa634148e78c8a012283428b6b951cf078a627bc",
+      "purpose": "Pending bounded staging migration: private creator-scoped portfolio drafts, labels, and audit events."
+    }
+  ]
 }
