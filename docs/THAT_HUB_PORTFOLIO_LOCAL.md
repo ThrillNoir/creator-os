@@ -23,6 +23,11 @@ keys, private URLs, payments or entitlements. The preview server listens only
 on `127.0.0.1` and simulates age entry for synthetic content; that shortcut is
 not part of the Worker.
 
+The More page keeps its creator-selected profile colors and content. Within it,
+the portfolio uses the THOT OS BoldKit card language: square blush disclosure,
+light cards, strong borders, hard shadows, mint filter action, and visible
+keyboard focus. Motion is disabled when reduced motion is requested.
+
 Start from the repository root:
 
 ```sh
