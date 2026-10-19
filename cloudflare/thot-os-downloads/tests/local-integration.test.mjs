@@ -48,8 +48,8 @@ test("local migrated schema creates, redeems, ranges, and revokes a synthetic do
     modules: true, compatibilityDate: "2026-08-08", script: "export default { fetch() { return new Response('fixture'); } }", r2Buckets: ["LIBRARY_MEDIA"],
   }));
   try {
-    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 67);
-    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0065_content_download_sales.sql");
+    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 68);
+    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0066_creator_portfolio_drafts.sql");
     const media = await mf.getR2Bucket("LIBRARY_MEDIA");
     const identity = await media.put("originals/fixture.mp4", bytes, { httpMetadata: { contentType: "video/mp4" } });
     await seed(local.db, identity);

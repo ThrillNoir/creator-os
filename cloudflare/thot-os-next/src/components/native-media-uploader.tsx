@@ -101,7 +101,7 @@ export function NativeMediaUploader() {
   const storageKey = (hash: string) => `creator-os:native-image:${hash}`;
 
   const finalizeDependencies: FinalizeRecoveryDependencies = {
-    fetcher: fetch,
+    fetcher: (input, init) => fetch(input, init),
     parse: (response) => payload<FinalizeResponse>(response),
     update,
     removeSession: (hash) => { if (hash) sessionStorage.removeItem(storageKey(hash)); },

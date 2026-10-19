@@ -47,7 +47,7 @@ test("video review resolves an asset UUID without a photo preview and stays crea
     assert.equal(find("creator-a", id), undefined);
   } finally { db.close(); }
   const page = await source("app/library/[objectId]/page.tsx");
-  assert.match(page, /<VerifiedVideoPreview assetId=\{asset\.id\} basename=\{asset\.basename\} \/>/);
+  assert.match(page, /<VerifiedVideoPreview assetId=\{asset\.id\} basename=\{asset\.basename\} poster=\{posterUrl\} \/>/);
   const videoPreview = await source("components/verified-video-preview.tsx");
   assert.match(videoPreview, /<video className=\{className\} controls preload="none" playsInline/);
   assert.match(page, /saveAssetAttributesAction/);
