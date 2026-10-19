@@ -103,7 +103,7 @@ test("filters, native video controls, request acknowledgement and reduced motion
   assert.equal(fixture.submitRequest("adelaide", { requestType: "clip", message: "Please make a short clip", email: "", acknowledge: "yes" }), true);
 });
 
-test("a published clip offers a prepared full-length enquiry without exposing the private asset", async () => {
+test("a published clip offers a prepared direct-contact message without exposing the private asset", async () => {
   const fixture = new PortfolioFixture();
   for (const [id, section, genre, order] of [["studio-portrait", "Photos", "Portraits", 1], ["after-hours", "Clips", "Performance", 2]]) {
     fixture.update("adelaide", id, { selected: true, section, genre, order });
@@ -116,6 +116,7 @@ test("a published clip offers a prepared full-length enquiry without exposing th
   assert.match(body, /name="name" type="text" required/);
   assert.match(body, /value="telegram">Telegram/);
   assert.match(body, /value="email">Email/);
+  assert.doesNotMatch(body, /name="contact"/);
   assert.match(body, /<textarea name="message" required minlength="10" maxlength="800"/);
   assert.doesNotMatch(body, /<textarea name="message" readonly/);
   assert.match(body, /Hello Adelaide,/);
@@ -126,30 +127,37 @@ test("a published clip offers a prepared full-length enquiry without exposing th
   assert.doesNotMatch(photo, /Message creator for full length/);
 });
 
-test("full-length request resolves the published preview to its private full asset server-side", () => {
-  const fixture = new PortfolioFixture();
+test("direct contact resolves the published preview without saving an inbox request", () => {
+  const fixture = new PortfolioFixture("adelaide", "local-adelaide-v1", { telegram: "fixturecreator", email: "creator@example.invalid" });
   const message = fullLengthMessage("Adelaide Suede", "after-hours", "After hours");
-  const request = { previewId: "after-hours", name: "Alex", contactMethod: "telegram", contact: "@alex_example", message };
-  assert.equal(fixture.submitFullLengthRequest("adelaide", request), false);
+  const request = { previewId: "after-hours", name: "Alex", contactMethod: "telegram", message };
+  assert.equal(fixture.prepareFullLengthContact("adelaide", request), null);
   fixture.update("adelaide", "after-hours", { selected: true, section: "Clips", genre: "Performance", order: 1 });
   fixture.publish("adelaide", "after-hours");
-  assert.equal(fixture.submitFullLengthRequest("other", request), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, previewId: "studio-portrait" }), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, previewId: "fixture-full-after-hours" }), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, contactMethod: "email" }), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, contact: "bad address" }), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, name: "<script>" }), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, message: "short" }), false);
-  assert.equal(fixture.submitFullLengthRequest("adelaide", request), true);
-  assert.deepEqual(fixture.requests[0], {
-    requestType: "full-length", previewId: "after-hours", fullAssetId: "fixture-full-after-hours",
-    name: "Alex", contactMethod: "telegram", contact: "@alex_example",
-    message,
-  });
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, message: "I would like this clip, please." }), true);
-  assert.equal(fixture.requests[1].fullAssetId, "fixture-full-after-hours");
-  assert.equal(fixture.submitFullLengthRequest("adelaide", { ...request, contactMethod: "email", contact: "alex@example.com" }), true);
-  assert.equal(fixture.requests[2].contactMethod, "email");
+  assert.equal(fixture.prepareFullLengthContact("other", request), null);
+  assert.equal(fixture.prepareFullLengthContact("adelaide", { ...request, previewId: "studio-portrait" }), null);
+  assert.equal(fixture.prepareFullLengthContact("adelaide", { ...request, previewId: "fixture-full-after-hours" }), null);
+  assert.equal(fixture.prepareFullLengthContact("adelaide", { ...request, contactMethod: "sms" }), null);
+  assert.equal(fixture.prepareFullLengthContact("adelaide", { ...request, name: "<script>" }), null);
+  assert.equal(fixture.prepareFullLengthContact("adelaide", { ...request, message: "short" }), null);
+  const telegram = fixture.prepareFullLengthContact("adelaide", request);
+  assert.equal(telegram.fullAssetId, "fixture-full-after-hours");
+  assert.match(telegram.message, /From: Alex\nReference: after-hours — After hours$/);
+  assert.equal(new URL(telegram.href).pathname, "/fixturecreator");
+  assert.equal(new URL(telegram.href).searchParams.get("text"), telegram.message);
+  const email = fixture.prepareFullLengthContact("adelaide", { ...request, contactMethod: "email", message: "I would like this clip, please." });
+  assert.equal(email.fullAssetId, "fixture-full-after-hours");
+  assert.equal(new URL(email.href).pathname, "creator@example.invalid");
+  assert.equal(new URL(email.href).searchParams.get("body"), email.message);
+  assert.equal(fixture.requests.length, 0);
+  const unconfigured = new PortfolioFixture();
+  unconfigured.update("adelaide", "after-hours", { selected: true, section: "Clips", genre: "Performance", order: 1 });
+  unconfigured.publish("adelaide", "after-hours");
+  assert.equal(unconfigured.prepareFullLengthContact("adelaide", request).href, null);
+  const unsafeDestination = new PortfolioFixture("adelaide", "local-adelaide-v1", { email: "creator@example.invalid?cc=other@example.invalid" });
+  unsafeDestination.update("adelaide", "after-hours", { selected: true, section: "Clips", genre: "Performance", order: 1 });
+  unsafeDestination.publish("adelaide", "after-hours");
+  assert.equal(unsafeDestination.prepareFullLengthContact("adelaide", { ...request, contactMethod: "email" }).href, null);
   fixture.withdraw("adelaide", "after-hours");
-  assert.equal(fixture.submitFullLengthRequest("adelaide", request), false);
+  assert.equal(fixture.prepareFullLengthContact("adelaide", request), null);
 });

@@ -24,12 +24,15 @@ on `127.0.0.1` and simulates age entry for synthetic content; that shortcut is
 not part of the Worker.
 
 Each published video preview also has **Message creator for full length**.
-The visitor enters a name, chooses Telegram or email for the creator's reply,
+The visitor enters a name, chooses Telegram or email to contact the creator,
 and sees an editable prepared message with the creator name, preview asset ID,
-and clip title. A submitted enquiry is kept only in the local fixture's memory. The
-fixture resolves the published preview to its synthetic full asset ID on the
-server; the private full asset ID and media URL are not put in the public page.
-No Telegram message, email, payment option, or download link is sent or created.
+and clip title. The fixture resolves the published preview to its synthetic
+full asset ID on the server; the private full asset ID and media URL are not
+put in the public page. A configured creator destination would produce a
+Telegram chat draft or email draft for the visitor to review and send. The
+local runner has no creator destination, so it shows the prepared message
+without an outgoing link. It saves no full-length request and creates no
+payment option or download link.
 
 The More page keeps its creator-selected profile colors and content. Within it,
 the portfolio uses the THOT OS BoldKit card language: square blush disclosure,
@@ -45,7 +48,8 @@ node --experimental-strip-types cloudflare/thot-os-adult-gateway/tests/portfolio
 Open `http://127.0.0.1:8790/`, then use **View protected portfolio** or
 **Creator manager**. The local runner requires `ffmpeg` to generate a short
 test-pattern MP4 in memory. Its state resets when the process stops. The
-custom and full-length requests are kept only in memory; they send no message.
+custom requests are kept only in memory; they send no message. Full-length
+contact preparation does not save a request.
 
 Focused tests:
 
@@ -59,8 +63,10 @@ npm --prefix cloudflare/thot-os-adult-gateway run check
 This fixture is not a publish pipeline. A release needs creator-scoped D1
 selection and approval state, current rights/consent verification, a separate
 approved preview derivative (or authorized public Stream identity), protected
-media delivery with withdrawal/revocation, and a private custom-request inbox
-with rate limits and Turnstile. The manager needs real Access identity and
+media delivery with withdrawal/revocation. Direct full-length contact needs
+a creator-approved Telegram username or email address in the protected
+projection; it does not need a THOT OS inbox. The separate custom-request form
+would need its own private delivery path if retained. The manager needs real Access identity and
 creator membership checks. It must not expose verified Library originals to
 visitors. Staging needs route/binding and age-gate tests before deployment.
 The real preview-to-full relationship exists as `asset_classifications.teaser_for_asset_id`,

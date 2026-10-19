@@ -30,6 +30,12 @@ creator-scoped private enquiry with a clear no-guarantee acknowledgement. A
 later inbox can add accept, decline and quote states. No automatic payment or
 fulfilment is implied.
 
+The separate **Message creator for full length** action can hand the visitor
+to a creator-approved Telegram chat or email draft with the clip reference
+already filled in. That direct-contact flow does not require a THOT OS inbox.
+The visitor sends the message in their own app; no payment or download is
+granted by opening the draft.
+
 Each video may eventually offer a **Download full video** action after payment.
 A creator-supplied payment URL by itself is insufficient to prove that a
 particular buyer paid for a particular asset. Payment confirmation must come

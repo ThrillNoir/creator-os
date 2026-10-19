@@ -9,9 +9,10 @@ const sections = new Set(["Photos", "Clips", "Behind the scenes"]);
 const genres = new Set(["Portraits", "Performance", "Everyday"]);
 
 export class PortfolioFixture {
-  constructor(creatorSlug = "adelaide", profileVersionId = "local-adelaide-v1") {
+  constructor(creatorSlug = "adelaide", profileVersionId = "local-adelaide-v1", contactDestinations = {}) {
     this.creatorSlug = creatorSlug;
     this.profileVersionId = profileVersionId;
+    this.contactDestinations = contactDestinations;
     this.items = new Map(fixtureCatalog.map((item) => [item.id, { ...item, selected: false, published: false, order: 0 }]));
     this.requests = [];
   }
@@ -65,21 +66,23 @@ export class PortfolioFixture {
     return true;
   }
 
-  submitFullLengthRequest(slug, { previewId, name, contactMethod, contact, message }) {
+  prepareFullLengthContact(slug, { previewId, name, contactMethod, message }) {
     const item = slug === this.creatorSlug ? this.items.get(previewId) : null;
     if (!item?.published || item.kind !== "video" || !item.fullAssetId ||
       typeof name !== "string" || !name.trim() || name.trim().length > 80 || /[\r\n<>]/.test(name) ||
-      typeof contact !== "string" || !contact.trim() || contact.length > 254 ||
       typeof message !== "string" || message.trim().length < 10 || message.length > 800 ||
-      !["telegram", "email"].includes(contactMethod)) return false;
-    const address = contact.trim();
-    if (contactMethod === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return false;
-    if (contactMethod === "telegram" && !/^@?[A-Za-z0-9_]{3,64}$/.test(address)) return false;
-    // Resolve the private full-video relationship from the published fixture,
-    // never from a visitor-supplied asset ID or media URL.
-    this.requests.push({ requestType: "full-length", previewId: item.id, fullAssetId: item.fullAssetId,
-      name: name.trim(), contactMethod, contact: address,
-      message: message.trim() });
-    return true;
+      !["telegram", "email"].includes(contactMethod)) return null;
+    // Keep the private full-video relationship on the server. The visitor's
+    // edited text cannot change the reference resolved from the preview ID.
+    const preparedMessage = `${message.trim()}\n\nFrom: ${name.trim()}\nReference: ${item.id} — ${item.title}`;
+    const destination = this.contactDestinations[contactMethod];
+    let href = null;
+    if (contactMethod === "email" && typeof destination === "string" && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(destination)) {
+      href = `mailto:${destination}?subject=${encodeURIComponent(`Full-length request: ${item.title}`)}&body=${encodeURIComponent(preparedMessage)}`;
+    }
+    if (contactMethod === "telegram" && typeof destination === "string" && /^[A-Za-z0-9_]{5,32}$/.test(destination)) {
+      href = `https://t.me/${destination}?text=${encodeURIComponent(preparedMessage)}`;
+    }
+    return { previewId: item.id, fullAssetId: item.fullAssetId, contactMethod, message: preparedMessage, href };
   }
 }
