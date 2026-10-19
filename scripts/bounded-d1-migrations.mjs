@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertApplyGates, buildBoundedPlan, executeBoundedPlan, hashCanonicalJson, hashFileBytes, inventoryFromLedger, validateBackup } from "./bounded-d1-migrations-lib.mjs";
-import { createActivationD1ReadClient } from "./service-auth-activate.mjs";
+import { createActivationD1ReadClient, mutationWranglerEnvironment } from "./service-auth-activate.mjs";
 import { readDeploymentRegistry, readJsoncFile } from "./deployment-preflight.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -77,8 +77,8 @@ export function parseWranglerProcess({ status, signal, error, stdout, stderr, op
   if (error || status !== 0 || signal) throw new Error(`${operation} failed before JSON validation.`);
   return parseWranglerJson({ stdout: stdout ?? "", stderr: stderr ?? "", operation });
 }
-function runWrangler(authority, args, operation) {
-  const result = spawnSync(wrangler, ["--cwd", path.join(root, "cloudflare/thot-os-next"), ...args], { cwd: root, encoding: "utf8", env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: authority.registry.environments.staging.accountId }, stdio: ["ignore", "pipe", "pipe"] });
+export function runWrangler(authority, args, operation, spawnSyncImpl = spawnSync) {
+  const result = spawnSyncImpl(wrangler, ["--cwd", path.join(root, "cloudflare/thot-os-next"), ...args], { cwd: root, encoding: "utf8", env: mutationWranglerEnvironment({ accountId: authority.registry.environments.staging.accountId }), stdio: ["ignore", "pipe", "pipe"] });
   return parseWranglerProcess({ ...result, operation });
 }
 export function resultRows(parsed) {

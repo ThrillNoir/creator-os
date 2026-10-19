@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { assertApplyGates, assertExactMigrationHistory, buildBoundedPlan, executeBoundedPlan, hashBytes, hashCanonicalJson, hashFileBytes, inventoryFromDirectory, inventoryFromLedger, migrationSql, planDigest, validateBackup, validateReleaseExportPlan } from "../scripts/bounded-d1-migrations-lib.mjs";
+import { runWrangler } from "../scripts/bounded-d1-migrations.mjs";
 
 const registry = {
   environments: {
@@ -14,6 +15,19 @@ const registry = {
 };
 const policy = { allowedEnvironments: ["staging"], backupMaxAgeMinutes: 60 };
 const git = { sha: "a".repeat(40), branch: "audit/test", clean: true };
+
+test("bounded D1 Wrangler uses the approved OAuth keyring environment", () => {
+  let options;
+  const authority = { registry: { environments: { staging: { accountId: "account" } } } };
+  const response = runWrangler(authority, ["d1", "execute", "thot-os-staging", "--remote", "--json"], "test read", (_binary, _args, spawnOptions) => {
+    options = spawnOptions;
+    return { status: 0, signal: null, stdout: JSON.stringify([{ success: true, results: [] }]), stderr: "" };
+  });
+  assert.deepEqual(response, [{ success: true, results: [] }]);
+  assert.equal(options.env.CLOUDFLARE_ACCOUNT_ID, "account");
+  assert.equal(options.env.CLOUDFLARE_AUTH_USE_KEYRING, "true");
+  if (process.platform === "linux") assert.equal(options.env.PATH.split(path.delimiter)[0], path.resolve(path.dirname(new URL(import.meta.url).pathname), "../scripts/secret-tool-compat"));
+});
 
 function fixture(limit = 32) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "bounded-d1-test-"));
