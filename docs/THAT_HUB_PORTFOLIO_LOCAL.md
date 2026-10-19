@@ -66,12 +66,14 @@ approved preview derivative (or authorized public Stream identity), protected
 media delivery with withdrawal/revocation. Direct full-length contact needs
 a creator-approved Telegram username or email address in the protected
 projection; it does not need a THOT OS inbox. The separate custom-request form
-would need its own private delivery path if retained. The manager needs real Access identity and
-creator membership checks. It must not expose verified Library originals to
-visitors. Staging needs route/binding and age-gate tests before deployment.
+would need its own private delivery path if retained. The manager needs real
+Access identity and creator membership checks. It must not expose verified
+Library originals to visitors. The live That Hub routes need exact
+route/binding and age-gate checks before deployment.
 The real preview-to-full relationship exists as `asset_classifications.teaser_for_asset_id`,
 but the current application does not read or write it for this portfolio; that
 creator-scoped lookup and a private delivery workflow must be connected before
 the full-length enquiry can become a live feature.
 Payment confirmation, paid downloads, and revenue reconciliation are separate
-follow-on work.
+follow-on work. The intended live destination and minimum release checks are in
+[`THAT_HUB_PORTFOLIO_LIVE_RELEASE.md`](THAT_HUB_PORTFOLIO_LIVE_RELEASE.md).
