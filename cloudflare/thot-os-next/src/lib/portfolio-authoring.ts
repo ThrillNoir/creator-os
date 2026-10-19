@@ -14,6 +14,7 @@ export type PortfolioDraftItem = {
   genre_id: string | null;
   preview_asset_id: string | null;
   preview_basename: string | null;
+  preview_poster_r2_key: string | null;
   title: string;
   description: string;
   sort_order: number;
@@ -29,6 +30,7 @@ export function portfolioItemReadiness(item: PortfolioDraftItem) {
   if (item.category_id === null) return "Choose a category";
   if (isVideoPortfolioItem(item)) {
     if (!item.preview_asset_id) return "Choose a short preview";
+    if (!item.preview_poster_r2_key) return "Choose a thumbnail for the short preview";
     return "Candidate video chosen · publishing checks pending";
   }
   if (!item.preview_r2_key) return "Private image preview is preparing";
@@ -41,7 +43,8 @@ export async function getPortfolioDraft(creatorId: string) {
     creatorPrepare(DB, creatorId, "SELECT id,name,sort_order FROM creator_portfolio_categories WHERE creator_id=@creator ORDER BY sort_order,name,id").bind(),
     creatorPrepare(DB, creatorId, "SELECT id,name,sort_order FROM creator_portfolio_genres WHERE creator_id=@creator ORDER BY sort_order,name,id").bind(),
     creatorPrepare(DB, creatorId, `SELECT p.asset_id,a.basename,a.extension,c.safety,p.category_id,p.genre_id,p.preview_asset_id,
-      preview.basename AS preview_basename,p.title,p.description,p.sort_order,a.source_available,a.preview_r2_key,
+      preview.basename AS preview_basename,preview.preview_r2_key AS preview_poster_r2_key,
+      p.title,p.description,p.sort_order,a.source_available,a.preview_r2_key,
       vp.state AS video_state
       FROM creator_portfolio_items p JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
       LEFT JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id

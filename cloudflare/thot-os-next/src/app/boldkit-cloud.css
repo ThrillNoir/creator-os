@@ -360,8 +360,19 @@ body {
 .os-cloud-shell .portfolio-preview-frame-heading span { font: 850 10px/1 var(--font-geist-mono), ui-monospace, monospace; letter-spacing: .12em; }
 .os-cloud-shell .portfolio-preview-frame-heading strong { font-size: 21px; font-weight: 900; }
 .os-cloud-shell .portfolio-preview-frame-heading small { margin-left: auto; color: var(--muted-foreground); }
+.os-cloud-shell .portfolio-bulk-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; border-bottom: 2px solid var(--foreground); padding: 14px 18px; }
+.os-cloud-shell .portfolio-bulk-selection { display: flex; align-items: center; flex: 1 1 280px; flex-wrap: wrap; gap: 8px; }
+.os-cloud-shell .portfolio-bulk-selection strong { min-width: 82px; }
+.os-cloud-shell .portfolio-bulk-selection span { color: var(--muted-foreground); font-size: 12px; }
+.os-cloud-shell .portfolio-bulk-toolbar label { display: grid; flex: 1 1 180px; gap: 4px; font-size: 12px; font-weight: 850; }
+.os-cloud-shell .portfolio-bulk-toolbar select { min-height: 42px; border: 2px solid var(--foreground); background: var(--card); padding: 8px; color: var(--foreground); font: inherit; }
+.os-cloud-shell .portfolio-bulk-toolbar button[disabled] { cursor: not-allowed; opacity: .5; }
+.os-cloud-shell .portfolio-bulk-hint { margin: 10px 18px 0; font-size: 12px; }
 .os-cloud-shell .portfolio-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 14px; padding: 18px; }
-.os-cloud-shell .portfolio-preview-card { min-width: 0; overflow: hidden; border: 2px solid var(--foreground); background: var(--card); }
+.os-cloud-shell .portfolio-preview-card { position: relative; min-width: 0; overflow: hidden; border: 2px solid var(--foreground); background: var(--card); }
+.os-cloud-shell .portfolio-preview-select { position: absolute; z-index: 1; top: 8px; right: 8px; display: flex; align-items: center; gap: 5px; border: 2px solid var(--foreground); background: var(--card); padding: 5px 8px; font-size: 12px; font-weight: 850; cursor: pointer; }
+.os-cloud-shell .portfolio-preview-select:has(input:checked) { background: var(--secondary); color: var(--secondary-foreground); }
+.os-cloud-shell .portfolio-preview-select input { width: 16px; height: 16px; margin: 0; accent-color: var(--foreground); }
 .os-cloud-shell .portfolio-preview-image { display: grid; aspect-ratio: 4 / 3; place-items: center; overflow: hidden; background: var(--muted-surface); }
 .os-cloud-shell .portfolio-preview-image img,
 .os-cloud-shell .portfolio-preview-media { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -374,6 +385,22 @@ body {
 .os-cloud-shell .portfolio-preview-labels span { border: 1px solid var(--foreground); padding: 3px 6px; font-size: 10px; font-weight: 800; }
 .os-cloud-shell .portfolio-preview-labels span:first-child { background: var(--secondary); color: var(--secondary-foreground); }
 .os-cloud-shell .portfolio-preview-frame .empty { margin: 18px; }
+.os-cloud-shell .video-poster-editor { display: grid; gap: 12px; padding: 16px; border: 2px solid var(--foreground); background: var(--muted-surface); }
+.os-cloud-shell .library-video-poster { margin: 0 0 20px; }
+.os-cloud-shell .video-poster-current { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.os-cloud-shell .video-poster-current > div:first-child { display: grid; width: 120px; aspect-ratio: 4 / 3; place-items: center; overflow: hidden; border: 1px solid var(--foreground); background: var(--card); text-align: center; }
+.os-cloud-shell .video-poster-current img { width: 100%; height: 100%; object-fit: contain; }
+.os-cloud-shell .video-poster-current > div:nth-child(2) { display: grid; flex: 1 1 180px; gap: 3px; }
+.os-cloud-shell .video-poster-current small { color: var(--muted-foreground); }
+.os-cloud-shell .video-poster-choices { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .5fr); gap: 16px; border-top: 1px solid var(--foreground); padding-top: 12px; }
+.os-cloud-shell .video-poster-choices p { margin: 0 0 8px; }
+.os-cloud-shell .video-poster-choices video { display: block; width: 100%; max-height: 400px; background: #111; }
+.os-cloud-shell .video-poster-choices button { margin-top: 8px; }
+.os-cloud-shell .video-poster-choices label { display: grid; align-content: start; gap: 8px; font-weight: 800; }
+.os-cloud-shell .video-poster-choices input { max-width: 100%; }
+.os-cloud-shell .video-poster-upload-review { display: grid; gap: 8px; margin-top: 12px; }
+.os-cloud-shell .video-poster-upload-review img { width: 100%; max-height: 320px; border: 1px solid var(--foreground); background: var(--card); object-fit: contain; }
+.os-cloud-shell .video-poster-upload-review > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .os-cloud-shell .portfolio-taxonomy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .os-cloud-shell .portfolio-taxonomy-grid > div { min-width: 0; padding: 16px; border: 2px solid var(--foreground); background: var(--card); }
 .os-cloud-shell .portfolio-taxonomy-grid h3 { margin: 0 0 12px; }
@@ -403,10 +430,12 @@ body {
 .os-cloud-shell .portfolio-library-control p { margin: 0; }
 .os-cloud-shell .portfolio-publish-note { border-color: var(--foreground); background: var(--warning); color: var(--warning-foreground); }
 .os-cloud-shell .portfolio-taxonomy :focus-visible,
+.os-cloud-shell .portfolio-bulk-form :focus-visible,
 .os-cloud-shell .portfolio-item-form :focus-visible { outline: 3px solid var(--foreground); outline-offset: 3px; }
 @media (max-width: 680px) {
   .os-cloud-shell .portfolio-taxonomy-grid,
-  .os-cloud-shell .portfolio-item-form { grid-template-columns: 1fr; }
+  .os-cloud-shell .portfolio-item-form,
+  .os-cloud-shell .video-poster-choices { grid-template-columns: 1fr; }
   .os-cloud-shell .portfolio-draft-heading { flex-direction: column; }
 }
 

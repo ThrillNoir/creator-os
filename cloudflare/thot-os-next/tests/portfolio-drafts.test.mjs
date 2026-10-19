@@ -5,6 +5,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { isVideoPortfolioItem, suggestedLinkedPreviewAssetId } from "../src/lib/portfolio-video.ts";
 import { privatePortfolioImageObjectId } from "../src/lib/portfolio-preview.ts";
+import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 
@@ -72,4 +73,12 @@ test("visual draft derives the private preview object ID from its R2 key", () =>
   assert.equal(privatePortfolioImageObjectId(`creators/creator-a/assets/${objectId}/previews/${revision}.jpg`), objectId);
   assert.equal(privatePortfolioImageObjectId(`creators/creator-a/assets/asset-uuid/previews/${revision}.jpg`), null);
   assert.equal(privatePortfolioImageObjectId(null), null);
+});
+
+test("bulk category selection is bounded and rejects duplicate or malformed IDs", () => {
+  assert.deepEqual(portfolioBulkAssetIds(["asset-a", "asset-b"]), ["asset-a", "asset-b"]);
+  assert.throws(() => portfolioBulkAssetIds([]), /between 1 and 50/);
+  assert.throws(() => portfolioBulkAssetIds(Array.from({ length: 51 }, (_, index) => `asset-${index}`)), /between 1 and 50/);
+  assert.throws(() => portfolioBulkAssetIds(["asset-a", "asset-a"]), /once/);
+  assert.throws(() => portfolioBulkAssetIds(["asset-a", "../other"]), /between 1 and 50/);
 });

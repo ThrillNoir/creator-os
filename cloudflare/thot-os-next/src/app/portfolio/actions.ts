@@ -6,6 +6,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { isVideoPortfolioItem } from "@/lib/portfolio-video";
+import { portfolioBulkAssetIds } from "@/lib/portfolio-bulk";
 
 const ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const LABEL_ID = /^[0-9a-f-]{36}$/i;
@@ -102,6 +103,30 @@ export async function createPortfolioCategoryAction(form: FormData) { return sav
 export async function renamePortfolioCategoryAction(form: FormData) { return saveLabel(form, "category", true); }
 export async function createPortfolioGenreAction(form: FormData) { return saveLabel(form, "genre", false); }
 export async function renamePortfolioGenreAction(form: FormData) { return saveLabel(form, "genre", true); }
+
+export async function assignPortfolioCategoryAction(form: FormData) {
+  const context = await requireCreatorContext("mutate");
+  const creatorId = context.creator.creator_id;
+  const assetIds = portfolioBulkAssetIds(form.getAll("assetIds"));
+  const categoryId = field(form, "categoryId");
+  if (!LABEL_ID.test(categoryId)) throw new Error("Choose a category.");
+  const DB = portfolioDb();
+  const category = await creatorPrepare(DB, creatorId,
+    "SELECT id FROM creator_portfolio_categories WHERE creator_id=@creator AND id=?").bind(categoryId).first<{ id: string }>();
+  if (!category) throw new Error("Choose this creator's category.");
+  const placeholders = assetIds.map(() => "?").join(",");
+  const owned = await creatorPrepare(DB, creatorId,
+    `SELECT asset_id FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id IN (${placeholders})`)
+    .bind(...assetIds).all<{ asset_id: string }>();
+  if (owned.results.length !== assetIds.length) throw new Error("One or more selected items are unavailable in this creator's portfolio.");
+  await DB.batch(assetIds.flatMap((assetId) => [
+    creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_items SET category_id=?,updated_at=CURRENT_TIMESTAMP,updated_by=? WHERE creator_id=@creator AND asset_id=?")
+      .bind(categoryId, context.email, assetId),
+    audit(DB, creatorId, context.email, "item_saved", assetId, { categoryId, bulk: true }),
+  ]));
+  revalidatePath("/portfolio");
+  redirect("/portfolio#portfolio-preview-title");
+}
 
 export async function savePortfolioItemAction(form: FormData) {
   const context = await requireCreatorContext("mutate");
