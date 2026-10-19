@@ -1,18 +1,20 @@
 # That Hub Portfolio follow-on — source assessment
 
-Status: read-only assessment, 19 October 2026. AMA delivery remains first. No
-Portfolio code, Cloudflare resource, migration, or route has been created.
+Status: local synthetic portfolio fixture added, 19 October 2026. No Cloudflare
+resource, migration, or public route has been created.
 
 ## Recommended first slice
 
 Add a creator-scoped Portfolio manager beside the existing Library. The creator
 explicitly selects **Add to portfolio**, chooses a section and display order,
-previews the public result, and publishes or withdraws each item. The intended
-public entry is **“Want a sneak peek?”** on the That Hub creator page, expanding
-the portfolio at `https://more.thathuboverthere.com/adelaide`. A read-only HEAD
-request on 19 October returned 404 for that address, so route ownership and the
-public page need to be established before linking to it. Render from a separate
-approved SFW projection, match the existing That Hub appearance, and use image
+previews the public result, and publishes or withdraws each item. The live
+`https://www.thathuboverthere.com/adelaide` profile already has a **More from
+Adelaide Suede** action. Its safe `/adelaide/more` route hands off to the
+existing age-gated `more.thathuboverthere.com/adelaide` Worker. An unauthenticated
+404 at that destination is expected: the adult profile requires a signed age
+session. The local fixture places **“Want a sneak peek?”** inside that protected
+page after the existing handoff. Render from a separate approved projection,
+match the existing That Hub appearance, and use image
 or short video-preview cards. Use restrained transitions, respect reduced-motion
 preferences, and give each video native playback controls (play/pause, seek,
 volume and fullscreen where supported), `preload="none"`, `playsinline`, and no
@@ -109,8 +111,9 @@ as a public player URL. Public selection also requires current consent and
 rights checks for any other person shown; `safety='sfw'` alone is insufficient.
 Withdrawing an item or revoking consent must remove public delivery.
 
-Owner choices before implementation: confirm SFW-only public Portfolio v1 and
-the policy for content with other people. A fixed starter set of sections is a
-reasonable first version and can become creator-defined later. Determine the
-verified Tyro payment flow before promising pay-to-download. AMA remains the
-current delivery priority.
+Before a real release, decide which eligible adult previews are approved for the
+age-gated page, including consent and rights for other people shown. A fixed
+starter set of sections is used in the local fixture and can become
+creator-defined later. Determine the verified Tyro payment flow before
+promising pay-to-download. The local portfolio preview is documented in
+`THAT_HUB_PORTFOLIO_LOCAL.md`.

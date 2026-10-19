@@ -1,4 +1,5 @@
 import { livePublicHostGuard } from "../../shared/live-public-host.ts";
+import { portfolioCss, renderPortfolio, validPortfolio, type PortfolioProjection } from "./portfolio.ts";
 
 type AdultProfile = {
   schemaVersion: 1 | 2 | 3 | 4;
@@ -44,7 +45,7 @@ function hasOnlyKeys(value: object, keys: readonly string[]) {
 function securityHeaders() {
   return {
     "cache-control": "no-store",
-    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests",
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self'; media-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests",
     "referrer-policy": "no-referrer",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
     "strict-transport-security": "max-age=31536000; includeSubDomains",
@@ -215,7 +216,7 @@ function gate(profile: AdultProfile, siteKey: string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name}</title><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><style>body{font:16px/1.5 system-ui,sans-serif;background:#100c16;color:#fbf8fe;margin:0}.card{max-width:32rem;margin:3rem auto;padding:1.25rem}button,a{font:inherit;padding:.8rem 1rem;border-radius:.55rem}.yes{border:0;background:#c5a4ff;color:#170c24;font-weight:700;width:100%}.no{display:block;color:inherit;text-align:center;margin-top:.8rem}</style></head><body><main class="card"><h1>Are you 18 or older?</h1><p>This area may contain adult-oriented creator links and images.</p><form method="post" action="/age/${encodeURIComponent(profile.creator.slug)}/confirm"><div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="adult_access"></div><button class="yes" type="submit">Yes, continue</button></form><a class="no" href="${escapeHtml(profile.creator.safeProfileUrl)}">No, go back</a></main></body></html>`;
 }
 
-function adultPage(profile: AdultProfile) {
+function adultPage(profile: AdultProfile, portfolio?: PortfolioProjection, url?: URL) {
   const appearance = profile.appearance ?? { buttonStyle: "solid-rounded", backgroundMode: "gradient", backgroundColor: "#100c16", primaryColor: "#c5a4ff", textColor: "#fbf8fe", cardColor: "#261d30", radiusScale: "comfortable" };
   const radius = appearance.radiusScale === "compact" ? ".45rem" : appearance.radiusScale === "round" ? "999px" : ".75rem";
   const style = appearance.buttonStyle === "minimal-outline" ? "outline" : appearance.buttonStyle === "soft-card-icon" ? "soft" : appearance.buttonStyle === "elevated-shadow-tile" ? "elevated" : appearance.buttonStyle === "full-pill" ? "pill" : "";
@@ -225,10 +226,12 @@ function adultPage(profile: AdultProfile) {
   const title = escapeHtml(profile.creator.displayName || "Creator");
   const bio = profile.creator.bio ? `<p>${escapeHtml(profile.creator.bio)}</p>` : "";
   const gallery = media ? `<section aria-label="Image carousel"><div class="carousel">${media}</div>${controls}</section>` : "";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.5 system-ui,sans-serif;background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor};color:${appearance.textColor};margin:0}.card{max-width:36rem;margin:0 auto;padding:2rem 1rem}h1{margin:0}.carousel{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:.75rem;margin:1.5rem 0}.carousel figure{flex:0 0 100%;scroll-snap-align:center;margin:0}.carousel img{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:${radius};background:${appearance.cardColor}}.carousel figcaption{font-size:.8rem;opacity:.7}.carousel-controls{display:flex;gap:.5rem}.carousel-controls a,.link{border:1px solid ${appearance.textColor}66;border-radius:${radius};padding:.65rem;color:inherit;text-decoration:none}.links{display:grid;gap:.75rem;margin-top:1.5rem}.link{display:flex;justify-content:space-between;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 5px 0 ${appearance.primaryColor}55}.link.pill{border-radius:999px}</style></head><body><main class="card"><h1>${title}</h1>${bio}${gallery}<nav class="links" aria-label="Creator links">${links}</nav></main></body></html>`;
+  const portfolioHtml = portfolio ? renderPortfolio(portfolio, url?.searchParams.get("section") ?? null, url?.searchParams.get("genre") ?? null, url?.searchParams.get("request") === "sent") : "";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.5 system-ui,sans-serif;background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor};color:${appearance.textColor};margin:0}.card{max-width:${portfolio ? "72rem" : "36rem"};margin:0 auto;padding:2rem 1rem}h1{margin:0}.carousel{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:.75rem;margin:1.5rem 0}.carousel figure{flex:0 0 100%;scroll-snap-align:center;margin:0}.carousel img{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:${radius};background:${appearance.cardColor}}.carousel figcaption{font-size:.8rem;opacity:.7}.carousel-controls{display:flex;gap:.75rem}.carousel-controls a,.link{border:1px solid ${appearance.textColor}66;border-radius:${radius};padding:.65rem;color:inherit;text-decoration:none}.links{display:grid;gap:.75rem;margin-top:1.5rem}.link{display:flex;justify-content:space-between;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 5px 0 ${appearance.primaryColor}55}.link.pill{border-radius:999px}${portfolio ? portfolioCss : ""}</style></head><body><main class="card" style="--portfolio-accent:${appearance.primaryColor};--portfolio-bg:${appearance.backgroundColor}"><h1>${title}</h1>${bio}${gallery}<nav class="links" aria-label="Creator links">${links}</nav>${portfolioHtml}</main></body></html>`;
 }
 
-export default {
+export function createAdultGateway(loadPortfolio?: (slug: string, versionId: string) => Promise<unknown>): ExportedHandler<Env> {
+return {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
@@ -257,7 +260,14 @@ export default {
       const profile = await loadProfile(env, parts[0]);
       if (!profile || !await validSession(request, profile, env)) return page("Not found", 404);
       event(env, profile, "adult_profile_view");
-      return page(adultPage(profile));
+      let portfolio: PortfolioProjection | undefined;
+      if (loadPortfolio) {
+        try {
+          const candidate = await loadPortfolio(profile.creator.slug, profile.publishedVersionId);
+          if (validPortfolio(candidate, profile.creator.slug, profile.publishedVersionId)) portfolio = candidate;
+        } catch { /* A portfolio outage cannot bypass the age gate or break the profile. */ }
+      }
+      return page(adultPage(profile, portfolio, url));
     }
     if (request.method === "GET" && parts.length === 3 && parts[0] === "media" && SLUG.test(parts[1]) && ITEM_ID.test(parts[2])) {
       const profile = await loadProfile(env, parts[1]);
@@ -279,4 +289,7 @@ export default {
     }
     return page("Not found", 404);
   },
-} satisfies ExportedHandler<Env>;
+};
+}
+
+export default createAdultGateway();
