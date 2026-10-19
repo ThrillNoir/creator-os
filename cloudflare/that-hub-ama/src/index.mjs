@@ -76,8 +76,7 @@ function response(body, status = 200, contentType = "text/html; charset=utf-8", 
   return new Response(body, { status, headers: { ...securityHeaders, "Content-Type": contentType, ...extra } });
 }
 
-async function boundedForm(request) {
-  const limit = 16_384;
+async function boundedForm(request, limit = 16_384) {
   if (!request.body || Number(request.headers.get("content-length") ?? 0) > limit) return null;
   const reader = request.body.getReader();
   const chunks = [];
@@ -113,14 +112,13 @@ async function listPage(env, context, url) {
       (SELECT MAX(r.revision) FROM ama_answer_revisions r
        WHERE r.creator_id=q.creator_id AND r.question_id=q.id) AS latest_revision,
       (SELECT p.action FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id ORDER BY p.sequence DESC LIMIT 1) AS latest_action,
-      (SELECT MAX(p.sequence) FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id) AS latest_sequence,
-      COALESCE((SELECT d.delivered_sequence FROM ama_projection_delivery_state d WHERE d.creator_id=q.creator_id),0) AS delivered_sequence
+      (SELECT MAX(p.sequence) FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id) AS latest_sequence
     FROM ama_questions q WHERE q.creator_id=?
     AND ${filter}
     ORDER BY q.received_at DESC, q.id DESC LIMIT 51 OFFSET ?
   `).bind(context.creator_id, (page - 1) * 50).all()).results;
   const shown = rows.slice(0, 50);
-  const items = shown.map((q) => `<li><a class="question" href="${BASE}/${encodeURIComponent(q.id)}"><span class="question-text">${escapeHtml(q.question_text)}</span><span class="question-meta">${escapeHtml(q.received_at)} · ${q.latest_sequence > q.delivered_sequence ? "Public update pending" : q.latest_action === "publish" ? "Public card live" : q.latest_revision ? "Private answer saved" : "Needs answer"}</span></a></li>`).join("");
+  const items = shown.map((q) => `<li><a class="question" href="${BASE}/${encodeURIComponent(q.id)}"><span class="question-text">${escapeHtml(q.question_text)}</span><span class="question-meta">${escapeHtml(q.received_at)} · ${q.latest_action === "publish" ? "Public card live" : q.latest_revision ? "Private answer saved" : "Needs answer"}</span></a></li>`).join("");
   const pages = `<nav class="pages" aria-label="Inbox pages">${page > 1 ? `<a href="${BASE}?queue=${queue}&page=${page - 1}">← Newer</a>` : ""}<span>Page ${page}</span>${rows.length > 50 ? `<a href="${BASE}?queue=${queue}&page=${page + 1}">Older →</a>` : ""}</nav>`;
   const body = `<section class="intro"><p class="eyebrow">THAT HUB · CREATOR INBOX</p><h1>Questions, in your hands.</h1><p>Read, answer and preview in private. Only your explicit publish action makes a card public.</p></section><nav class="tabs" aria-label="Question queues"><a ${queue === "new" ? 'aria-current="page"' : ""} href="${BASE}?queue=new">New</a><a ${queue === "answered" ? 'aria-current="page"' : ""} href="${BASE}?queue=answered">Answered</a><a ${queue === "published" ? 'aria-current="page"' : ""} href="${BASE}?queue=published">Published</a></nav><section class="inbox"><h2>${queue === "new" ? "New questions" : queue === "answered" ? "Private answers and withdrawals" : "Published cards and pending updates"}</h2>${items ? `<ul>${items}</ul>` : `<p class="empty">${queue === "new" ? "No new questions yet." : queue === "answered" ? "No saved answers yet." : "No published answers yet."}</p>`}${pages}</section>`;
   return response(shell("Inbox", context, body));
@@ -131,11 +129,8 @@ async function detailPage(env, context, questionId, saved = false) {
   if (!question) return response("Not found", 404, "text/plain; charset=utf-8");
   const draft = await env.DB.prepare("SELECT answer_text, revision, created_at FROM ama_answer_revisions WHERE question_id=? AND creator_id=? ORDER BY revision DESC LIMIT 1").bind(questionId, context.creator_id).first();
   const latest = await env.DB.prepare("SELECT sequence,action FROM ama_publications WHERE question_id=? AND creator_id=? ORDER BY sequence DESC LIMIT 1").bind(questionId, context.creator_id).first();
-  const delivery = await env.DB.prepare("SELECT delivered_sequence FROM ama_projection_delivery_state WHERE creator_id=?").bind(context.creator_id).first();
-  const pending = latest && latest.sequence > (delivery?.delivered_sequence ?? 0);
-  const live = latest?.action === "publish" && !pending;
-  const form = context.role === "creator" ? `<form method="post" action="${BASE}/${encodeURIComponent(question.id)}/draft"><input type="hidden" name="expected_revision" value="${draft?.revision ?? 0}"><label for="answer">Your answer</label><textarea id="answer" name="answer" maxlength="5000" required>${escapeHtml(draft?.answer_text ?? "")}</textarea><p class="hint">Save your answer, then preview the finished card before publishing.</p><button type="submit">Save private draft</button></form>${draft ? `<a class="preview-link" href="${BASE}/${encodeURIComponent(question.id)}/preview">Preview finished card →</a>` : ""}${latest?.action === "publish" ? `<form class="withdraw" method="post" action="${BASE}/${encodeURIComponent(question.id)}/withdraw"><label class="ack"><input type="checkbox" name="confirm" value="withdraw" required><span>Remove this card from the public AMA page.</span></label><button type="submit">Withdraw public card</button></form>` : pending ? `<form class="withdraw" method="post" action="${BASE}/${encodeURIComponent(question.id)}/withdraw"><input type="hidden" name="confirm" value="withdraw"><button type="submit">Retry withdrawal</button></form>` : ""}` : '<div class="notice">View only · You can browse this inbox, but your role cannot answer.</div>';
-  const body = `<a class="back" href="${BASE}?queue=${latest?.action === "publish" ? "published" : draft ? "answered" : "new"}">← Back to inbox</a><article class="detail"><p class="eyebrow">ANONYMOUS QUESTION · ${escapeHtml(question.received_at)}</p><h1>${escapeHtml(question.question_text)}</h1>${pending ? '<p class="notice" role="status">Public update pending. The previous card may still be visible; retry this action.</p>' : live ? '<p class="success" role="status">Live on your public AMA page.</p>' : ""}${saved ? '<p class="success" role="status">Draft saved · private.</p>' : ""}${draft ? `<p class="saved">Private answer · revision ${draft.revision} · ${escapeHtml(draft.created_at)}</p>` : ""}${form}</article>`;
+  const form = context.role === "creator" ? `<form method="post" action="${BASE}/${encodeURIComponent(question.id)}/draft"><input type="hidden" name="expected_revision" value="${draft?.revision ?? 0}"><label for="answer">Your answer</label><textarea id="answer" name="answer" maxlength="5000" required>${escapeHtml(draft?.answer_text ?? "")}</textarea><p class="hint">Save your answer, then preview the finished card before publishing.</p><button type="submit">Save private draft</button></form>${draft ? `<a class="preview-link" href="${BASE}/${encodeURIComponent(question.id)}/preview">Preview finished card →</a>` : ""}${latest?.action === "publish" ? `<form class="withdraw" method="post" action="${BASE}/${encodeURIComponent(question.id)}/withdraw"><input type="hidden" name="expected_sequence" value="${latest.sequence}"><label class="ack"><input type="checkbox" name="confirm" value="withdraw" required><span>Remove this card from the public AMA page.</span></label><button type="submit">Withdraw public card</button></form>` : ""}` : '<div class="notice">View only · You can browse this inbox, but your role cannot answer.</div>';
+  const body = `<a class="back" href="${BASE}?queue=${latest?.action === "publish" ? "published" : draft ? "answered" : "new"}">← Back to inbox</a><article class="detail"><p class="eyebrow">ANONYMOUS QUESTION · ${escapeHtml(question.received_at)}</p><h1>${escapeHtml(question.question_text)}</h1>${latest?.action === "publish" ? '<p class="success" role="status">Live on your public AMA page.</p>' : ""}${saved ? '<p class="success" role="status">Draft saved · private.</p>' : ""}${draft ? `<p class="saved">Private answer · revision ${draft.revision} · ${escapeHtml(draft.created_at)}</p>` : ""}${form}</article>`;
   return response(shell("Question", context, body));
 }
 
@@ -151,8 +146,9 @@ async function previewPage(env, context, questionId) {
   const draft = await env.DB.prepare("SELECT id,answer_text,revision FROM ama_answer_revisions WHERE question_id=? AND creator_id=? ORDER BY revision DESC LIMIT 1").bind(questionId, context.creator_id).first();
   if (!question || !draft) return response("Not found", 404, "text/plain; charset=utf-8");
   const profile = await activeProfile(env, context.creator_id);
+  const latest = await env.DB.prepare("SELECT sequence FROM ama_publications WHERE creator_id=? AND question_id=? ORDER BY sequence DESC LIMIT 1").bind(context.creator_id, questionId).first();
   const card = `<article class="preview-card" aria-label="Private preview of question and answer"><div class="card-top">THAT HUB · QUESTIONS <span>PREVIEW</span></div><div class="card-body"><p class="card-label">QUESTION</p><h2>${escapeHtml(question.question_text)}</h2><div class="card-answer"><p class="card-label">${escapeHtml(context.name.toUpperCase())} ANSWERS</p><p>${escapeHtml(draft.answer_text)}</p></div></div></article>`;
-  const publish = profile ? `<form method="post" action="${BASE}/${encodeURIComponent(question.id)}/publish"><input type="hidden" name="revision_id" value="${escapeHtml(draft.id)}"><label class="ack"><input type="checkbox" name="sfw_ack" value="yes" required><span>This question and answer are suitable for the public, SFW That Hub page.</span></label><button type="submit">Publish answer</button></form>` : '<p class="notice">A published public profile is required before this card can go live.</p>';
+  const publish = profile ? `<form method="post" action="${BASE}/${encodeURIComponent(question.id)}/publish"><input type="hidden" name="revision_id" value="${escapeHtml(draft.id)}"><input type="hidden" name="expected_sequence" value="${latest?.sequence ?? 0}"><label class="ack"><input type="checkbox" name="sfw_ack" value="yes" required><span>This question and answer are suitable for the public, SFW That Hub page.</span></label><button type="submit">Publish answer</button></form>` : '<p class="notice">A published public profile is required before this card can go live.</p>';
   const body = `<a class="back" href="${BASE}/${encodeURIComponent(question.id)}">← Edit answer</a><section class="preview-layout"><div><p class="eyebrow">PRIVATE PREVIEW · REVISION ${draft.revision}</p><h1>See the card before it goes live.</h1><p>Publishing will show both the question and your answer on your public AMA page.</p>${publish}</div>${card}</section>`;
   return response(shell("Preview card", context, body));
 }
@@ -161,80 +157,109 @@ async function publicationProjection(env, context, profile) {
   const rows = (await env.DB.prepare(`SELECT q.id, q.question_text, r.answer_text, p.published_at FROM ama_publications p
     JOIN ama_questions q ON q.id=p.question_id AND q.creator_id=p.creator_id
     JOIN ama_answer_revisions r ON r.id=p.revision_id AND r.question_id=p.question_id AND r.creator_id=p.creator_id
-    WHERE p.creator_id=? AND p.profile_version_id=? AND p.action='publish' AND p.sequence=(SELECT MAX(p2.sequence) FROM ama_publications p2 WHERE p2.creator_id=p.creator_id AND p2.question_id=p.question_id)
+    WHERE p.creator_id=? AND p.profile_version_id=? AND p.action='publish' AND p.safety='sfw' AND p.sequence=(SELECT MAX(p2.sequence) FROM ama_publications p2 WHERE p2.creator_id=p.creator_id AND p2.question_id=p.question_id)
     ORDER BY p.sequence DESC LIMIT 50`).bind(context.creator_id, profile.version_id).all()).results;
   return { schemaVersion: 1, creatorSlug: profile.slug, publishedProfileVersionId: profile.version_id,
     cards: rows.map((row) => ({ id: row.id, question: row.question_text, answer: row.answer_text, publishedAt: row.published_at, safety: "sfw" })) };
 }
 
-// The injected publisher must reject a stale generation at the atomic write
-// boundary. The local fixture does so; a deployed control-plane publisher
-// needs ordered delivery and reconciliation before this route can be enabled.
-async function deliverProjection(env, context, profile, publishProjection) {
-  const row = await env.DB.prepare("SELECT MAX(sequence) AS generation FROM ama_publications WHERE creator_id=?").bind(context.creator_id).first();
-  const generation = row?.generation;
-  if (!Number.isSafeInteger(generation) || generation < 1) return "pending";
-  const projection = await publicationProjection(env, context, profile);
-  try {
-    if (!await publishProjection({ env, creatorId: context.creator_id, profile, projection, generation })) throw new Error("projection not confirmed");
-    await env.DB.prepare(`INSERT INTO ama_projection_delivery_state(creator_id,delivered_sequence) VALUES (?,?)
-      ON CONFLICT(creator_id) DO UPDATE SET delivered_sequence=MAX(delivered_sequence,excluded.delivered_sequence)`)
-      .bind(context.creator_id, generation).run();
-    return "delivered";
-  } catch {
-    const latest = await env.DB.prepare("SELECT MAX(sequence) AS generation FROM ama_publications WHERE creator_id=?").bind(context.creator_id).first();
-    return latest?.generation > generation ? "superseded" : "pending";
-  }
+// The public read is derived from D1 on every request. Sequence selects one
+// current action per question; no KV writer can later restore a withdrawn card.
+async function publicProjectionBySlug(env, slug) {
+  const profile = await env.DB.prepare(`SELECT p.creator_id,p.slug,p.published_version_id AS version_id
+    FROM creator_public_profiles p JOIN creator_public_profile_versions v
+      ON v.id=p.published_version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+    JOIN creators c ON c.id=p.creator_id
+    WHERE p.slug=? AND p.status='active' AND c.status='active'
+      AND v.status='published' AND v.approved_by IS NOT NULL`).bind(slug).first();
+  if (!profile) return response("Not found", 404, "text/plain; charset=utf-8");
+  const projection = await publicationProjection(env, { creator_id: profile.creator_id }, profile);
+  return response(JSON.stringify(projection), 200, "application/json; charset=utf-8");
 }
 
-async function publishAnswer(request, env, context, questionId, publishProjection) {
+async function defaultVerifyChallenge(token, env) {
+  if (!env.TURNSTILE_SECRET) return false;
+  const result = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST", body: new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: token }),
+  });
+  if (!result.ok) return false;
+  return (await result.json()).success === true;
+}
+
+async function intakeQuestion(request, env, slug, verifyChallenge) {
+  if (!env.PUBLIC_ORIGIN || request.headers.get("origin") !== env.PUBLIC_ORIGIN) return response("Forbidden", 403, "text/plain; charset=utf-8");
+  if (!(request.headers.get("content-type") ?? "").startsWith("application/x-www-form-urlencoded")) return response("Unsupported media type", 415, "text/plain; charset=utf-8");
+  if (!env.TURNSTILE_SECRET) return response("Question intake unavailable", 503, "text/plain; charset=utf-8");
+  const form = await boundedForm(request, 8192);
+  if (!form) return response("Invalid question", 400, "text/plain; charset=utf-8");
+  const question = form.get("question");
+  const challenge = form.get("cf-turnstile-response");
+  if (typeof question !== "string" || !question.trim() || question.length > 800 ||
+    form.get("acknowledge") !== "yes" || form.get("website") !== "" ||
+    typeof challenge !== "string" || !challenge || challenge.length > 2048) return response("Invalid question", 400, "text/plain; charset=utf-8");
+  const profile = await env.DB.prepare(`SELECT p.creator_id FROM creator_public_profiles p
+    JOIN creator_public_profile_versions v ON v.id=p.published_version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+    JOIN creators c ON c.id=p.creator_id
+    WHERE p.slug=? AND p.status='active' AND c.status='active' AND v.status='published' AND v.approved_by IS NOT NULL`).bind(slug).first();
+  if (!profile) return response("Not found", 404, "text/plain; charset=utf-8");
+  let verified = false;
+  try { verified = await verifyChallenge(challenge, env); } catch { /* Fail closed. */ }
+  if (!verified) return response("Verification failed. Refresh and try again.", 403, "text/plain; charset=utf-8");
+  const result = await env.DB.prepare(`INSERT INTO ama_questions(id,creator_id,question_text,source)
+    SELECT ?,p.creator_id,?,'public' FROM creator_public_profiles p
+    JOIN creator_public_profile_versions v ON v.id=p.published_version_id AND v.profile_id=p.id AND v.creator_id=p.creator_id
+    JOIN creators c ON c.id=p.creator_id
+    WHERE p.slug=? AND p.creator_id=? AND p.status='active' AND c.status='active' AND v.status='published' AND v.approved_by IS NOT NULL`)
+    .bind(crypto.randomUUID(), question.trim(), slug, profile.creator_id).run();
+  if (result.meta.changes !== 1) return response("Question intake unavailable", 409, "text/plain; charset=utf-8");
+  return response(JSON.stringify({ ok: true }), 201, "application/json; charset=utf-8");
+}
+
+function expectedSequence(form) {
+  const raw = form.get("expected_sequence");
+  return typeof raw === "string" && /^(0|[1-9]\d{0,14})$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : null;
+}
+
+async function publishAnswer(request, env, context, questionId) {
   if (context.role !== "creator") return response("Not found", 404, "text/plain; charset=utf-8");
   if (request.headers.get("origin") !== new URL(request.url).origin) return response("Forbidden", 403, "text/plain; charset=utf-8");
   if (!(request.headers.get("content-type") ?? "").startsWith("application/x-www-form-urlencoded")) return response("Unsupported media type", 415, "text/plain; charset=utf-8");
   const form = await boundedForm(request);
   if (!form) return response("Invalid answer", 400, "text/plain; charset=utf-8");
   const revisionId = form.get("revision_id");
-  if (typeof revisionId !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(revisionId) || form.get("sfw_ack") !== "yes") return response("Invalid publication", 400, "text/plain; charset=utf-8");
-  if (!publishProjection) return response("Publication is not configured", 503, "text/plain; charset=utf-8");
+  const sequence = expectedSequence(form);
+  if (typeof revisionId !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(revisionId) || form.get("sfw_ack") !== "yes" || sequence === null) return response("Invalid publication", 400, "text/plain; charset=utf-8");
   const profile = await activeProfile(env, context.creator_id);
   if (!profile || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(profile.slug) || !/^[a-zA-Z0-9_-]{1,120}$/.test(profile.version_id)) return response("Public profile unavailable", 409, "text/plain; charset=utf-8");
-  const draft = await env.DB.prepare("SELECT id FROM ama_answer_revisions WHERE question_id=? AND creator_id=? ORDER BY revision DESC LIMIT 1").bind(questionId, context.creator_id).first();
-  if (!draft || draft.id !== revisionId) return response("Answer changed. Reload preview.", 409, "text/plain; charset=utf-8");
-  const latest = await env.DB.prepare("SELECT revision_id,profile_version_id,action FROM ama_publications WHERE question_id=? AND creator_id=? ORDER BY sequence DESC LIMIT 1").bind(questionId, context.creator_id).first();
-  if (!latest || latest.action !== "publish" || latest.revision_id !== revisionId || latest.profile_version_id !== profile.version_id) {
-    const result = await env.DB.prepare(`INSERT INTO ama_publications(id,creator_id,question_id,revision_id,profile_version_id,actor_email,action,safety)
-      SELECT ?,q.creator_id,q.id,r.id,?,?,'publish','sfw' FROM ama_questions q JOIN ama_answer_revisions r ON r.question_id=q.id AND r.creator_id=q.creator_id
-      WHERE q.id=? AND q.creator_id=? AND r.id=? AND r.revision=(SELECT MAX(r2.revision) FROM ama_answer_revisions r2 WHERE r2.question_id=q.id AND r2.creator_id=q.creator_id)`).bind(crypto.randomUUID(), profile.version_id, context.email, questionId, context.creator_id, revisionId).run();
-    if (result.meta.changes !== 1) return response("Question unavailable", 409, "text/plain; charset=utf-8");
-  }
-  const delivery = await deliverProjection(env, context, profile, publishProjection);
-  if (delivery === "superseded") return response("Publication was superseded by a newer action. Reload the question.", 409, "text/plain; charset=utf-8");
-  if (delivery !== "delivered") {
-    return response("Publication is pending. Please retry; your approved revision is saved.", 503, "text/plain; charset=utf-8");
-  }
+  const result = await env.DB.prepare(`INSERT INTO ama_publications(id,creator_id,question_id,revision_id,profile_version_id,actor_email,action,safety)
+    SELECT ?,q.creator_id,q.id,r.id,?,?,'publish','sfw'
+    FROM ama_questions q JOIN ama_answer_revisions r ON r.question_id=q.id AND r.creator_id=q.creator_id
+    WHERE q.id=? AND q.creator_id=? AND r.id=?
+      AND r.revision=(SELECT MAX(r2.revision) FROM ama_answer_revisions r2 WHERE r2.question_id=q.id AND r2.creator_id=q.creator_id)
+      AND COALESCE((SELECT MAX(p.sequence) FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id),0)=?
+      AND NOT EXISTS (SELECT 1 FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id
+        AND p.sequence=? AND p.action='publish' AND p.revision_id=r.id)`)
+    .bind(crypto.randomUUID(), profile.version_id, context.email, questionId, context.creator_id, revisionId, sequence, sequence).run();
+  if (result.meta.changes !== 1) return response("Answer or publication changed. Reload the preview.", 409, "text/plain; charset=utf-8");
   return response(null, 303, "text/plain; charset=utf-8", { Location: `${BASE}?queue=published` });
 }
 
-async function withdrawAnswer(request, env, context, questionId, publishProjection) {
+async function withdrawAnswer(request, env, context, questionId) {
   if (context.role !== "creator") return response("Not found", 404, "text/plain; charset=utf-8");
   if (request.headers.get("origin") !== new URL(request.url).origin) return response("Forbidden", 403, "text/plain; charset=utf-8");
   if (!(request.headers.get("content-type") ?? "").startsWith("application/x-www-form-urlencoded")) return response("Unsupported media type", 415, "text/plain; charset=utf-8");
   const form = await boundedForm(request);
-  if (!form || form.get("confirm") !== "withdraw") return response("Invalid withdrawal", 400, "text/plain; charset=utf-8");
-  if (!publishProjection) return response("Publication is not configured", 503, "text/plain; charset=utf-8");
+  const sequence = form && expectedSequence(form);
+  if (!form || form.get("confirm") !== "withdraw" || sequence === null) return response("Invalid withdrawal", 400, "text/plain; charset=utf-8");
   const profile = await activeProfile(env, context.creator_id);
   if (!profile) return response("Public profile unavailable", 409, "text/plain; charset=utf-8");
-  const latest = await env.DB.prepare("SELECT action FROM ama_publications WHERE creator_id=? AND question_id=? ORDER BY sequence DESC LIMIT 1").bind(context.creator_id, questionId).first();
-  if (!latest) return response("Published card not found", 404, "text/plain; charset=utf-8");
-  if (latest.action === "publish") {
-    await env.DB.prepare(`INSERT INTO ama_publications(id,creator_id,question_id,revision_id,profile_version_id,actor_email,action,safety)
-      VALUES (?,?,?,NULL,?,?,'withdraw',NULL)`).bind(crypto.randomUUID(), context.creator_id, questionId, profile.version_id, context.email).run();
-  }
-  const delivery = await deliverProjection(env, context, profile, publishProjection);
-  if (delivery === "superseded") return response("Withdrawal was superseded by a newer action. Reload the question.", 409, "text/plain; charset=utf-8");
-  if (delivery !== "delivered") {
-    return response("Withdrawal is pending. Please retry.", 503, "text/plain; charset=utf-8");
-  }
+  const result = await env.DB.prepare(`INSERT INTO ama_publications(id,creator_id,question_id,revision_id,profile_version_id,actor_email,action,safety)
+    SELECT ?,q.creator_id,q.id,NULL,?,?,'withdraw',NULL FROM ama_questions q
+    WHERE q.id=? AND q.creator_id=?
+      AND (SELECT MAX(p.sequence) FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id)=?
+      AND (SELECT p.action FROM ama_publications p WHERE p.creator_id=q.creator_id AND p.question_id=q.id ORDER BY p.sequence DESC LIMIT 1)='publish'`)
+    .bind(crypto.randomUUID(), profile.version_id, context.email, questionId, context.creator_id, sequence).run();
+  if (result.meta.changes !== 1) return response("Card changed. Reload the question.", 409, "text/plain; charset=utf-8");
   return response(null, 303, "text/plain; charset=utf-8", { Location: `${BASE}?queue=answered` });
 }
 
@@ -264,9 +289,18 @@ async function saveDraft(request, env, context, questionId) {
   return response(null, 303, "text/plain; charset=utf-8", { Location: `${BASE}/${encodeURIComponent(questionId)}?saved=1` });
 }
 
-export function createAmaWorker({ fetchJwks = fetch, publishProjection = null } = {}) {
+export function createAmaWorker({ fetchJwks = fetch, verifyChallenge = defaultVerifyChallenge } = {}) {
   return { async fetch(request, env) {
     const url = new URL(request.url);
+    // These routes are for the public Worker's service binding only. The
+    // release must keep worker.dev off and route external traffic solely to
+    // the Access-protected /dashboard/ama prefix.
+    if (url.origin === "https://ama.internal" && env.DB) {
+      const publicMatch = /^\/internal\/ama\/public\/([a-z0-9][a-z0-9-]{0,79})$/.exec(url.pathname);
+      if (publicMatch && request.method === "GET") return publicProjectionBySlug(env, publicMatch[1]);
+      const intakeMatch = /^\/internal\/ama\/intake\/([a-z0-9][a-z0-9-]{0,79})$/.exec(url.pathname);
+      if (intakeMatch && request.method === "POST") return intakeQuestion(request, env, intakeMatch[1], verifyChallenge);
+    }
     if (url.pathname !== BASE && !url.pathname.startsWith(`${BASE}/`)) return response("Not found", 404, "text/plain; charset=utf-8");
     if (!env.DB) return response("Unavailable", 503, "text/plain; charset=utf-8");
     const context = await creatorContext(request, env, fetchJwks);
@@ -278,9 +312,9 @@ export function createAmaWorker({ fetchJwks = fetch, publishProjection = null } 
     const previewMatch = /^\/dashboard\/ama\/([a-zA-Z0-9_-]{1,120})\/preview$/.exec(url.pathname);
     if (previewMatch && request.method === "GET") return previewPage(env, context, previewMatch[1]);
     const publishMatch = /^\/dashboard\/ama\/([a-zA-Z0-9_-]{1,120})\/publish$/.exec(url.pathname);
-    if (publishMatch && request.method === "POST") return publishAnswer(request, env, context, publishMatch[1], publishProjection);
+    if (publishMatch && request.method === "POST") return publishAnswer(request, env, context, publishMatch[1]);
     const withdrawMatch = /^\/dashboard\/ama\/([a-zA-Z0-9_-]{1,120})\/withdraw$/.exec(url.pathname);
-    if (withdrawMatch && request.method === "POST") return withdrawAnswer(request, env, context, withdrawMatch[1], publishProjection);
+    if (withdrawMatch && request.method === "POST") return withdrawAnswer(request, env, context, withdrawMatch[1]);
     const detailMatch = /^\/dashboard\/ama\/([a-zA-Z0-9_-]{1,120})$/.exec(url.pathname);
     if (detailMatch && request.method === "GET") return detailPage(env, context, detailMatch[1], url.searchParams.get("saved") === "1");
     return response("Not found", 404, "text/plain; charset=utf-8");

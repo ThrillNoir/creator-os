@@ -28,20 +28,18 @@ insertQuestion.run("question-two", "fixture-a", "Can I share a published answer?
 insertQuestion.run("question-three", "fixture-a", "Where can I find the booking form?", "import", "2026-10-19T09:12:00.000Z");
 db.prepare("INSERT INTO ama_answer_revisions(id,question_id,creator_id,revision,answer_text,author_email) VALUES (?,?,?,?,?,?)")
   .run("draft-one", "question-one", "fixture-a", 1, "This is a synthetic local preview. Questions stay private until the creator reviews the answer and explicitly publishes the finished card.", "creator@example.test");
+db.prepare("INSERT INTO ama_answer_revisions(id,question_id,creator_id,revision,answer_text,author_email) VALUES (?,?,?,?,?,?)")
+  .run("draft-two", "question-two", "fixture-a", 1, "Yes. A published question and answer can be shared as one card.", "creator@example.test");
+const publish = db.prepare("INSERT INTO ama_publications(id,creator_id,question_id,revision_id,profile_version_id,actor_email,action,safety) VALUES (?,?,?,?,?,?,'publish','sfw')");
+publish.run("sample-publication-one", "fixture-a", "question-one", "draft-one", "fixture-profile-v1", "creator@example.test");
+publish.run("sample-publication-two", "fixture-a", "question-two", "draft-two", "fixture-profile-v1", "creator@example.test");
 
 const profile = {
   schemaVersion: 1, publishedVersionId: "fixture-profile-v1",
   creator: { slug: "adelaide", displayName: "Fixture Creator", headline: "A local That Hub AMA preview", bio: "Synthetic content only. Nothing here is published to the real site." },
   links: [{ id: "ama", label: "Questions & answers", destinationUrl: "https://www.thathuboverthere.com/adelaide/ama", destinationHost: "www.thathuboverthere.com" }],
 };
-const kv = new Map([["public-profile:adelaide", profile], ["public-ama:adelaide", {
-  schemaVersion: 1, creatorSlug: "adelaide", publishedProfileVersionId: "fixture-profile-v1",
-  cards: [
-    { id: "sample-one", question: "What is on this page?", answer: "A synthetic question and answer card showing the public reading experience. Only an explicitly published pair belongs here.", publishedAt: "2026-10-19T09:00:00.000Z", safety: "sfw" },
-    { id: "sample-two", question: "Can I swipe through the collection?", answer: "Yes. On a phone, swipe across each complete card. Previous and next links also work with a keyboard.", publishedAt: "2026-10-19T09:01:00.000Z", safety: "sfw" },
-    { id: "sample-three", question: "Where does a private draft go?", answer: "It remains in the protected creator dashboard. Saving a draft never adds it to this public page.", publishedAt: "2026-10-19T09:02:00.000Z", safety: "sfw" },
-  ],
-}]]);
+const kv = new Map([["public-profile:adelaide", profile]]);
 
 function d1() {
   return { prepare(sql) {
@@ -63,14 +61,14 @@ async function token() {
   const signature = Buffer.from(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(`${head}.${body}`))).toString("base64url");
   return `${head}.${body}.${signature}`;
 }
-const privateWorker = createAmaWorker({ fetchJwks: async () => Response.json({ keys: [jwk] }), publishProjection: async ({ creatorId, profile: current, projection, generation }) => {
-  if (db.prepare("SELECT MAX(sequence) AS n FROM ama_publications WHERE creator_id=?").get(creatorId).n !== generation) return false;
-  if (kv.get(`public-profile:${current.slug}`)?.publishedVersionId !== current.version_id) return false;
-  kv.set(`public-ama:${current.slug}`, projection);
-  return true;
+const usedChallenges = new Set();
+const privateWorker = createAmaWorker({ fetchJwks: async () => Response.json({ keys: [jwk] }), verifyChallenge: async (value) => {
+  if (value !== "fixture-demo-1" || usedChallenges.has(value)) return false;
+  usedChallenges.add(value); return true;
 } });
-const privateEnv = { DB: d1(), ACCESS_AUD: "local-ama", ACCESS_ISSUER: "https://fixture.invalid", ACCESS_JWKS_URL: "https://fixture.invalid/certs" };
-const publicEnv = { PUBLIC_LINKS: { get: async (key) => kv.get(key) ?? null }, LINK_EVENTS: { writeDataPoint() {} }, ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const privateEnv = { DB: d1(), ACCESS_AUD: "local-ama", ACCESS_ISSUER: "https://fixture.invalid", ACCESS_JWKS_URL: "https://fixture.invalid/certs", PUBLIC_ORIGIN: origin, TURNSTILE_SECRET: "fixture-only" };
+const publicEnv = { LIVE_PUBLIC_CREATOR_SLUGS: "adelaide", PUBLIC_LINKS: { get: async (key) => kv.get(key) ?? null }, LINK_EVENTS: { writeDataPoint() {} }, ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+  AMA_SERVICE: { fetch: (input, init) => privateWorker.fetch(new Request(input, init), privateEnv) }, AMA_TURNSTILE_SITE_KEY: "fixture-site-key", AMA_RATE_LIMITER: { limit: async () => ({ success: true }) } };
 
 const server = createServer(async (incoming, outgoing) => {
   try {
@@ -80,13 +78,19 @@ const server = createServer(async (incoming, outgoing) => {
     for await (const chunk of incoming) chunks.push(chunk);
     const headers = new Headers(incoming.headers);
     if (url.pathname.startsWith("/dashboard/ama")) headers.set("cf-access-jwt-assertion", await token());
+    if (url.pathname.endsWith("/ama/ask")) headers.set("cf-connecting-ip", "192.0.2.40");
     const request = new Request(url, { method: incoming.method, headers, body: ["GET", "HEAD"].includes(incoming.method) ? undefined : Buffer.concat(chunks) });
     const worker = url.pathname.startsWith("/dashboard/ama") ? privateWorker : publicWorker;
     const result = await worker.fetch(request, url.pathname.startsWith("/dashboard/ama") ? privateEnv : publicEnv);
     const outputHeaders = Object.fromEntries(result.headers);
     if (outputHeaders.location === "https://www.thathuboverthere.com/adelaide/ama") outputHeaders.location = "/adelaide/ama";
+    let body = Buffer.from(await result.arrayBuffer());
+    if (url.pathname === "/adelaide/ama" && incoming.method === "GET" && result.status === 200) {
+      body = Buffer.from(body.toString().replace('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>', "")
+        .replace('<div class="cf-turnstile" data-sitekey="fixture-site-key"></div>', '<input type="hidden" name="cf-turnstile-response" value="fixture-demo-1"><p class="fixture-note">Synthetic local challenge · one submission per preview restart</p>'));
+    }
     outgoing.writeHead(result.status, outputHeaders);
-    outgoing.end(Buffer.from(await result.arrayBuffer()));
+    outgoing.end(body);
   } catch (error) { outgoing.writeHead(500); outgoing.end(String(error)); }
 });
 server.listen(port, host, () => process.stdout.write(`Synthetic That Hub AMA preview: ${origin}/adelaide and ${origin}/dashboard/ama\n`));

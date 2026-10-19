@@ -24,8 +24,11 @@ function environment(profileValue = profile, amaValue = ama) {
       LIVE_PUBLIC_CREATOR_SLUGS: "adelaide",
       PUBLIC_LINKS: { get: async (key) => {
         reads.push(key);
-        return key === "public-profile:adelaide" ? profileValue : key === "public-ama:adelaide" ? amaValue : null;
+        return key === "public-profile:adelaide" ? profileValue : null;
       } },
+      AMA_SERVICE: { fetch: async () => amaValue ? Response.json(amaValue) : new Response("Not found", { status: 404 }) },
+      AMA_RATE_LIMITER: { limit: async () => ({ success: true }) },
+      AMA_TURNSTILE_SITE_KEY: "fixture-site-key",
       LINK_EVENTS: { writeDataPoint() {} },
     },
   };
@@ -49,7 +52,7 @@ test("public AMA page renders only the approved creator projection", async () =>
   assert.match(body, /&lt;script&gt;bad\(\)&lt;\/script&gt;/);
   assert.match(body, /A public &lt;answer&gt; &amp; reply/);
   assert.doesNotMatch(body, /<script>|<answer>|publishedProfileVersionId|destinationUrl/);
-  assert.deepEqual(reads, ["public-profile:adelaide", "public-ama:adelaide"]);
+  assert.deepEqual(reads, ["public-profile:adelaide"]);
 
   const head = await worker.fetch(new Request(url, { method: "HEAD" }), env);
   assert.equal(head.status, 200);

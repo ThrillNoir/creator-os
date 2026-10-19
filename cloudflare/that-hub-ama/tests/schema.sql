@@ -1,5 +1,4 @@
--- AMA intake is separate from the private creator inbox. No route imports
--- questions until its own abuse and consent checks are ready.
+-- Local-only AMA intake, review and publication proof. Not an applied D1 migration.
 CREATE TABLE ama_questions (
   id TEXT PRIMARY KEY,
   creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -72,10 +71,6 @@ CREATE TABLE ama_publications (
   FOREIGN KEY(question_id,creator_id) REFERENCES ama_questions(id,creator_id)
 );
 CREATE INDEX ama_publications_creator_question ON ama_publications(creator_id,question_id,sequence DESC);
-CREATE TABLE ama_projection_delivery_state (
-  creator_id TEXT PRIMARY KEY,
-  delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(delivered_sequence>=0)
-);
 CREATE TRIGGER ama_publication_no_update BEFORE UPDATE ON ama_publications
 BEGIN SELECT RAISE(ABORT, 'ama_publication_immutable'); END;
 CREATE TRIGGER ama_publication_no_delete BEFORE DELETE ON ama_publications

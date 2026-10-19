@@ -1,29 +1,36 @@
 # That Hub AMA local slice
 
-This is a local, synthetic demonstration of the That Hub AMA creator journey.
-It belongs to `www.thathuboverthere.com`; its source lives in this repository
-because `cloudflare/thot-os-public-links` already serves the live public
-profile. No creator account, real question, or Cloudflare resource is used.
+Status: local synthetic proof, 19 October 2026. That Hub's public source lives in
+this repository because `cloudflare/thot-os-public-links` serves the live
+`www.thathuboverthere.com` creator profile. No real question, creator session,
+Cloudflare resource, migration or route has been changed.
 
-The public Worker now has a `/<slug>/ama` page. It reads only `public-profile`
-and `public-ama` KV projections, checks that their creator slug and published
-profile version agree, escapes question and answer text, and renders a
-swipeable card collection with keyboard links. An approved ordinary profile
-link can point to this page. Without a valid projection the route returns 404.
+## Local journey
 
-`cloudflare/that-hub-ama` is a separate, unrouted private Worker prototype.
-It verifies Access JWTs and a single active creator membership; viewers are
-read only. A creator can review a question, save an immutable private answer
-revision, preview both sides of the finished card, explicitly publish a SFW
-pair, and request withdrawal without deleting private history. A failed
-projection write leaves the public update visibly pending for retry. The local
-publisher fixture rejects stale generations before writing the allowlisted
-public projection; the tests cover an out-of-order publish/withdraw race. The default
-Worker has **no publisher** and returns 503 for a publish attempt.
-`tests/schema.sql` is a local fixture, **not** an applied D1 migration. The
-prototype has no Wrangler config and cannot be deployed as-is.
+1. A visitor opens `/<slug>/ama`, sees published question-and-answer cards, and
+   submits an anonymous question. The public Worker checks the active approved
+   profile, same-origin form, 8 KiB body, 800-character question, acknowledgement,
+   empty honeypot, a rate-limit binding and a Turnstile token. Its service binding
+   forwards only allowlisted fields to the AMA Worker. The AMA Worker verifies
+   the single-use Turnstile token server-side and inserts the question under the
+   D1-resolved creator ID. A question never appears publicly on submission.
+2. The Access-protected `dashboard/ama` inbox verifies the signed JWT and one
+   active creator membership. A viewer is read only. A creator saves immutable
+   private answer revisions, sees a finished-card preview, and explicitly
+   publishes an SFW pair. A stale preview cannot overwrite a newer action.
+3. The public Worker reads an allowlisted projection from the AMA Worker over a
+   service binding on each uncached origin request. The AMA Worker derives the
+   current card set from ordered D1 publish/withdraw events. There is no AMA KV
+   writer or public D1 binding. Withdrawal removes a card from the next origin
+   read; old browser pages, in-flight responses and copies cannot be recalled.
 
-Local checks:
+The local fixture includes a synthetic, single-use challenge in place of a
+real Turnstile browser call. `tests/schema.sql` is a fixture, **not** an applied
+D1 migration. The AMA Worker has no Wrangler deployment configuration and is
+not routable as-is. The public Worker's AMA paths fail closed without the
+planned service binding; its existing live profile behaviour is unchanged.
+
+## Verify locally
 
 ```sh
 npm --prefix cloudflare/thot-os-public-links test
@@ -34,21 +41,18 @@ npm run lint
 npm run build
 ```
 
-For an interactive fixture preview, run
-`node --experimental-strip-types cloudflare/that-hub-ama/tests/preview.mjs` and
-open `http://127.0.0.1:8789/adelaide`,
-`http://127.0.0.1:8789/adelaide/ama`, and
-`http://127.0.0.1:8789/dashboard/ama`. The preview server creates a local
-Access test key, an in-memory D1 fixture and synthetic cards. It rewrites only
-the approved `/adelaide/ama` link to localhost for navigation.
+Run `node --experimental-strip-types cloudflare/that-hub-ama/tests/preview.mjs`
+and open `http://127.0.0.1:8789/adelaide`,
+`http://127.0.0.1:8789/adelaide/ama` and
+`http://127.0.0.1:8789/dashboard/ama`. The preview uses an in-memory D1 fixture,
+a local Access test key and synthetic Q&A. One public question can be sent per
+preview restart because the local challenge token is deliberately single-use.
 
-Next delivery: public anonymous intake with bounded form, Turnstile/rate
-limits, replay protection and creator-scoped D1 storage; a reviewed D1
-migration; a controlled publication and withdrawal path with retry receipts;
-then exact same-host routing and Access coverage. The real publisher must
-serialize per-creator writes, reject stale generations and reconcile pending
-delivery; KV alone cannot provide this guarantee. KV is also eventually
-consistent across regions, so a successful write does not prove immediate
-global removal. Public Q&A remains SFW under
-the current public-links contract. Adult Q&A would require a separate product
-decision and protected delivery surface.
+The fixture tests cover an anonymous question reaching only its creator, replay,
+rate and boundary failures, private draft isolation, explicit publish, stale
+publish rejection, withdrawal, and active-profile revocation. Mobile and desktop
+screenshots and an actual local HTTP submission-to-withdrawal journey were also
+checked. These are local proofs, not a live Access, Turnstile or D1 integration.
+
+Release prerequisites and rollback order are in
+[`THAT_HUB_AMA_STAGING_PLAN.md`](THAT_HUB_AMA_STAGING_PLAN.md).

@@ -46,6 +46,12 @@ type PublicAmaProjection = {
   }>;
 };
 
+type AmaEnv = Env & {
+  AMA_SERVICE?: Fetcher;
+  AMA_TURNSTILE_SITE_KEY?: string;
+  AMA_RATE_LIMITER?: { limit: (options: { key: string }) => Promise<{ success: boolean }> };
+};
+
 const LINK_ID = /^[a-zA-Z0-9_-]{1,120}$/;
 const HEX = /^#[0-9a-f]{6}$/i;
 const THEME_KEYS = new Set(["thot-noir", "soft-pearl", "candy-pink", "lavender-dream", "sunset", "ocean", "forest", "crimson", "chrome", "clean-minimal"]);
@@ -117,10 +123,6 @@ function validAppearance(value: unknown) {
 
 function snapshotKey(slug: string) {
   return `public-profile:${slug}`;
-}
-
-function amaProjectionKey(slug: string) {
-  return `public-ama:${slug}`;
 }
 
 /**
@@ -208,9 +210,68 @@ async function loadSnapshot(env: Env, slug: string) {
   return validSnapshot(snapshot, slug, env) ? snapshot : null;
 }
 
-async function loadAmaProjection(env: Env, profile: PublicProfileSnapshot) {
-  const projection = await env.PUBLIC_LINKS.get(amaProjectionKey(profile.creator.slug), "json");
-  return validAmaProjection(projection, profile) ? projection : null;
+async function loadAmaProjection(env: AmaEnv, profile: PublicProfileSnapshot) {
+  if (!env.AMA_SERVICE) return null;
+  try {
+    const result = await env.AMA_SERVICE.fetch(`https://ama.internal/internal/ama/public/${profile.creator.slug}`);
+    if (!result.ok) return null;
+    const projection: unknown = await result.json();
+    return validAmaProjection(projection, profile) ? projection : null;
+  } catch {
+    return null;
+  }
+}
+
+async function boundedAmaForm(request: Request) {
+  if (!request.body || Number(request.headers.get("content-length") ?? 0) > 8192) return null;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > 8192) { await reader.cancel(); return null; }
+      chunks.push(next.value);
+    }
+  } catch { await reader.cancel().catch(() => undefined); return null; }
+  const raw = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { raw.set(chunk, offset); offset += chunk.byteLength; }
+  return new Request(request.url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: raw }).formData().catch(() => null);
+}
+
+async function sendAmaQuestion(request: Request, env: AmaEnv, slug: string) {
+  if (!env.AMA_SERVICE || !env.AMA_RATE_LIMITER || !env.AMA_TURNSTILE_SITE_KEY) return textResponse("Question intake unavailable", 503);
+  if (request.headers.get("origin") !== new URL(request.url).origin) return textResponse("Forbidden", 403);
+  if (!(request.headers.get("content-type") ?? "").startsWith("application/x-www-form-urlencoded")) return textResponse("Unsupported media type", 415);
+  const ip = request.headers.get("cf-connecting-ip");
+  if (!ip) return textResponse("Question intake unavailable", 503);
+  const form = await boundedAmaForm(request);
+  if (!form) return textResponse("Invalid question", 400);
+  const fields = ["question", "acknowledge", "website", "cf-turnstile-response"];
+  let fieldCount = 0;
+  form.forEach(() => { fieldCount++; });
+  if (fieldCount !== 4 || fields.some((field) => form.getAll(field).length !== 1)) return textResponse("Invalid question", 400);
+  const question = form.get("question");
+  const challenge = form.get("cf-turnstile-response");
+  if (typeof question !== "string" || !question.trim() || question.length > 800 ||
+    form.get("acknowledge") !== "yes" || form.get("website") !== "" ||
+    typeof challenge !== "string" || !challenge || challenge.length > 2048) return textResponse("Invalid question", 400);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${slug}:${ip}`));
+  const key = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  try {
+    if (!(await env.AMA_RATE_LIMITER.limit({ key })).success) return textResponse("Please wait before sending another question", 429);
+    const forwarded = new URLSearchParams({ question: question.trim(), acknowledge: "yes", website: "", "cf-turnstile-response": challenge });
+    const result = await env.AMA_SERVICE.fetch(`https://ama.internal/internal/ama/intake/${slug}`, {
+      method: "POST", headers: { origin: new URL(request.url).origin, "content-type": "application/x-www-form-urlencoded" }, body: forwarded,
+    });
+    if (result.status !== 201) return textResponse(result.status === 403 ? "Verification failed. Refresh and try again." : "Question could not be sent", result.status === 403 ? 403 : result.status === 404 ? 404 : 503);
+    return textResponse("", 303, { location: `/${slug}/ama?sent=1` });
+  } catch {
+    return textResponse("Question intake unavailable", 503);
+  }
 }
 
 function renderProfile(snapshot: PublicProfileSnapshot) {
@@ -230,7 +291,7 @@ function renderProfile(snapshot: PublicProfileSnapshot) {
 <body><main><h1>${title}</h1>${media}${headline}${bio}${actions ? `<nav class="actions" aria-label="Creator actions">${actions}</nav>` : ""}${links ? `<nav class="links" aria-label="Links">${links}</nav>` : ""}</main></body></html>`;
 }
 
-function renderAma(profile: PublicProfileSnapshot, projection: PublicAmaProjection) {
+function renderAma(profile: PublicProfileSnapshot, projection: PublicAmaProjection, siteKey?: string, sent = false) {
   const appearance = profile.appearance ?? { backgroundColor: "#0d0c10", primaryColor: "#7655f6", textColor: "#f8f6fa", cardColor: "#211a29" };
   const title = escapeHtml(profile.creator.displayName);
   const slug = encodeURIComponent(profile.creator.slug);
@@ -246,9 +307,10 @@ function renderAma(profile: PublicProfileSnapshot, projection: PublicAmaProjecti
       <nav class="card-nav" aria-label="Question navigation"><span>${previous ? `<a href="#q-${previous.id}" aria-label="Previous question">← Previous</a>` : ""}</span><span>${next ? `<a href="#q-${next.id}" aria-label="Next question">Next →</a>` : ""}</span></nav>
     </article>`;
   }).join("");
+  const ask = siteKey ? `<section class="ask" aria-labelledby="ask-heading"><div><p class="eyebrow">YOUR TURN</p><h2 id="ask-heading">Ask a question.</h2><p>Your question goes to ${title} privately. They choose whether to answer and publish it. Please leave out names, contact details and other personal information.</p></div><form method="post" action="/${slug}/ama/ask"><label for="ama-question">Your question</label><textarea id="ama-question" name="question" maxlength="800" required placeholder="What would you like to know?"></textarea><div class="trap" aria-hidden="true"><label for="ama-website">Website</label><input id="ama-website" name="website" tabindex="-1" autocomplete="off"></div><label class="ack"><input type="checkbox" name="acknowledge" value="yes" required><span>I understand my question may appear publicly with an answer if the creator approves it.</span></label><div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div><button type="submit">Send question <span aria-hidden="true">↗</span></button></form></section>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Questions &amp; answers · ${title}</title><style>
-    *{box-sizing:border-box}html{color-scheme:dark;background:${appearance.backgroundColor};scroll-behavior:smooth}body{margin:0;min-height:100vh;color:${appearance.textColor};background:radial-gradient(circle at 85% 0%,${appearance.primaryColor}3b,transparent 38%),${appearance.backgroundColor};font:16px/1.5 ui-sans-serif,system-ui,sans-serif}main{width:min(100% - 2rem,72rem);margin:auto;padding:clamp(1.5rem,5vw,4rem) 0 5rem}a{color:inherit}header{max-width:44rem;margin:0 auto 2.5rem}header>a{text-decoration:none;font-weight:700}h1{font-size:clamp(2.4rem,7vw,4.4rem);letter-spacing:-.055em;line-height:1.02;margin:1.5rem 0 .7rem}header p{opacity:.8;margin:0}.collection{display:flex;gap:1.5rem;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline:calc((100% - min(100%,42rem))/2);padding:0 max(0px,calc((100% - 42rem)/2)) 1.25rem;overscroll-behavior-inline:contain}.qa-card{flex:0 0 min(100%,42rem);scroll-snap-align:center;min-height:31rem;display:flex;flex-direction:column;color:#201c2d;background:#fffaf2;border:2px solid #201c2d;border-radius:1.25rem;box-shadow:8px 8px 0 #201c2d;overflow-wrap:anywhere}.card-top{display:flex;justify-content:space-between;gap:1rem;align-items:center;border-bottom:2px solid #201c2d;padding:1rem 1.4rem}.eyebrow,.count,.section-label{font-size:.72rem;letter-spacing:.12em;font-weight:850}.count{white-space:nowrap}.qa-content{padding:clamp(1.4rem,5vw,2.5rem);flex:1}.section-label{display:block;color:#615b6c;margin-bottom:.7rem}.qa-content h2{font-family:Georgia,serif;font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.22;letter-spacing:-.025em;margin:0;white-space:pre-line}.reply{border-top:2px solid #201c2d;margin-top:2rem;padding-top:1.5rem}.reply p{font-size:clamp(1rem,2.5vw,1.16rem);line-height:1.65;white-space:pre-line;margin:0}.qa-card footer,.card-nav{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.8rem 1.4rem;border-top:1px solid #201c2d;font-size:.8rem}.qa-card footer a,.card-nav a{font-weight:750;text-underline-offset:.2rem}.card-nav{min-height:3.3rem;background:#ede8fb;font-size:.9rem}.empty{max-width:42rem;margin:auto;background:${appearance.cardColor};padding:1.5rem;border-radius:1rem}.hint{text-align:center;font-size:.85rem;opacity:.8;margin:1rem auto}:focus-visible{outline:3px solid #f49cbe;outline-offset:3px}@media(max-width:44rem){main{width:100%;padding-top:1.5rem}header{padding:0 1rem}.collection{gap:1rem;padding:0 1rem 1.25rem;scroll-padding-inline:1rem}.qa-card{flex-basis:calc(100vw - 2rem);min-height:28rem;box-shadow:5px 5px 0 #201c2d}.hint{padding:0 1rem}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-  </style></head><body><main><header><a href="/${slug}">← ${title}</a><h1>Questions &amp; answers</h1><p>Published answers from ${title}.</p></header>${cards ? `<div class="collection" aria-label="Published questions and answers">${cards}</div><p class="hint">Swipe to browse · Open a card’s link to share it</p>` : '<p class="empty">No published answers yet.</p>'}</main></body></html>`;
+    *{box-sizing:border-box}html{color-scheme:dark;background:${appearance.backgroundColor};scroll-behavior:smooth}body{margin:0;min-height:100vh;color:${appearance.textColor};background:radial-gradient(circle at 85% 0%,${appearance.primaryColor}3b,transparent 38%),${appearance.backgroundColor};font:16px/1.5 ui-sans-serif,system-ui,sans-serif}main{width:min(100% - 2rem,72rem);margin:auto;padding:clamp(1.5rem,5vw,4rem) 0 5rem}a{color:inherit}header{max-width:44rem;margin:0 auto 2.5rem}header>a{text-decoration:none;font-weight:700}h1{font-size:clamp(2.4rem,7vw,4.4rem);letter-spacing:-.055em;line-height:1.02;margin:1.5rem 0 .7rem}header p{opacity:.8;margin:0}.collection{display:flex;gap:1.5rem;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline:calc((100% - min(100%,42rem))/2);padding:0 max(0px,calc((100% - 42rem)/2)) 1.25rem;overscroll-behavior-inline:contain}.qa-card{flex:0 0 min(100%,42rem);scroll-snap-align:center;min-height:31rem;display:flex;flex-direction:column;color:#201c2d;background:#fffaf2;border:2px solid #201c2d;border-radius:1.25rem;box-shadow:8px 8px 0 #201c2d;overflow-wrap:anywhere}.card-top{display:flex;justify-content:space-between;gap:1rem;align-items:center;border-bottom:2px solid #201c2d;padding:1rem 1.4rem}.eyebrow,.count,.section-label{font-size:.72rem;letter-spacing:.12em;font-weight:850}.count{white-space:nowrap}.qa-content{padding:clamp(1.4rem,5vw,2.5rem);flex:1}.section-label{display:block;color:#615b6c;margin-bottom:.7rem}.qa-content h2{font-family:Georgia,serif;font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.22;letter-spacing:-.025em;margin:0;white-space:pre-line}.reply{border-top:2px solid #201c2d;margin-top:2rem;padding-top:1.5rem}.reply p{font-size:clamp(1rem,2.5vw,1.16rem);line-height:1.65;white-space:pre-line;margin:0}.qa-card footer,.card-nav{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.8rem 1.4rem;border-top:1px solid #201c2d;font-size:.8rem}.qa-card footer a,.card-nav a{font-weight:750;text-underline-offset:.2rem}.card-nav{min-height:3.3rem;background:#ede8fb;font-size:.9rem}.empty{max-width:42rem;margin:auto;background:${appearance.cardColor};padding:1.5rem;border-radius:1rem}.hint{text-align:center;font-size:.85rem;opacity:.8;margin:1rem auto}.sent{max-width:42rem;margin:1rem auto;padding:1rem 1.25rem;background:#e5f4ed;color:#185b3e;border-radius:.7rem;font-weight:750}.ask{max-width:68rem;margin:4rem auto 0;padding:clamp(1.5rem,4vw,3rem);display:grid;grid-template-columns:1fr 1fr;gap:clamp(2rem,5vw,5rem);background:${appearance.cardColor};border:1px solid ${appearance.textColor}33;border-radius:1.25rem}.ask h2{font:700 clamp(2rem,4vw,3.5rem)/1.07 Georgia,serif;letter-spacing:-.035em;margin:.7rem 0}.ask p{line-height:1.65;opacity:.84}.ask form{display:grid;gap:1rem}.ask label{font-weight:750}.ask textarea{width:100%;min-height:9rem;resize:vertical;border-radius:.8rem;border:1px solid #b8abb9;background:#fffaf7;color:#201c2d;padding:1rem;font:inherit;line-height:1.5}.ask .ack{display:flex;align-items:flex-start;gap:.7rem;font-size:.86rem;line-height:1.4}.ask .ack input{flex:none;margin:.2rem 0}.ask button{width:max-content;border:0;border-radius:.75rem;background:#f5a7c4;color:#201c2d;padding:.85rem 1.2rem;font:inherit;font-weight:850;cursor:pointer}.trap{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}:focus-visible{outline:3px solid #f49cbe;outline-offset:3px}@media(max-width:44rem){main{width:100%;padding-top:1.5rem}header{padding:0 1rem}.collection{gap:1rem;padding:0 1rem 1.25rem;scroll-padding-inline:1rem}.qa-card{flex-basis:calc(100vw - 2rem);min-height:28rem;box-shadow:5px 5px 0 #201c2d}.hint{padding:0 1rem}.ask{margin:3rem 1rem 0;grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ""}</head><body><main><header><a href="/${slug}">← ${title}</a><h1>Questions &amp; answers</h1><p>Published answers from ${title}.</p></header>${sent ? '<p class="sent" role="status">Question sent privately. The creator decides whether to answer and publish it.</p>' : ""}${cards ? `<div class="collection" aria-label="Published questions and answers">${cards}</div><p class="hint">Swipe to browse · Open a card’s link to share it</p>` : '<p class="empty">No published answers yet.</p>'}${ask}</main></body></html>`;
 }
 
 function isStaticAssetPath(pathname: string) {
@@ -257,9 +319,10 @@ function isStaticAssetPath(pathname: string) {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method !== "GET" && request.method !== "HEAD") return textResponse("Method not allowed", 405, { allow: "GET, HEAD" });
     const url = new URL(request.url);
     const routeParts = url.pathname.split("/").filter(Boolean);
+    const askPath = routeParts.length === 3 && routeParts[1] === "ama" && routeParts[2] === "ask" && isPublicCreatorSlug(routeParts[0]);
+    if (request.method !== "GET" && request.method !== "HEAD" && !(askPath && request.method === "POST")) return textResponse("Method not allowed", 405, { allow: askPath ? "GET, HEAD, POST" : "GET, HEAD" });
     const infrastructure = !routeParts.length || isStaticAssetPath(url.pathname) || url.pathname === "/healthz";
     const liveSlug = infrastructure ? undefined : routeParts[0] === "go" || routeParts[0] === "media" ? routeParts[1] : routeParts[0];
     const guarded = livePublicHostGuard(request, env, "profile", liveSlug);
@@ -268,13 +331,20 @@ export default {
     if (url.pathname === "/healthz") return textResponse("ok", 200, { "cache-control": "public, max-age=60" });
 
     const segments = routeParts;
+    if (askPath && request.method === "POST") {
+      const profile = await loadSnapshot(env, segments[0]);
+      return profile ? sendAmaQuestion(request, env as AmaEnv, segments[0]) : textResponse("Not found", 404);
+    }
     if (segments.length === 2 && isPublicCreatorSlug(segments[0]) && segments[1] === "ama") {
       const profile = await loadSnapshot(env, segments[0]);
       if (!profile) return textResponse("Not found", 404);
-      const projection = await loadAmaProjection(env, profile);
+      const amaEnv = env as AmaEnv;
+      const projection = await loadAmaProjection(amaEnv, profile);
       if (!projection) return textResponse("Not found", 404);
-      const headers = { ...securityHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" };
-      return new Response(request.method === "HEAD" ? null : renderAma(profile, projection), { headers });
+      const siteKey = amaEnv.AMA_SERVICE && amaEnv.AMA_RATE_LIMITER && amaEnv.AMA_TURNSTILE_SITE_KEY ? amaEnv.AMA_TURNSTILE_SITE_KEY : undefined;
+      const headers = { ...securityHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+      if (siteKey) headers["content-security-policy"] = "default-src 'none'; style-src 'unsafe-inline'; script-src https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests";
+      return new Response(request.method === "HEAD" ? null : renderAma(profile, projection, siteKey, url.searchParams.get("sent") === "1"), { headers });
     }
     if (segments.length === 2 && isPublicCreatorSlug(segments[0]) && segments[1] === "more") {
       const snapshot = await loadSnapshot(env, segments[0]);

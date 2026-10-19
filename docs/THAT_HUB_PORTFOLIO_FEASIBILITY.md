@@ -41,14 +41,40 @@ payment or download implementation is authorized in this slice.
 Tyro's [Portal Payment Links](https://help.tyro.com/s/article/Payment-Links-in-Tyro-Portal)
 describe a manually managed paid status and notification email. The reviewed
 Portal documentation does not establish an API event or buyer-to-asset
-correlation for an arbitrary pasted link. It should therefore remain a manual
-confirmation path. [Pay Online API](https://docs.connect.tyro.com/docs/online-payments/pay-online/overview)
+correlation for an arbitrary pasted link. It remains a manual or assisted
+confirmation path until a genuine notification and its fields are verified.
+[Pay Online API](https://docs.connect.tyro.com/docs/online-payments/pay-online/overview)
 is a separate integration that creates a Pay Request per order and supports
 [signed webhooks](https://docs.connect.tyro.com/docs/getting-started/notification-events/webhooks)
 or a server status lookup. A future implementation would verify the final
 status and order attributes, handle duplicate or out-of-order events, and grant
 an idempotent entitlement. Tyro requires a
 [technical review before live use](https://docs.connect.tyro.com/docs/online-payments/pay-online/going-live/certification).
+
+## Earnings reconciliation follow-on
+
+Ben also wants THOT OS to record how much each creator made and reconcile the
+agency share. The existing `0065_content_download_sales.sql` stores optional
+sale amount/currency on a download link with audit events, while
+`src/lib/finance.ts` holds agency split settings and proposals. Those are
+starting points, not a verified payment ledger or an amount-due calculation.
+A later sale ledger should retain provider/order reference, creator and asset,
+currency, captured gross, actual fees when reported, refunds/chargebacks,
+settlement status and a per-sale snapshot of the agreed split. Direct creator
+settlement can remain the payment flow; reconciliation records the agency
+amount owing rather than moving funds. Gross-versus-net fee basis remains an
+owner decision.
+
+Tyro's [Reporting API](https://docs.connect.tyro.com/docs/business-operations/reporting/overview)
+may support later transaction and settlement reconciliation with merchant
+authorisation. It is a pull reporting path, not instant purchase confirmation.
+For Pay Online, a [`SUCCESS` state](https://docs.connect.tyro.com/docs/online-payments/pay-online/payment-scenarios/during-payment) may reflect authorisation or capture; any
+future unlock must establish actual capture and amount. An authenticated
+merchant payment email may be worth assessing as a bounded manual or assisted
+path if a genuine redacted sample shows reliable transaction, buyer, asset and
+amount correlation. Those fields and authenticity have not been verified.
+No payment, email ingestion, entitlement or financial-record work is part of
+this AMA slice.
 
 ## What source already does
 
