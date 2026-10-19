@@ -6,6 +6,7 @@ import { requireCreatorContext } from "@/lib/identity";
 import { type ProfileImageAttachment } from "@/components/profile-appearance-editor";
 import { CopyProfileLink } from "@/components/copy-profile-link";
 import { AdultProfileEditor } from "@/components/adult-profile-editor";
+import { AdultWorkspaceTabs } from "@/components/adult-workspace-tabs";
 import { DEFAULT_PROFILE_APPEARANCE, parseProfileAppearance, type ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { profileImageProcessorAvailable } from "@/lib/profile-image-processing";
 import { adultAgeGateUrl } from "@/lib/profile-public-url";
@@ -79,6 +80,7 @@ export default async function AdultProfilePage({ searchParams }: { searchParams:
   const ageGateUrl = published ? adultAgeGateUrl(env.ADULT_GATEWAY_BASE_URL, creator?.slug ?? "") : null;
 
   return <AppShell active="18+ profile"><PageHeader title="18+ profile" subtitle="Design, preview and publish this creator’s age-gated profile." eyebrow="ADULT-GATED CONTENT" />
+    {String((env as { PORTFOLIO_AUTHORING_ENABLED?: string }).PORTFOLIO_AUTHORING_ENABLED) === "1" && <AdultWorkspaceTabs current="profile" />}
     {notice && <div className="success">{notice}</div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">PROTECTED PROFILE</span><h2>18+ profile and links</h2><p>Content and destinations stay out of the safe public page. The live profile remains behind the separate age gate.</p></div><span>{published ? "Published" : draft ? `Draft v${draft.version_number}` : approved ? `Saved v${approved.version_number}` : profile?.status === "paused" ? "Unpublished" : "No profile"}</span></div>
       {ageGateUrl && <CopyProfileLink title="Your 18+ gate link" detail="Share this only where an age-gated creator link is appropriate." url={ageGateUrl} />}

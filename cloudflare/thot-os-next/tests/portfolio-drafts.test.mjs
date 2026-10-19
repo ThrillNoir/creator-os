@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { isVideoPortfolioItem, suggestedLinkedPreviewAssetId } from "../src/lib/portfolio-video.ts";
+import { privatePortfolioImageObjectId } from "../src/lib/portfolio-preview.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 
@@ -63,4 +64,12 @@ test("the editor suggests a Library-linked preview only when the match is unambi
   assert.equal(suggestedLinkedPreviewAssetId("full-a", [linked, unrelated]), "preview-a");
   assert.equal(suggestedLinkedPreviewAssetId("full-a", [unrelated]), "");
   assert.equal(suggestedLinkedPreviewAssetId("full-a", [linked, { id: "preview-c", teaser_for_asset_id: "full-a" }]), "");
+});
+
+test("visual draft derives the private preview object ID from its R2 key", () => {
+  const objectId = "a".repeat(64);
+  const revision = "b".repeat(64);
+  assert.equal(privatePortfolioImageObjectId(`creators/creator-a/assets/${objectId}/previews/${revision}.jpg`), objectId);
+  assert.equal(privatePortfolioImageObjectId(`creators/creator-a/assets/asset-uuid/previews/${revision}.jpg`), null);
+  assert.equal(privatePortfolioImageObjectId(null), null);
 });

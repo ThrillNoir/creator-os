@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell, PageHeader } from "@/components/app-shell";
+import { AdultWorkspaceTabs } from "@/components/adult-workspace-tabs";
+import { VerifiedVideoPreview } from "@/components/verified-video-preview";
 import { roleCan } from "@/lib/authorization";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { getPortfolioDraft, portfolioItemReadiness } from "@/lib/portfolio-authoring";
+import { privatePortfolioImageObjectId } from "@/lib/portfolio-preview";
 import { isVideoPortfolioItem, suggestedLinkedPreviewAssetId } from "@/lib/portfolio-video";
 import {
   createPortfolioCategoryAction, createPortfolioGenreAction,
@@ -17,8 +20,23 @@ export default async function PortfolioPage() {
   const context = await requireCreatorContext();
   const draft = await getPortfolioDraft(context.creator.creator_id);
   const canEdit = roleCan(context.creator.role, "mutate");
-  return <AppShell active="Portfolio"><PageHeader title="Portfolio" subtitle="Choose previews for your age-gated More page. Changes here stay private until a separate release." eyebrow="CREATOR PORTFOLIO" />
-    <section className="panel portfolio-workspace-intro"><div className="section-heading"><div><h2>Private selection</h2><p>Start in the <Link href="/library">Content Library</Link>. Open an item and choose Add to portfolio. Then set its category, genre, order and, for a full clip, a linked short preview.</p></div><span>{draft.items.length} selected</span></div><p>Only an approved preview can be published. A private original or a Library playback link is never a public preview.</p></section>
+  return <AppShell active="18+ profile"><PageHeader title="Portfolio" subtitle="Arrange the content for your age-gated More page. Changes here stay private until a separate release." eyebrow="18+ WORKSPACE" />
+    <AdultWorkspaceTabs current="portfolio" />
+    <section className="panel portfolio-workspace-intro"><div className="section-heading"><div><h2>Private selection</h2><p>In the <Link href="/library">Content Library</Link>, open an item and choose Select for portfolio. Here, give it a category, optional genre, and display details. Link a short preview to each full video.</p></div><span>{draft.items.length} selected</span></div><p>Only an approved preview can be published. A private original or a Library playback link is never a public preview.</p></section>
+    <section className="panel portfolio-visual-preview" aria-labelledby="portfolio-preview-title"><div className="section-heading"><div><h2 id="portfolio-preview-title">Visual preview</h2><p>This shows your saved private draft. Save an item to update its card. The public More page is not changed.</p></div><span className="portfolio-preview-state">Private draft</span></div>
+      <div className="portfolio-preview-frame"><div className="portfolio-preview-frame-heading"><span>18+ PORTFOLIO</span><strong>{context.creator.creator_name}</strong><small>{draft.items.length} selected item{draft.items.length === 1 ? "" : "s"}</small></div>
+        {draft.items.length ? <div className="portfolio-preview-grid">{draft.items.map((item) => {
+          const category = draft.categories.find((label) => label.id === item.category_id)?.name;
+          const genre = draft.genres.find((label) => label.id === item.genre_id)?.name;
+          const video = isVideoPortfolioItem(item);
+          const privateImageObjectId = !video ? privatePortfolioImageObjectId(item.preview_r2_key) : null;
+          return <article className="portfolio-preview-card" key={item.asset_id}>
+            <div className="portfolio-preview-image">{video && item.preview_asset_id ? <VerifiedVideoPreview assetId={item.preview_asset_id} basename={item.preview_basename ?? item.title} className="portfolio-preview-media" /> : privateImageObjectId ? <img src={`/api/preview/${privateImageObjectId}`} alt={`Private draft preview for ${item.title}`} loading="lazy" /> : <span>{video ? "Choose a short preview video" : "Image preview preparing"}</span>}</div>
+            <div className="portfolio-preview-card-body"><div className="portfolio-preview-labels"><span>{category ?? "Category needed"}</span>{genre && <span>{genre}</span>}</div><h3>{item.title}</h3>{item.description && <p>{item.description}</p>}<small>{video ? item.preview_asset_id ? "Private preview candidate · approval pending" : "Short preview needed" : "Private image preview · approval pending"}</small></div>
+          </article>;
+        })}</div> : <div className="empty"><b>Your portfolio preview starts here.</b><span>Add content from the Library to see how your cards will look.</span></div>}
+      </div>
+    </section>
     <section className="panel portfolio-taxonomy"><div className="section-heading"><div><h2>Categories and genres</h2><p>These labels belong to {context.creator.creator_name}&apos;s portfolio and become visitor filters only after publication.</p></div></div>
       <div className="portfolio-taxonomy-grid"><div><h3>Categories</h3>{draft.categories.length ? draft.categories.map((label) => <div className="portfolio-label-row" key={label.id}>{canEdit ? <form action={renamePortfolioCategoryAction}><input type="hidden" name="id" value={label.id} /><label><span className="sr-only">Rename category</span><input name="name" maxLength={50} required defaultValue={label.name} /></label><button className="secondary-action" type="submit">Rename</button></form> : <span>{label.name}</span>}</div>) : <p>No categories yet.</p>}{canEdit && <form action={createPortfolioCategoryAction} className="portfolio-label-create"><label>New category<input name="name" maxLength={50} required placeholder="e.g. Clips" /></label><button type="submit">Add category</button></form>}</div>
       <div><h3>Genres</h3>{draft.genres.length ? draft.genres.map((label) => <div className="portfolio-label-row" key={label.id}>{canEdit ? <form action={renamePortfolioGenreAction}><input type="hidden" name="id" value={label.id} /><label><span className="sr-only">Rename genre</span><input name="name" maxLength={50} required defaultValue={label.name} /></label><button className="secondary-action" type="submit">Rename</button></form> : <span>{label.name}</span>}</div>) : <p>No genres yet.</p>}{canEdit && <form action={createPortfolioGenreAction} className="portfolio-label-create"><label>New genre<input name="name" maxLength={50} required placeholder="e.g. Performance" /></label><button type="submit">Add genre</button></form>}</div></div>
