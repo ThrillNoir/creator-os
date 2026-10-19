@@ -344,6 +344,47 @@ body {
 .os-cloud-shell .profile-preview-elevated { border-radius: calc(var(--profile-radius) * .75) !important; }
 .os-cloud-shell .account-dot { border-radius: 50% !important; }
 
+.os-cloud-shell .portfolio-workspace-intro,
+.os-cloud-shell .portfolio-taxonomy,
+.os-cloud-shell .portfolio-draft-list,
+.os-cloud-shell .portfolio-publish-note,
+.os-cloud-shell .portfolio-library-control { margin-bottom: 20px; }
+.os-cloud-shell .portfolio-taxonomy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.os-cloud-shell .portfolio-taxonomy-grid > div { min-width: 0; padding: 16px; border: 2px solid var(--foreground); background: var(--card); }
+.os-cloud-shell .portfolio-taxonomy-grid h3 { margin: 0 0 12px; }
+.os-cloud-shell .portfolio-label-row { border-top: 1px solid var(--foreground); padding: 9px 0; }
+.os-cloud-shell .portfolio-label-row form { display: flex; align-items: end; gap: 8px; }
+.os-cloud-shell .portfolio-label-row label { flex: 1; }
+.os-cloud-shell .portfolio-label-create { display: flex; align-items: end; gap: 8px; margin-top: 12px; }
+.os-cloud-shell .portfolio-label-create label { flex: 1; }
+.os-cloud-shell .portfolio-taxonomy input,
+.os-cloud-shell .portfolio-item-form :is(input:not([type="hidden"]),select,textarea) { width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px; border: 2px solid var(--foreground); background: var(--card); color: var(--foreground); font: inherit; }
+.os-cloud-shell .portfolio-draft-item { margin-top: 16px; padding: 18px; border: 2px solid var(--foreground); background: var(--card); box-shadow: 5px 5px 0 var(--shadow-color); }
+.os-cloud-shell .portfolio-draft-heading { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 16px; }
+.os-cloud-shell .portfolio-draft-heading h3 { margin: 0; overflow-wrap: anywhere; }
+.os-cloud-shell .portfolio-draft-heading p { margin: 4px 0 0; }
+.os-cloud-shell .portfolio-readiness { padding: 6px 9px; border: 1px solid var(--foreground); background: var(--warning); color: var(--warning-foreground); font-size: 12px; font-weight: 800; }
+.os-cloud-shell .portfolio-item-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.os-cloud-shell .portfolio-item-form label { display: grid; gap: 5px; min-width: 0; font-weight: 800; }
+.os-cloud-shell .portfolio-item-form label span,
+.os-cloud-shell .portfolio-item-form small { font-weight: 500; }
+.os-cloud-shell .portfolio-item-form .portfolio-wide,
+.os-cloud-shell .portfolio-form-actions { grid-column: 1 / -1; }
+.os-cloud-shell .portfolio-item-form textarea { min-height: 84px; resize: vertical; }
+.os-cloud-shell .portfolio-form-actions,
+.os-cloud-shell .portfolio-library-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.os-cloud-shell .portfolio-library-control > div { flex: 1 1 220px; }
+.os-cloud-shell .portfolio-library-control h2 { margin: 0 0 5px; }
+.os-cloud-shell .portfolio-library-control p { margin: 0; }
+.os-cloud-shell .portfolio-publish-note { border-color: var(--foreground); background: var(--warning); color: var(--warning-foreground); }
+.os-cloud-shell .portfolio-taxonomy :focus-visible,
+.os-cloud-shell .portfolio-item-form :focus-visible { outline: 3px solid var(--foreground); outline-offset: 3px; }
+@media (max-width: 680px) {
+  .os-cloud-shell .portfolio-taxonomy-grid,
+  .os-cloud-shell .portfolio-item-form { grid-template-columns: 1fr; }
+  .os-cloud-shell .portfolio-draft-heading { flex-direction: column; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .os-cloud-nav-item,
   .os-cloud-shell .primary,

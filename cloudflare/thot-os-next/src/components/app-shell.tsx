@@ -9,6 +9,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 const agencyNavigation = [
   ["home", "Overview", "/"],
   ["library", "Content library", "/library"],
+  ["portfolio", "Portfolio", "/portfolio"],
   ["accounts", "Accounts & connections", "/accounts"],
   ["creators", "Onboarding", "/onboarding"],
   ["access", "Access", "/access"],
@@ -25,6 +26,7 @@ const agencyNavigation = [
 const creatorNavigation = [
   ["home", "Overview", "/"],
   ["library", "Content library", "/library"],
+  ["portfolio", "Portfolio", "/portfolio"],
   ["accounts", "Accounts & connections", "/accounts"],
   ["creators", "Onboarding", "/onboarding"],
   ["access", "Access", "/access"],
@@ -36,20 +38,23 @@ const creatorNavigation = [
   ["money", "Money & health", "/money"],
 ] as const;
 
-const viewerNavigation = creatorNavigation.slice(0, 2);
+const viewerNavigation = creatorNavigation.slice(0, 3);
 
 function AgencyShell({ active, children, identity, reviewCount, roleLabel }: { active: string; children: ReactNode; identity: Awaited<ReturnType<typeof requireCreatorContext>>; reviewCount: number; roleLabel: string }) {
+  const portfolioEnabled = String((cloudflareEnv() as { PORTFOLIO_AUTHORING_ENABLED?: string }).PORTFOLIO_AUTHORING_ENABLED) === "1";
   const creatorOptions = isAgencyStaffRole(identity.creator.role)
     ? selectableWorkspaceMemberships(identity.memberships).map((membership) => ({ id: membership.creator_id, name: membership.creator_name }))
     : undefined;
   return <div className="os-cloud-shell">
-    <AppNavigation active={active} activeCreatorId={identity.creator.creator_id} creatorInitials={identity.creator.creator_initials} creatorName={identity.creator.creator_name} creatorOptions={creatorOptions} email={identity.email} items={agencyNavigation} mode="agency" navigationLabel="WORKSPACE" navigationNotices={{ Creators: reviewCount }} roleLabel={roleLabel} switchCreatorAction={switchCreatorAction} />
+    <AppNavigation active={active} activeCreatorId={identity.creator.creator_id} creatorInitials={identity.creator.creator_initials} creatorName={identity.creator.creator_name} creatorOptions={creatorOptions} email={identity.email} items={portfolioEnabled ? agencyNavigation : agencyNavigation.filter((item) => item[2] !== "/portfolio")} mode="agency" navigationLabel="WORKSPACE" navigationNotices={{ Creators: reviewCount }} roleLabel={roleLabel} switchCreatorAction={switchCreatorAction} />
     <main className="workspace">{children}</main>
   </div>;
 }
 
 function CreatorPortalShell({ active, children, identity, roleLabel }: { active: string; children: ReactNode; identity: Awaited<ReturnType<typeof requireCreatorContext>>; roleLabel: string }) {
-  const navigation = identity.creator.role === "viewer" ? viewerNavigation : creatorNavigation;
+  const portfolioEnabled = String((cloudflareEnv() as { PORTFOLIO_AUTHORING_ENABLED?: string }).PORTFOLIO_AUTHORING_ENABLED) === "1";
+  const navigation = (identity.creator.role === "viewer" ? viewerNavigation : creatorNavigation)
+    .filter((item) => portfolioEnabled || item[2] !== "/portfolio");
   return <div className="os-cloud-shell creator-portal-shell">
     <AppNavigation active={active} activeCreatorId={identity.creator.creator_id} creatorInitials={identity.creator.creator_initials} creatorName={identity.creator.creator_name} creatorWorkspaceLabel="Creator workspace" email={identity.email} fixedScopeNote="Your workspace is fixed by your active THOT OS membership." items={navigation} mode={identity.creator.role === "viewer" ? "viewer" : "creator"} portalLabel="Creator portal" roleLabel={roleLabel} signedInLabel="Signed in" />
     <main className="workspace">{children}</main>
