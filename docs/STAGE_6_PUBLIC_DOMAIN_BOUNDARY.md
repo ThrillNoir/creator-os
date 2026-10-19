@@ -1,52 +1,63 @@
-# Stage 6 public-domain boundary
+# Stage 6 That Hub public and AMA boundary
 
-Status: `thathuboverthere.com` is an active Cloudflare zone in the THOT OS
-account, but it remains unattached. This document defines the boundary before
-any public route is created.
+Status, 19 October 2026: `https://www.thathuboverthere.com/adelaide` is live and
+served by the `thot-os-public-links-staging` Worker configured in this repository.
+The separately named **production** public-links Worker remains a route-less
+foundation. The live `www` host and the production release stage are different
+facts; do not infer one from the other. Ben selected a creator AMA dashboard on
+That Hub, replacing the earlier rule that no private path could use this domain.
+No private AMA route, Access application, D1 migration, public question intake,
+or AMA projection writer has been deployed.
 
-## Two different products
+## Site surfaces
 
-| Surface | Address | Worker/data | Access |
+| Surface | Canonical address | Data and Worker | Access |
 | --- | --- | --- | --- |
-| Public creator link hub | `https://thathuboverthere.com/<creator-slug>` | `thot-os-public-links-production`; Static Assets, the public KV projection, and aggregate Analytics Engine events only | Public, no sign-in |
-| THOT OS creator dashboard | A separately selected production hostname | A separately deployed private Web/control Worker with production D1 and private R2 only where needed | Dedicated Cloudflare Access application and fail-closed identity policy |
+| Public creator profile and Q&A | `https://www.thathuboverthere.com/<creator-slug>` and `/<creator-slug>/ama` | Public-links Worker; approved SFW KV projections and aggregate link analytics only | Public |
+| Planned creator AMA dashboard | `https://www.thathuboverthere.com/dashboard/ama` and descendants | Separate narrow AMA Worker; creator-scoped questions and answers in D1 | Path-scoped Cloudflare Access plus server-side JWT and active D1 membership checks |
 
-The second hostname is deliberately not selected or attached in this stage.
-It must not be a hostname under `thathuboverthere.com`, and it must never be
-routed to the public-links Worker.
+That Hub's public Worker source is co-located in the THOT OS repository; it is
+the Worker that owns the live site. The private AMA route is a That Hub creator
+experience. The full THOT OS operations dashboard is not mounted on this host.
+The apex `thathuboverthere.com` currently redirects supported public paths to
+`www`; the AMA plan uses `www` consistently.
 
-## Enforced public-worker limits
+## Isolation rules
 
-- The public Worker has no D1, private R2, Queue, service binding, or secret.
-  It cannot query a creator dashboard, operational account, message, library,
-  approval record, consent record, private media, or Dropbox.
-- It reads only an explicit, immutable approved public-profile projection from
-  the dedicated production KV namespace.
-- Its only analytics output is aggregate public profile-view and link-click
-  counts in the dedicated Analytics Engine dataset; it records no visitor ID,
-  IP address, user agent, referrer, or private dashboard event.
-- Dashboard route names such as `/accounts`, `/growth`, `/messages`,
-  `/settings`, and `/launch-readiness` are permanently reserved on the public
-  link hub and return `404`, even if someone later attempts to use one as a
-  creator slug.
+- The public-links Worker has no D1, private R2, Queue, service binding or
+  secret. It reads only approved public projections and records aggregate
+  profile/link events. It never receives new questions, drafts, unpublished
+  answers, private media or dashboard identity.
+- `/dashboard` and all descendants are reserved from creator slugs. If a
+  private route is absent or misconfigured, the public Worker returns `404`
+  without reading public KV.
+- The private AMA Worker must verify Access and one active creator membership
+  on every request. The caller cannot choose creator ownership by URL, cookie,
+  device, or browser profile. Viewer accounts cannot answer or publish.
+- Saving an answer creates only a private draft. Public cards contain the exact
+  question and answer from an explicitly published SFW revision. A creator can
+  withdraw a card while retaining the private question and revision history.
+  The public projection must match the current profile slug and version.
 
-## Later launch sequence
+## Release boundary
 
-1. Keep `thathuboverthere.com` exclusive to the public `/<creator-slug>`
-   shape. Attach it only to `thot-os-public-links-production` as a Cloudflare
-   Custom Domain, never as a route for a private worker.
-2. Build the private production dashboard as a separately named Worker and
-   protect its separate hostname with a dedicated Access application before it
-   receives any D1/R2 binding or production service secret.
-3. Recheck both Worker binding inventories, configure the public WAF/rate
-   limits, and run smoke tests proving that public paths cannot resolve private
-   dashboard routes.
-4. Publish a creator only after the creator, immutable public profile version,
-   and every destination have explicit human approval.
+The local AMA work in `cloudflare/that-hub-ama` is a fixture-backed proof. It
+has no Wrangler deployment configuration; its publication adapter and D1
+schema are local test fixtures, not remote infrastructure. Before any staging
+route, land a reviewed additive migration, a controlled projection writer
+with ordered per-creator delivery, stale-generation rejection and retry
+receipts, and a public question intake with abuse controls.
+Cloudflare KV reads are eventually consistent, and this public route also
+advertises a 60-second cache lifetime. Before release, agree on acceptable
+withdrawal propagation and test it across regions. If immediate removal is a
+requirement, a stronger-consistency public delivery check is needed.
+Then configure a narrow AMA Worker and path-scoped Access application for the
+exact `/dashboard` fallback, `/dashboard/ama` routes and private assets. Test
+route precedence, Access redirects/session expiry, creator A versus B, viewer
+denial, public fallback, projection withdrawal, and rollback. Staging or
+production attachment requires a separate concrete guarded release plan.
 
-Cloudflare Custom Domains require an active zone and Worker, point every path
-of the chosen hostname at that Worker, and create the necessary DNS record and
-certificate. This is why the public and private surfaces require separate
-hostnames rather than path-sharing one Worker. Source: Cloudflare Custom
-Domains documentation, observed 2026-08-19, high confidence; recheck before
-deployment: <https://developers.cloudflare.com/workers/configuration/routing/custom-domains/>.
+Cloudflare's [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/),
+[Worker Route](https://developers.cloudflare.com/workers/configuration/routing/routes/),
+and [Access application path](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/)
+behavior must be checked against the exact host and patterns before release.

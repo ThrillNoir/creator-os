@@ -1,7 +1,7 @@
 // Private product routes must never become public creator profiles.
 const reserved = new Set([
   "accounts", "activity", "admin", "agents", "analytics", "approvals", "api", "auth",
-  "automation", "calendar", "connections", "content", "creators", "finance", "go",
+  "automation", "calendar", "connections", "content", "creators", "dashboard", "finance", "go",
   "growth", "healthz", "health", "handoff", "launch-readiness", "library", "login",
   "logout", "messages", "migration", "money", "operations", "people", "public-profile",
   "publishing", "reddit", "reporting", "research", "schedule", "settings", "staging-qa",

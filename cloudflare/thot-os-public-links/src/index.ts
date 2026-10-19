@@ -33,6 +33,19 @@ type PublicProfileSnapshot = {
   media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: "avatar" | "background"; checksum: string }>;
 };
 
+type PublicAmaProjection = {
+  schemaVersion: 1;
+  creatorSlug: string;
+  publishedProfileVersionId: string;
+  cards: Array<{
+    id: string;
+    question: string;
+    answer: string;
+    publishedAt: string;
+    safety: "sfw";
+  }>;
+};
+
 const LINK_ID = /^[a-zA-Z0-9_-]{1,120}$/;
 const HEX = /^#[0-9a-f]{6}$/i;
 const THEME_KEYS = new Set(["thot-noir", "soft-pearl", "candy-pink", "lavender-dream", "sunset", "ocean", "forest", "crimson", "chrome", "clean-minimal"]);
@@ -106,6 +119,10 @@ function snapshotKey(slug: string) {
   return `public-profile:${slug}`;
 }
 
+function amaProjectionKey(slug: string) {
+  return `public-ama:${slug}`;
+}
+
 /**
  * The public link hub deliberately has no media binding. Until a separately
  * configured media-delivery Worker exists, a public snapshot is text/link-only.
@@ -150,6 +167,28 @@ function validSnapshot(value: unknown, requestedSlug: string, env: Env): value i
     && (imageRoles.add(media.imageRole), true)));
 }
 
+function validAmaProjection(value: unknown, profile: PublicProfileSnapshot): value is PublicAmaProjection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const projection = value as Partial<PublicAmaProjection>;
+  if (!hasOnlyKeys(projection, ["schemaVersion", "creatorSlug", "publishedProfileVersionId", "cards"])
+    || projection.schemaVersion !== 1 || projection.creatorSlug !== profile.creator.slug
+    || projection.publishedProfileVersionId !== profile.publishedVersionId
+    || !Array.isArray(projection.cards) || projection.cards.length > 50) return false;
+  const ids = new Set<string>();
+  return projection.cards.every((card) => {
+    if (!card || typeof card !== "object" || !hasOnlyKeys(card, ["id", "question", "answer", "publishedAt", "safety"])
+      || typeof card.id !== "string" || !LINK_ID.test(card.id) || ids.has(card.id)
+      || typeof card.question !== "string" || !card.question.trim() || card.question.length > 2000
+      || typeof card.answer !== "string" || !card.answer.trim() || card.answer.length > 5000
+      || typeof card.publishedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(card.publishedAt)
+      || !Number.isFinite(Date.parse(card.publishedAt))
+      || new Date(card.publishedAt).toISOString() !== (card.publishedAt.includes(".") ? card.publishedAt : card.publishedAt.replace("Z", ".000Z"))
+      || card.safety !== "sfw") return false;
+    ids.add(card.id);
+    return true;
+  });
+}
+
 function securityHeaders() {
   return {
     "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests",
@@ -169,6 +208,11 @@ async function loadSnapshot(env: Env, slug: string) {
   return validSnapshot(snapshot, slug, env) ? snapshot : null;
 }
 
+async function loadAmaProjection(env: Env, profile: PublicProfileSnapshot) {
+  const projection = await env.PUBLIC_LINKS.get(amaProjectionKey(profile.creator.slug), "json");
+  return validAmaProjection(projection, profile) ? projection : null;
+}
+
 function renderProfile(snapshot: PublicProfileSnapshot) {
   const appearance = snapshot.appearance ?? { buttonStyle: "solid-rounded", backgroundMode: "gradient", backgroundColor: "#0d0c10", primaryColor: "#7655f6", textColor: "#f8f6fa", cardColor: "#211a29", radiusScale: "comfortable" };
   const radius = appearance.radiusScale === "compact" ? ".45rem" : appearance.radiusScale === "round" ? "999px" : ".85rem";
@@ -184,6 +228,27 @@ function renderProfile(snapshot: PublicProfileSnapshot) {
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
 <style>html{color-scheme:dark;background:${appearance.backgroundColor}}body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;color:${appearance.textColor};background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor}}main{width:min(100% - 2rem,36rem);padding:3rem 0;text-align:center}h1{margin:0;font-size:clamp(2rem,7vw,3rem)}p{margin:.5rem auto;white-space:pre-line}.bio{color:${appearance.textColor};opacity:.8;max-width:34rem}.media{display:block;width:100%;max-height:34rem;object-fit:cover;border-radius:${radius};margin:1rem 0;background:${appearance.cardColor}}.media-avatar{aspect-ratio:1;max-width:13rem;margin:1rem auto}.actions,.links{display:grid;gap:.75rem;margin-top:2rem}.action,.link{display:flex;justify-content:space-between;gap:1rem;align-items:center;border:1px solid ${appearance.textColor}2f;border-radius:${radius};padding:1rem 1.1rem;color:inherit;background:${appearance.cardColor};text-decoration:none;text-align:left}.action{justify-content:center;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link{background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 6px 0 ${appearance.primaryColor}55}.action:hover,.action:focus-visible,.link:hover,.link:focus-visible{filter:brightness(1.08);outline:0}.link span{opacity:.75}</style></head>
 <body><main><h1>${title}</h1>${media}${headline}${bio}${actions ? `<nav class="actions" aria-label="Creator actions">${actions}</nav>` : ""}${links ? `<nav class="links" aria-label="Links">${links}</nav>` : ""}</main></body></html>`;
+}
+
+function renderAma(profile: PublicProfileSnapshot, projection: PublicAmaProjection) {
+  const appearance = profile.appearance ?? { backgroundColor: "#0d0c10", primaryColor: "#7655f6", textColor: "#f8f6fa", cardColor: "#211a29" };
+  const title = escapeHtml(profile.creator.displayName);
+  const slug = encodeURIComponent(profile.creator.slug);
+  const total = projection.cards.length;
+  const cards = projection.cards.map((card, index) => {
+    const previous = projection.cards[index - 1];
+    const next = projection.cards[index + 1];
+    return `<article id="q-${card.id}" class="qa-card" aria-label="Question ${index + 1} of ${total}">
+      <div class="card-top"><span class="eyebrow">THAT HUB · QUESTIONS</span><span class="count">${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</span></div>
+      <div class="qa-content"><section aria-label="Question"><span class="section-label">QUESTION</span><h2>${escapeHtml(card.question)}</h2></section>
+      <section class="reply" aria-label="${title}'s answer"><span class="section-label">${escapeHtml(profile.creator.displayName.toUpperCase())} ANSWERS</span><p>${escapeHtml(card.answer)}</p></section></div>
+      <footer><time datetime="${card.publishedAt}">${escapeHtml(card.publishedAt.slice(0, 10))}</time><a href="#q-${card.id}" aria-label="Link to question ${index + 1}">Link to this card ↗</a></footer>
+      <nav class="card-nav" aria-label="Question navigation"><span>${previous ? `<a href="#q-${previous.id}" aria-label="Previous question">← Previous</a>` : ""}</span><span>${next ? `<a href="#q-${next.id}" aria-label="Next question">Next →</a>` : ""}</span></nav>
+    </article>`;
+  }).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Questions &amp; answers · ${title}</title><style>
+    *{box-sizing:border-box}html{color-scheme:dark;background:${appearance.backgroundColor};scroll-behavior:smooth}body{margin:0;min-height:100vh;color:${appearance.textColor};background:radial-gradient(circle at 85% 0%,${appearance.primaryColor}3b,transparent 38%),${appearance.backgroundColor};font:16px/1.5 ui-sans-serif,system-ui,sans-serif}main{width:min(100% - 2rem,72rem);margin:auto;padding:clamp(1.5rem,5vw,4rem) 0 5rem}a{color:inherit}header{max-width:44rem;margin:0 auto 2.5rem}header>a{text-decoration:none;font-weight:700}h1{font-size:clamp(2.4rem,7vw,4.4rem);letter-spacing:-.055em;line-height:1.02;margin:1.5rem 0 .7rem}header p{opacity:.8;margin:0}.collection{display:flex;gap:1.5rem;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline:calc((100% - min(100%,42rem))/2);padding:0 max(0px,calc((100% - 42rem)/2)) 1.25rem;overscroll-behavior-inline:contain}.qa-card{flex:0 0 min(100%,42rem);scroll-snap-align:center;min-height:31rem;display:flex;flex-direction:column;color:#201c2d;background:#fffaf2;border:2px solid #201c2d;border-radius:1.25rem;box-shadow:8px 8px 0 #201c2d;overflow-wrap:anywhere}.card-top{display:flex;justify-content:space-between;gap:1rem;align-items:center;border-bottom:2px solid #201c2d;padding:1rem 1.4rem}.eyebrow,.count,.section-label{font-size:.72rem;letter-spacing:.12em;font-weight:850}.count{white-space:nowrap}.qa-content{padding:clamp(1.4rem,5vw,2.5rem);flex:1}.section-label{display:block;color:#615b6c;margin-bottom:.7rem}.qa-content h2{font-family:Georgia,serif;font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.22;letter-spacing:-.025em;margin:0;white-space:pre-line}.reply{border-top:2px solid #201c2d;margin-top:2rem;padding-top:1.5rem}.reply p{font-size:clamp(1rem,2.5vw,1.16rem);line-height:1.65;white-space:pre-line;margin:0}.qa-card footer,.card-nav{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.8rem 1.4rem;border-top:1px solid #201c2d;font-size:.8rem}.qa-card footer a,.card-nav a{font-weight:750;text-underline-offset:.2rem}.card-nav{min-height:3.3rem;background:#ede8fb;font-size:.9rem}.empty{max-width:42rem;margin:auto;background:${appearance.cardColor};padding:1.5rem;border-radius:1rem}.hint{text-align:center;font-size:.85rem;opacity:.8;margin:1rem auto}:focus-visible{outline:3px solid #f49cbe;outline-offset:3px}@media(max-width:44rem){main{width:100%;padding-top:1.5rem}header{padding:0 1rem}.collection{gap:1rem;padding:0 1rem 1.25rem;scroll-padding-inline:1rem}.qa-card{flex-basis:calc(100vw - 2rem);min-height:28rem;box-shadow:5px 5px 0 #201c2d}.hint{padding:0 1rem}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style></head><body><main><header><a href="/${slug}">← ${title}</a><h1>Questions &amp; answers</h1><p>Published answers from ${title}.</p></header>${cards ? `<div class="collection" aria-label="Published questions and answers">${cards}</div><p class="hint">Swipe to browse · Open a card’s link to share it</p>` : '<p class="empty">No published answers yet.</p>'}</main></body></html>`;
 }
 
 function isStaticAssetPath(pathname: string) {
@@ -203,6 +268,14 @@ export default {
     if (url.pathname === "/healthz") return textResponse("ok", 200, { "cache-control": "public, max-age=60" });
 
     const segments = routeParts;
+    if (segments.length === 2 && isPublicCreatorSlug(segments[0]) && segments[1] === "ama") {
+      const profile = await loadSnapshot(env, segments[0]);
+      if (!profile) return textResponse("Not found", 404);
+      const projection = await loadAmaProjection(env, profile);
+      if (!projection) return textResponse("Not found", 404);
+      const headers = { ...securityHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" };
+      return new Response(request.method === "HEAD" ? null : renderAma(profile, projection), { headers });
+    }
     if (segments.length === 2 && isPublicCreatorSlug(segments[0]) && segments[1] === "more") {
       const snapshot = await loadSnapshot(env, segments[0]);
       const more = snapshot?.actions?.find((action) => action.id === "more");
