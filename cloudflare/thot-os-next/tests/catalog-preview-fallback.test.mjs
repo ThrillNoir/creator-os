@@ -18,6 +18,8 @@ const requireFixture = (name) => {
   if (name === "next/link") return (props) => React.createElement("a", props);
   if (name === "@/lib/library") return { objectIdFor: (asset) => asset.preview_r2_key?.match(/\/assets\/([a-f0-9]{64})\//)?.[1] ?? null };
   if (name === "@/components/private-stream-player") return { PrivateStreamPlayer: () => null };
+  if (name === "@/components/verified-video-preview") return { VerifiedVideoPreview: () => null };
+  if (name === "@/lib/verified-video-preview") return { canPreviewVerifiedVideo: () => false };
   throw new Error(`Unexpected dependency: ${name}`);
 };
 new Function("require", "exports", compiled)(requireFixture, exports);

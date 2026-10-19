@@ -488,6 +488,7 @@ button, input, textarea, select { font: inherit; }
 .form-section p { margin-top: 4px; color: var(--muted); }
 .step-number { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 10px; background: #2a2050; color: var(--purple2); font-weight: 850; }
 .ops-asset-picker { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 9px; max-height: 410px; padding: 2px; overflow: auto; }
+.ops-asset-choice { min-width: 0; }
 .ops-asset-picker label { position: relative; display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #121018; cursor: pointer; }
 .ops-asset-picker label:has(input:checked) { border-color: var(--purple); box-shadow: 0 0 0 2px #7655f633; }
 .ops-asset-picker input { position: absolute; z-index: 2; top: 8px; left: 8px; accent-color: var(--purple); }
@@ -495,6 +496,10 @@ button, input, textarea, select { font: inherit; }
 .picker-preview img { width: 100%; height: 100%; object-fit: cover; }
 .ops-asset-picker strong { overflow: hidden; padding: 9px 9px 0; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .ops-asset-picker small { padding: 5px 9px 9px; color: var(--muted); text-transform: uppercase; }
+.ops-video-preview { padding: 7px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; background: #121018; }
+.ops-video-preview summary { cursor: pointer; color: var(--purple2); font-size: 11px; font-weight: 750; }
+.ops-video-preview video { display: block; width: 100%; max-height: 180px; margin-top: 8px; background: #100c16; }
+.ops-video-preview a { display: block; margin-top: 6px; color: var(--purple2); font-size: 10px; }
 .reddit-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .reddit-fields > label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .reddit-fields .wide { grid-column: 1 / -1; }
@@ -881,6 +886,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .library-upload > summary:focus-visible, .thread-list-scroll:focus-visible, .message-history-viewport:focus-visible { outline: 2px solid var(--purple2); outline-offset: 2px; }
 .detail-preview video { width: 100%; max-height: 65dvh; }
 .video-card .copy-attributes { max-height: none; padding: 10px 12px; border-top-width: 1px; opacity: 1; }
+.card-video-preview { padding: 10px 12px; border-top: 1px solid var(--line); }
+.card-video-preview summary { cursor: pointer; color: var(--purple2); font-size: 11px; font-weight: 750; }
+.card-video-preview video { display: block; width: 100%; max-height: 260px; margin-top: 8px; background: #100c16; }
 .asset-grid.list .video-card > a.copy-attributes { display: block; }
 @media (max-width: 760px) {
   .thread-list { height: auto; max-height: 360px; }

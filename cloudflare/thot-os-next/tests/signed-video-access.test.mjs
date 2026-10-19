@@ -131,6 +131,13 @@ test("video source download is view-scoped, verified, and no-store; foreign and 
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), VIDEO_BYTES);
     assert.equal(state.storageReads, 2, "successful access verifies the canonical object and then fetches it");
 
+    const preview = await state.download(new Request(`https://thot-os.test/api/source-media/videos/${ASSET_A}/download?preview=1`, { headers: { range: "bytes=2-5" } }), params(ASSET_A));
+    assert.equal(preview.status, 206);
+    assert.equal(preview.headers.get("content-disposition"), "inline");
+    assert.equal(preview.headers.get("content-range"), `bytes 2-5/${VIDEO_BYTES.length}`);
+    assert.equal(preview.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(new Uint8Array(await preview.arrayBuffer()), VIDEO_BYTES.slice(2, 6));
+
     const ranged = await state.download(request(ASSET_A, { range: "bytes=2-5" }), params(ASSET_A));
     assert.equal(ranged.status, 206);
     assert.equal(ranged.headers.get("cache-control"), "private, no-store");
@@ -141,7 +148,7 @@ test("video source download is view-scoped, verified, and no-store; foreign and 
     const queryBeforeAnonymous = state.queryCount;
     await assert.rejects(state.download(request(ASSET_A), params(ASSET_A)), /NOT_FOUND/);
     assert.equal(state.queryCount, queryBeforeAnonymous, "anonymous access stops before D1 or R2 reads");
-    assert.equal(state.storageReads, 4, "anonymous access stops before R2 reads");
+    assert.equal(state.storageReads, 6, "anonymous access stops before R2 reads");
 
     state.setAuthenticated(true);
     state.setCreator("creator-b");

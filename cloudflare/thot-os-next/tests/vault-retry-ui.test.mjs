@@ -22,6 +22,7 @@ const dependencies = {
   vaultSections: [['queue','Upload queue'],['create','Prepare upload']],
   Link: ({children,...props}) => React.createElement('a',props,children),
   FanslyJourneySummary: ({creatorName}) => React.createElement('section',{'aria-label':'Fansly setup'},creatorName),
+  OperationsAssetChoice: ({asset,type}) => React.createElement('label', null, React.createElement('input',{type,name:'assetId',value:asset.id}),asset.basename),
   Image: () => null, formatDate: () => 'Synthetic date', statusClass: () => '',
   retryFanslyVaultJobAction: '/synthetic-retry', createFanslyVaultJobsAction: '/synthetic-approve', createOwnFanslyVaultJobAction: '/synthetic-own',
   objectIdFor: () => null, canRetryVaultJob, vaultJobNextAction, vaultJobStatusCopy,

@@ -62,6 +62,8 @@ for (const role of ['creator', 'viewer']) {
       '@/app/actions': { saveAssetAttributesAction() {} }, '@/components/app-shell': { AppShell: passthrough, PageHeader: () => null },
       '@/components/attribute-fields': { AttributeFields: () => null }, '@/components/creator-friend-fields': { CreatorFriendFields: () => null },
       '@/components/private-stream-player': { PrivateStreamPlayer: () => null },
+      '@/components/verified-video-preview': { VerifiedVideoPreview: () => null },
+      '@/lib/verified-video-preview': { canPreviewVerifiedVideo: () => false },
       '@/components/native-image-preview-retry': { NativeImagePreviewRetry: ({ sessionId }) => React.createElement('button', { 'data-session': sessionId }, 'Retry private preview') },
       '@/lib/authorization': { roleCan: (value) => value !== 'viewer' }, '@/lib/identity': { requireCreatorContext: async () => ({ creator: { creator_id: 'own', role } }) },
       'next/link': (props) => React.createElement('a', props),

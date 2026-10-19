@@ -185,10 +185,11 @@ export async function getPlatformOperations(creatorId: string, platform: Operati
   const { DB } = cloudflareEnv();
   const assetQuery = definition.destination ? DB.prepare(`
     SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
-      c.safety,c.is_teaser,c.is_multi,c.notes,
+      c.safety,c.is_teaser,c.is_multi,c.notes,vp.state AS video_state,
       COALESCE((SELECT GROUP_CONCAT(ad.destination,'|') FROM asset_destinations ad WHERE ad.asset_id=a.id),'') AS destinations
     FROM assets a JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id
     LEFT JOIN asset_classifications c ON c.asset_id=a.id
+    LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
     WHERE a.creator_id=? AND a.source_available=1 AND d.destination=?
     ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120
   `).bind(creatorId, definition.destination).all<AssetRow>() : Promise.resolve({ results: [] as AssetRow[], success: true, meta: {} });
@@ -253,9 +254,10 @@ export async function getVaultOperations(creatorId: string) {
       LIMIT 1`).bind(creatorId, creatorId).first<{ label: string; status: string; verified_at: string | null }>(),
     DB.prepare(`
       SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
-        c.safety,c.is_teaser,c.is_multi,c.notes,
+        c.safety,c.is_teaser,c.is_multi,c.notes,vp.state AS video_state,
         COALESCE((SELECT GROUP_CONCAT(ad.destination,'|') FROM asset_destinations ad WHERE ad.asset_id=a.id),'') AS destinations
       FROM assets a LEFT JOIN asset_classifications c ON c.asset_id=a.id
+      LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE a.creator_id=? AND a.source_available=1
         AND EXISTS (SELECT 1 FROM asset_destinations d WHERE d.asset_id=a.id AND d.creator_id=a.creator_id AND d.destination IN ('subscription','ppv'))
       ORDER BY (a.preview_r2_key IS NULL),a.modified_at DESC LIMIT 120

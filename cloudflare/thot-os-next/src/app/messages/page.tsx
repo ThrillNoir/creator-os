@@ -46,12 +46,13 @@ type UnifiedMessagesData = Awaited<ReturnType<typeof getUnifiedMessages>>;
 
 async function getInstagramReplyAssets(creatorId: string): Promise<MessageReplyAsset[]> {
   const rows = await cloudflareEnv().DB.prepare(`
-    SELECT a.id,a.basename,a.extension,a.bytes,a.preview_r2_key,o.verified_mime_type
+    SELECT a.id,a.basename,a.extension,a.bytes,a.preview_r2_key,o.verified_mime_type,vp.state AS video_state
     FROM assets a
     JOIN asset_destinations d ON d.asset_id=a.id AND d.creator_id=a.creator_id AND d.destination='instagram'
     JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id AND c.safety='sfw'
     JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
     JOIN asset_storage_objects o ON o.id=ma.canonical_storage_object_id AND o.asset_id=a.id AND o.creator_id=a.creator_id
+    LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id AND vp.canonical_storage_object_id=o.id
     WHERE a.creator_id=? AND a.source_available=1 AND ma.state IN ('canonical_verified','preview_ready')
       AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified'
       AND o.object_key=a.media_r2_key AND o.byte_count=a.bytes
@@ -64,10 +65,10 @@ async function getInstagramReplyAssets(creatorId: string): Promise<MessageReplyA
       AND o.verified_mime_type IN ('image/jpeg','image/png','video/mp4')
       AND o.byte_count>0
       AND o.byte_count <= CASE WHEN o.verified_mime_type='video/mp4' THEN 26214400 ELSE 8388608 END
-    ORDER BY a.modified_at DESC LIMIT 60`).bind(creatorId).all<{ id: string; basename: string; extension: string; bytes: number; preview_r2_key: string | null; verified_mime_type: string }>();
+    ORDER BY a.modified_at DESC LIMIT 60`).bind(creatorId).all<{ id: string; basename: string; extension: string; bytes: number; preview_r2_key: string | null; verified_mime_type: string; video_state: string | null }>();
   return rows.results.map((asset) => {
     const objectId = asset.preview_r2_key?.match(/\/assets\/([a-f0-9]{64})\/(?:preview\.jpg|previews\/[a-f0-9]{64}\.jpg)$/)?.[1] ?? null;
-    return { id: asset.id, basename: asset.basename, extension: asset.extension, bytes: asset.bytes, verifiedMimeType: asset.verified_mime_type, previewUrl: objectId ? `/api/preview/${objectId}` : null };
+    return { id: asset.id, basename: asset.basename, extension: asset.extension, bytes: asset.bytes, verifiedMimeType: asset.verified_mime_type, previewUrl: objectId ? `/api/preview/${objectId}` : null, videoState: asset.video_state };
   });
 }
 
