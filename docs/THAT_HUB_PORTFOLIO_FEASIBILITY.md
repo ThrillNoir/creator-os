@@ -5,9 +5,11 @@ resource, migration, or public route has been created.
 
 ## Recommended first slice
 
-Add a creator-scoped Portfolio manager beside the existing Library. The creator
-explicitly selects **Add to portfolio**, chooses a section and display order,
-previews the public result, and publishes or withdraws each item. The live
+Add **Add to portfolio** to Library items in the authenticated THOT OS app at
+`https://thot-os-staging.thot-os.workers.dev/`, with a creator-scoped Portfolio
+workspace there. The creator defines categories and genres, applies them to
+selected items, chooses display order, previews the public result, and
+publishes or withdraws each item. The live
 `https://www.thathuboverthere.com/adelaide` profile already has a **More from
 Adelaide Suede** action. Its safe `/adelaide/more` route hands off to the
 existing age-gated `more.thathuboverthere.com/adelaide` Worker. An unauthenticated
@@ -20,10 +22,12 @@ preferences, and give each video native playback controls (play/pause, seek,
 volume and fullscreen where supported), `preload="none"`, `playsinline`, and no
 autoplay. Show only an approved public preview, never a private source URL.
 
-Sections and genres need a small explicit viewer-facing taxonomy. Current
-Library filters for media type, safety and destination are operational metadata,
-not public Portfolio sections. Existing authoring and public profile review
-flows are useful for the select → preview → explicit publish journey.
+Categories and genres are defined by each creator and appear as viewer-facing
+filters on that creator's portfolio. The fixed labels in the local fixture are
+examples, not the intended live taxonomy. Current Library filters for media
+type, safety and destination are operational metadata, not public Portfolio
+categories or genres. Existing authoring and public profile review flows are
+useful for the select → preview → explicit publish journey.
 
 The proposed “Don't see what you want? Request a custom” form should create a
 creator-scoped private enquiry with a clear no-guarantee acknowledgement. A

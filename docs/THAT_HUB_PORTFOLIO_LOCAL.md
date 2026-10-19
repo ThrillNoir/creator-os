@@ -14,10 +14,12 @@ Worker only by the fixture runner. Its deployed default still renders the
 existing protected profile without a Portfolio. There is no new live binding,
 media route, or release configuration.
 
-The fixture demonstrates a collapsed **Want a sneak peek?** section, a small
-section/genre taxonomy, responsive synthetic image and video cards, native
-video controls, a local custom-request form, and a creator-side manager for
-selection, order, preview, explicit publish and withdrawal. The media is
+The fixture demonstrates a collapsed **Want a sneak peek?** section, example
+categories and genres, responsive synthetic image and video cards, native video
+controls, a local custom-request form, and a creator-side manager for selection,
+order, preview, explicit publish and withdrawal. The intended real manager and
+**Add to portfolio** control belong in the authenticated THOT OS Library; each
+creator will define their own categories and genres there. The media is
 generated locally. It contains no Library originals, creator sessions, R2
 keys, private URLs, payments or entitlements. The preview server listens only
 on `127.0.0.1` and simulates age entry for synthetic content; that shortcut is
