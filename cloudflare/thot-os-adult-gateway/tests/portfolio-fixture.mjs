@@ -74,11 +74,11 @@ export class PortfolioFixture {
       !["telegram", "email"].includes(contactMethod)) return null;
     // Keep the private full-video relationship on the server. The visitor's
     // edited text cannot change the reference resolved from the preview ID.
-    const preparedMessage = `${message.trim()}\n\nFrom: ${name.trim()}\nReference: ${item.id} — ${item.title}`;
+    const preparedMessage = `${message.trim().replace(/\r\n?/g, "\n")}\n\nFrom: ${name.trim()}\nReference: ${item.id} — ${item.title}`;
     const destination = this.contactDestinations[contactMethod];
     let href = null;
     if (contactMethod === "email" && typeof destination === "string" && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(destination)) {
-      href = `mailto:${destination}?subject=${encodeURIComponent(`Full-length request: ${item.title}`)}&body=${encodeURIComponent(preparedMessage)}`;
+      href = `mailto:${destination}?subject=${encodeURIComponent(`Full-length request: ${item.title}`)}&body=${encodeURIComponent(preparedMessage.replace(/\n/g, "\r\n"))}`;
     }
     if (contactMethod === "telegram" && typeof destination === "string" && /^[A-Za-z0-9_]{5,32}$/.test(destination)) {
       href = `https://t.me/${destination}?text=${encodeURIComponent(preparedMessage)}`;

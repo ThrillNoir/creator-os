@@ -148,7 +148,7 @@ test("direct contact resolves the published preview without saving an inbox requ
   const email = fixture.prepareFullLengthContact("adelaide", { ...request, contactMethod: "email", message: "I would like this clip, please." });
   assert.equal(email.fullAssetId, "fixture-full-after-hours");
   assert.equal(new URL(email.href).pathname, "creator@example.invalid");
-  assert.equal(new URL(email.href).searchParams.get("body"), email.message);
+  assert.equal(new URL(email.href).searchParams.get("body"), email.message.replace(/\n/g, "\r\n"));
   assert.equal(fixture.requests.length, 0);
   const unconfigured = new PortfolioFixture();
   unconfigured.update("adelaide", "after-hours", { selected: true, section: "Clips", genre: "Performance", order: 1 });
