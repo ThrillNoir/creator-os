@@ -29,14 +29,14 @@ export async function getPortfolioDraft(creatorId: string) {
   const [categories, items, state, fullVideos] = await DB.batch([
     creatorPrepare(DB, creatorId, "SELECT id,name,sort_order FROM creator_portfolio_categories WHERE creator_id=@creator ORDER BY sort_order,name,id").bind(),
     creatorPrepare(DB, creatorId, `SELECT p.asset_id,a.basename,a.extension,c.safety,p.category_id,p.genre_id,p.preview_asset_id,p.preview_confirmed,p.full_length_asset_id,
-      full.basename AS full_length_basename,
+      full_asset.basename AS full_length_basename,
       preview.basename AS preview_basename,preview.preview_r2_key AS preview_poster_r2_key,
       p.title,p.description,p.sort_order,a.source_available,a.preview_r2_key,
       vp.state AS video_state
       FROM creator_portfolio_items p JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
       LEFT JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id
       LEFT JOIN assets preview ON preview.id=p.preview_asset_id AND preview.creator_id=p.creator_id
-      LEFT JOIN assets full ON full.id=p.full_length_asset_id AND full.creator_id=p.creator_id
+      LEFT JOIN assets full_asset ON full_asset.id=p.full_length_asset_id AND full_asset.creator_id=p.creator_id
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE p.creator_id=@creator ORDER BY p.sort_order,p.created_at,p.asset_id`).bind(),
     creatorPrepare(DB, creatorId, "SELECT revision FROM creator_portfolio_draft_state WHERE creator_id=@creator").bind(),
@@ -67,10 +67,10 @@ export async function getPortfolioDraft(creatorId: string) {
 export async function getPortfolioItem(creatorId: string, assetId: string) {
   return creatorPrepare(cloudflareEnv().DB, creatorId,
     `SELECT p.asset_id,p.category_id,p.genre_id,p.preview_asset_id,p.full_length_asset_id,p.title,p.description,p.sort_order,
-      category.name AS category_name,full.basename AS full_length_basename
+      category.name AS category_name,full_asset.basename AS full_length_basename
       FROM creator_portfolio_items p
       LEFT JOIN creator_portfolio_categories category ON category.id=p.category_id AND category.creator_id=p.creator_id
-      LEFT JOIN assets full ON full.id=p.full_length_asset_id AND full.creator_id=p.creator_id
+      LEFT JOIN assets full_asset ON full_asset.id=p.full_length_asset_id AND full_asset.creator_id=p.creator_id
       WHERE p.creator_id=@creator AND p.asset_id=?`)
     .bind(assetId).first<Pick<PortfolioDraftItem, "asset_id" | "category_id" | "genre_id" | "preview_asset_id" | "full_length_asset_id" | "title" | "description" | "sort_order" | "full_length_basename"> & { category_name: string | null }>();
 }
