@@ -56,13 +56,13 @@ test("a portfolio item is only a private draft row", () => {
   } finally { db.close(); }
 });
 
-test("preview-first migration preserves a legacy full clip as a private linked asset", () => {
+test("preview-first migration preserves a legacy full clip unchanged for creator review", () => {
   const db = fixture();
   try {
     db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,preview_asset_id,title,updated_by) VALUES ('full-a','creator-a','preview-a','Draft','creator@example.invalid')").run();
     db.exec(previewFirstMigration);
     assert.deepEqual(db.prepare("SELECT asset_id,full_length_asset_id,preview_asset_id,preview_confirmed FROM creator_portfolio_items").get(),
-      { asset_id: "preview-a", full_length_asset_id: "full-a", preview_asset_id: null, preview_confirmed: 1 });
+      { asset_id: "full-a", full_length_asset_id: null, preview_asset_id: "preview-a", preview_confirmed: 0 });
     assert.throws(() => db.prepare("UPDATE creator_portfolio_items SET full_length_asset_id='full-b'").run(), /portfolio_full_asset_creator_mismatch/);
     assert.equal(db.prepare("SELECT revision FROM creator_portfolio_draft_state WHERE creator_id='creator-a'").get().revision, 0);
     db.prepare("UPDATE creator_portfolio_draft_state SET revision=CASE WHEN revision=0 THEN revision+1 ELSE -1 END WHERE creator_id='creator-a'").run();
@@ -95,7 +95,7 @@ test("existing image cards retain their preview intent during migration", () => 
   } finally { db.close(); }
 });
 
-test("migration leaves two full videos sharing a teaser private for manual review", () => {
+test("migration leaves full videos sharing a teaser private for manual review", () => {
   const db = fixture();
   try {
     db.prepare("INSERT INTO assets(id,creator_id,extension) VALUES ('second-full-a','creator-a','mp4')").run();

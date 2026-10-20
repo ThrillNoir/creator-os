@@ -60,10 +60,10 @@ test("reviewed staging ledger records applied Portfolio releases and pending pre
     { remoteId: 69, name: "0067_creator_portfolio_releases.sql" },
   ]);
   assert.deepEqual(ledger.pendingMigrations.map(({ name, sha256 }) => ({ name, sha256 })), [
-    { name: "0068_portfolio_preview_first.sql", sha256: "7c36b6705fa64dba4c99f55a64f95d7427e75e1550f144f9d471a4fbb3abcb72" },
+    { name: "0068_portfolio_preview_first.sql", sha256: "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764" },
   ]);
   assert.equal(inventory.at(-1).name, "0068_portfolio_preview_first.sql");
-  assert.equal(inventory.at(-1).sha256, "7c36b6705fa64dba4c99f55a64f95d7427e75e1550f144f9d471a4fbb3abcb72");
+  assert.equal(inventory.at(-1).sha256, "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764");
   assert.deepEqual(inventory[56], {
     number: 55,
     name: "0055_provider_connection_account_scope.sql",

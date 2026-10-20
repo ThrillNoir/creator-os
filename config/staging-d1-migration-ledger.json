@@ -400,8 +400,8 @@
   "pendingMigrations": [
     {
       "name": "0068_portfolio_preview_first.sql",
-      "sha256": "7c36b6705fa64dba4c99f55a64f95d7427e75e1550f144f9d471a4fbb3abcb72",
-      "purpose": "Pending reviewed staging migration: preview-first private Portfolio drafts and creator-scoped full-video links."
+      "sha256": "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764",
+      "purpose": "Pending additive staging migration: preview-first private Portfolio fields and creator-scoped full-video links; legacy full-video rows remain unchanged for review."
     }
   ]
 }
