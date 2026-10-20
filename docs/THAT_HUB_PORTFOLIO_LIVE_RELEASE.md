@@ -1,9 +1,10 @@
 # That Hub Portfolio release
 
-Status: local release candidate, 20 October 2026. No D1 migration, service grant,
-Worker, or media has been released by this worktree. The existing THOT OS private
-Portfolio draft is already on staging; the live More site still has no published
-Portfolio. The older synthetic preview remains a local fixture only.
+Status: release code deployed, 20 October 2026. Staging D1 migration 0067, the
+scoped Adelaide service grants, and the three approved Workers are live. No
+Portfolio release record or media was published automatically. The creator
+approval and live card checks in step 6 below remain to be completed with a
+real eligible selection. The older synthetic preview remains a local fixture.
 
 ## User flow
 
@@ -37,6 +38,29 @@ staging D1 and the isolated adult KV/R2 resources for that live public reuse.
 Its publication policy currently admits only the declared `adelaide` creator.
 The canonical THOT OS manager is `thot-os-staging`. These names must not be
 mistaken for a private preview audience.
+
+## Deployment record, 20 October 2026
+
+The deployed source commit is `fd57a5fe586cbe37768c56dc58b408d8ec804228`.
+The bounded D1 receipt confirms only `0067_creator_portfolio_releases.sql` was
+applied (migration history row 69). The scoped grant receipt verifies two
+active Adelaide capabilities: `adult.portfolio.publish` and
+`adult.portfolio.withdraw`. The approved Worker runner receipts confirm 100%
+traffic on these versions:
+
+| Component | Worker version |
+| --- | --- |
+| `thot-os-public-links-control-staging` | `0c246be8-af5a-484b-89a6-000a98d9b0cc` |
+| `thot-os-staging` | `c66f2c54-3ed4-4147-bcf4-cbf7b6fda52c` |
+| `thot-os-adult-gateway-staging` | `b687e170-bc60-4262-9052-d9ab98195fd1` |
+
+Owner-only plans, backup and receipts are in the sibling
+`portfolio-release-evidence/` directory. Public HTTP checks returned 200 for
+`/age/adelaide` on More and 404 for the unaged `/adelaide` page. An unsigned
+request to staging `/health` redirects to Cloudflare Access, so authenticated
+health and creator UI checks are still pending. A scoped read of staging D1
+returned zero Portfolio release records. The public card, playback, contact,
+isolation and withdrawal checks require a real creator-approved release.
 
 ## Release order and checks
 
