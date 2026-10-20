@@ -104,3 +104,20 @@ test("full length contact uses only configured destinations and needs a same-ori
   const email = new URLSearchParams(body); email.set("contactMethod", "email");
   assert.match((await post(await session(), "https://more.example", email)).headers.get("location"), /^mailto:creator@example\.test\?/);
 });
+
+test("preview-only clips have no false full-length request or private asset identifier", async () => {
+  const { projection, env } = await setup();
+  projection.cards[0].hasFullLength = false;
+  assert.equal(validLivePortfolio(projection, slug, profileVersion), true);
+  const html = await (await fetchPage(env, `/${slug}`, await session())).text();
+  assert.match(html, /A short preview/);
+  assert.doesNotMatch(html, /Message creator for full length|<label>Genre|private-source-asset/);
+  const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "email", message: "Please send the full clip." });
+  assert.equal((await fetchPage(env, `/${slug}/portfolio/full-length/request`, await session(),
+    { method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body })).status, 400);
+  projection.cards[0].hasFullLength = true;
+  const linkedHtml = await (await fetchPage(env, `/${slug}`, await session())).text();
+  assert.match(linkedHtml, /Message creator for full length/);
+  assert.match(linkedHtml, /Preview reference: preview-card-1/);
+  assert.match(linkedHtml, /Preview title: A short preview/);
+});

@@ -5,8 +5,6 @@ import { redirect } from "next/navigation";
 import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
-import { isVideoPortfolioItem } from "@/lib/portfolio-video";
-import { portfolioBulkAssetIds } from "@/lib/portfolio-bulk";
 import { getPortfolioDraft } from "@/lib/portfolio-authoring";
 import { fetchInternalService } from "@/lib/internal-service";
 
@@ -25,7 +23,7 @@ function portfolioDb() {
 
 function labelName(form: FormData) {
   const name = field(form, "name").normalize("NFKC").replace(/\s+/g, " ");
-  if (!name || name.length > 50 || /[\u0000-\u001f\u007f]/.test(name)) throw new Error("Enter a category or genre name of at most 50 characters.");
+  if (!name || name.length > 50 || /[\u0000-\u001f\u007f<>]/.test(name)) throw new Error("Enter a category or genre name of at most 50 characters without angle brackets.");
   return name;
 }
 
@@ -47,11 +45,16 @@ export async function togglePortfolioItemAction(form: FormData) {
   if (existing) {
     await DB.batch([
       creatorPrepare(DB, creatorId, "DELETE FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id=?").bind(assetId),
+      creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_draft_state SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator").bind(),
       audit(DB, creatorId, context.email, "item_removed", assetId, {}),
     ]);
   } else {
     const asset = await creatorPrepare(DB, creatorId, `SELECT a.basename FROM assets a
+      JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id AND c.safety='nsfw'
+      LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE a.creator_id=@creator AND a.id=? AND a.source_available=1
+      AND (lower(a.extension) IN ('jpg','jpeg','png','webp') OR (lower(a.extension)='mp4' AND vp.source_codec='h264'
+        AND vp.state IN ('canonical_verified','processing_queued','processing','playback_ready','processing_failed')))
       AND EXISTS (SELECT 1 FROM asset_media_authorities ma WHERE ma.creator_id=a.creator_id AND ma.asset_id=a.id
         AND ma.authority_kind='r2_native' AND ma.state IN ('canonical_verified','preview_ready','preview_failed'))`)
       .bind(assetId).first<{ basename: string }>();
@@ -59,9 +62,10 @@ export async function togglePortfolioItemAction(form: FormData) {
     const title = asset.basename.replace(/\.[^.]+$/, "").trim().slice(0, 100) || "Untitled preview";
     await DB.batch([
       creatorPrepare(DB, creatorId, `INSERT INTO creator_portfolio_items
-        (asset_id,creator_id,title,sort_order,updated_by) VALUES (?,@creator,?,
+        (asset_id,creator_id,title,preview_confirmed,sort_order,updated_by) VALUES (?,@creator,?,1,
         COALESCE((SELECT MAX(sort_order)+1 FROM creator_portfolio_items WHERE creator_id=@creator),0),?)`)
         .bind(assetId, title, context.email),
+      creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_draft_state SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator").bind(),
       audit(DB, creatorId, context.email, "item_added", assetId, {}),
     ]);
   }
@@ -85,6 +89,7 @@ async function saveLabel(form: FormData, kind: "category" | "genre", rename: boo
     if (!owned) throw new Error("That portfolio label is unavailable.");
     await DB.batch([
       creatorPrepare(DB, creatorId, `UPDATE ${table} SET name=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator AND id=?`).bind(name, id),
+      creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_draft_state SET revision=revision+1 WHERE creator_id=@creator").bind(),
       audit(DB, creatorId, context.email, eventType, null, { id, name }),
     ]);
   } else {
@@ -94,6 +99,7 @@ async function saveLabel(form: FormData, kind: "category" | "genre", rename: boo
     await DB.batch([
       creatorPrepare(DB, creatorId, `INSERT INTO ${table} (id,creator_id,name,sort_order) VALUES (?,@creator,?,
         COALESCE((SELECT MAX(sort_order)+1 FROM ${table} WHERE creator_id=@creator),0))`).bind(id, name),
+      creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_draft_state SET revision=revision+1 WHERE creator_id=@creator").bind(),
       audit(DB, creatorId, context.email, eventType, null, { id, name }),
     ]);
   }
@@ -103,86 +109,89 @@ async function saveLabel(form: FormData, kind: "category" | "genre", rename: boo
 
 export async function createPortfolioCategoryAction(form: FormData) { return saveLabel(form, "category", false); }
 export async function renamePortfolioCategoryAction(form: FormData) { return saveLabel(form, "category", true); }
-export async function createPortfolioGenreAction(form: FormData) { return saveLabel(form, "genre", false); }
-export async function renamePortfolioGenreAction(form: FormData) { return saveLabel(form, "genre", true); }
+type CompositionCard = { assetId: string; title: string; description: string; categoryId: string | null; fullLengthAssetId: string | null; previewKey: string | null };
+type Composition = { revision: number; cards: CompositionCard[] };
 
-export async function assignPortfolioCategoryAction(form: FormData) {
-  const context = await requireCreatorContext("mutate");
-  const creatorId = context.creator.creator_id;
-  const assetIds = portfolioBulkAssetIds(form.getAll("assetIds"));
-  const categoryId = field(form, "categoryId");
-  if (!LABEL_ID.test(categoryId)) throw new Error("Choose a category.");
-  const DB = portfolioDb();
-  const category = await creatorPrepare(DB, creatorId,
-    "SELECT id FROM creator_portfolio_categories WHERE creator_id=@creator AND id=?").bind(categoryId).first<{ id: string }>();
-  if (!category) throw new Error("Choose this creator's category.");
-  const placeholders = assetIds.map(() => "?").join(",");
-  const owned = await creatorPrepare(DB, creatorId,
-    `SELECT asset_id FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id IN (${placeholders})`)
-    .bind(...assetIds).all<{ asset_id: string }>();
-  if (owned.results.length !== assetIds.length) throw new Error("One or more selected items are unavailable in this creator's portfolio.");
-  await DB.batch(assetIds.flatMap((assetId) => [
-    creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_items SET category_id=?,updated_at=CURRENT_TIMESTAMP,updated_by=? WHERE creator_id=@creator AND asset_id=?")
-      .bind(categoryId, context.email, assetId),
-    audit(DB, creatorId, context.email, "item_saved", assetId, { categoryId, bulk: true }),
-  ]));
-  revalidatePath("/portfolio");
-  redirect("/portfolio#portfolio-preview-title");
+function parseComposition(form: FormData): Composition {
+  const raw = field(form, "composition");
+  if (!raw || raw.length > 50000) throw new Error("Portfolio draft is too large.");
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new Error("Portfolio draft could not be read."); }
+  if (!value || typeof value !== "object") throw new Error("Portfolio draft could not be read.");
+  const data = value as Partial<Composition>;
+  if (typeof data.revision !== "number" || !Number.isSafeInteger(data.revision) || !Array.isArray(data.cards) || data.cards.length > 24) throw new Error("Portfolio draft must contain at most 24 cards.");
+  const ids = new Set<string>();
+  for (const card of data.cards) {
+    if (!card || typeof card !== "object" || !ASSET_ID.test(card.assetId) || ids.has(card.assetId) ||
+      typeof card.title !== "string" || !card.title.trim() || card.title.length > 100 ||
+      typeof card.description !== "string" || card.description.length > 280 ||
+      (card.previewKey !== null && (typeof card.previewKey !== "string" || card.previewKey.length > 1024)) ||
+      (card.categoryId !== null && (typeof card.categoryId !== "string" || !LABEL_ID.test(card.categoryId))) ||
+      (card.fullLengthAssetId !== null && (typeof card.fullLengthAssetId !== "string" || !ASSET_ID.test(card.fullLengthAssetId) || card.fullLengthAssetId === card.assetId))) {
+      throw new Error("Check each card's title, category and full-length link.");
+    }
+    ids.add(card.assetId);
+  }
+  return data as Composition;
 }
 
-export async function savePortfolioItemAction(form: FormData) {
+async function saveComposition(form: FormData) {
   const context = await requireCreatorContext("mutate");
   const creatorId = context.creator.creator_id;
-  const assetId = field(form, "assetId");
-  if (!ASSET_ID.test(assetId)) throw new Error("Choose a portfolio item.");
-  const title = field(form, "title");
-  const description = field(form, "description");
-  const categoryId = field(form, "categoryId") || null;
-  const genreId = field(form, "genreId") || null;
-  const previewAssetId = field(form, "previewAssetId") || null;
-  const sortOrder = Number(field(form, "sortOrder"));
-  if (!title || title.length > 100 || description.length > 280 || !Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 9999 ||
-    (categoryId !== null && !LABEL_ID.test(categoryId)) || (genreId !== null && !LABEL_ID.test(genreId)) ||
-    (previewAssetId !== null && !ASSET_ID.test(previewAssetId))) throw new Error("Check this item's title, description, labels, preview and order.");
   const DB = portfolioDb();
-  const item = await creatorPrepare(DB, creatorId, `SELECT p.asset_id,p.preview_asset_id AS current_preview_asset_id,a.extension,vp.state AS video_state
-    FROM creator_portfolio_items p JOIN assets a ON a.id=p.asset_id AND a.creator_id=p.creator_id
-    LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
-    WHERE p.creator_id=@creator AND p.asset_id=?`)
-    .bind(assetId).first<{ asset_id: string; current_preview_asset_id: string | null; extension: string; video_state: string | null }>();
-  if (!item) throw new Error("This portfolio draft item is unavailable.");
-  if (previewAssetId && !isVideoPortfolioItem(item)) throw new Error("Only a video item can have a separate video preview candidate.");
-  if (categoryId && !await creatorPrepare(DB, creatorId,
-    "SELECT id FROM creator_portfolio_categories WHERE creator_id=@creator AND id=?").bind(categoryId).first()) throw new Error("Choose this creator's category.");
-  if (genreId && !await creatorPrepare(DB, creatorId,
-    "SELECT id FROM creator_portfolio_genres WHERE creator_id=@creator AND id=?").bind(genreId).first()) throw new Error("Choose this creator's genre.");
-  if (previewAssetId && previewAssetId !== item.current_preview_asset_id && !await creatorPrepare(DB, creatorId, `SELECT a.id FROM assets a
-    JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
-    JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
-    WHERE a.creator_id=@creator AND a.id=? AND a.id<>? AND a.source_available=1 AND lower(a.extension)='mp4'
-      AND vp.source_codec='h264' AND vp.state IN ('canonical_verified','processing_queued','processing','playback_ready','processing_failed')
-      AND ma.state='canonical_verified'`)
-    .bind(previewAssetId, assetId).first()) throw new Error("Choose this creator's separate verified H.264 MP4 preview.");
-  await DB.batch([
-    creatorPrepare(DB, creatorId, `UPDATE creator_portfolio_items
-      SET category_id=?,genre_id=?,preview_asset_id=?,title=?,description=?,sort_order=?,updated_at=CURRENT_TIMESTAMP,updated_by=?
-      WHERE creator_id=@creator AND asset_id=?`)
-      .bind(categoryId, genreId, previewAssetId, title, description, sortOrder, context.email, assetId),
-    audit(DB, creatorId, context.email, "item_saved", assetId, { categoryId, genreId, previewAssetId, title, sortOrder }),
-  ]);
+  const composition = parseComposition(form);
+  const draft = await getPortfolioDraft(creatorId);
+  if (composition.revision !== draft.revision) throw new Error("This draft changed elsewhere. Refresh and review it before saving.");
+  const existing = new Set(draft.items.map((item) => item.asset_id));
+  if (composition.cards.some((card) => !existing.has(card.assetId))) throw new Error("A card no longer belongs to this draft.");
+  if (composition.cards.some((card) => draft.items.find((item) => item.asset_id === card.assetId)?.preview_r2_key !== card.previewKey)) {
+    throw new Error("A preview or thumbnail changed. Refresh and review it before saving or publishing.");
+  }
+  const categories = new Set(draft.categories.map((category) => category.id));
+  if (composition.cards.some((card) => card.categoryId && !categories.has(card.categoryId))) throw new Error("Choose this creator's category.");
+  const fullIds = [...new Set(composition.cards.map((card) => card.fullLengthAssetId).filter((id): id is string => Boolean(id)))];
+  if (fullIds.length) {
+    const full = await creatorPrepare(DB, creatorId, `SELECT a.id FROM assets a
+      JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+      WHERE a.creator_id=@creator AND a.id IN (${fullIds.map(() => "?").join(",")}) AND a.source_available=1
+        AND lower(a.extension)='mp4' AND ma.state IN ('canonical_verified','preview_ready','preview_failed')`)
+      .bind(...fullIds).all<{ id: string }>();
+    if (full.results.length !== fullIds.length) throw new Error("A linked full-length video is unavailable for this creator.");
+  }
+  const chosen = new Set(composition.cards.map((card) => card.assetId));
+  const statements = [
+    creatorPrepare(DB, creatorId, `UPDATE creator_portfolio_draft_state
+      SET revision=CASE WHEN revision=? THEN revision+1 ELSE -1 END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator`).bind(composition.revision),
+    ...composition.cards.flatMap((card, order) => [
+      creatorPrepare(DB, creatorId, `UPDATE creator_portfolio_items SET title=?,description=?,category_id=?,genre_id=NULL,
+        full_length_asset_id=?,sort_order=?,updated_at=CURRENT_TIMESTAMP,updated_by=?
+        WHERE creator_id=@creator AND asset_id=?`).bind(card.title.trim(), card.description, card.categoryId, card.fullLengthAssetId, order, context.email, card.assetId),
+      audit(DB, creatorId, context.email, "item_saved", card.assetId, { categoryId: card.categoryId, fullLengthLinked: Boolean(card.fullLengthAssetId), order }),
+    ]),
+    ...draft.items.filter((item) => !chosen.has(item.asset_id)).flatMap((item) => [
+      creatorPrepare(DB, creatorId, "DELETE FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id=?").bind(item.asset_id),
+      audit(DB, creatorId, context.email, "item_removed", item.asset_id, { fromEditor: true }),
+    ]),
+  ];
+  const result = await DB.batch(statements);
+  if (result[0]?.meta?.changes !== 1) throw new Error("Draft changed elsewhere. Refresh and review it before saving.");
+  return { context, composition };
+}
+
+export async function savePortfolioDraftAction(form: FormData) {
+  await saveComposition(form);
   revalidatePath("/portfolio");
-  redirect("/portfolio");
+  redirect("/portfolio?notice=draft_saved");
 }
 
 export async function publishPortfolioAction(form: FormData) {
-  const context = await requireCreatorContext("mutate");
-  const creatorId = context.creator.creator_id;
   if (field(form, "publicRightsApproved") !== "yes") throw new Error("Confirm public preview rights and consent before publishing.");
   const telegramUsername = field(form, "telegramUsername").replace(/^@/, "");
   const email = field(form, "email");
   if ((telegramUsername && !/^[A-Za-z0-9_]{5,32}$/.test(telegramUsername)) ||
       (email && !/^[^\s@<>]{1,64}@[^\s@<>]{1,190}$/.test(email))) throw new Error("Check the Telegram username or contact email.");
-  const selectedIds = portfolioBulkAssetIds(form.getAll("assetIds"));
+  const { context, composition } = await saveComposition(form);
+  const creatorId = context.creator.creator_id;
   const env = cloudflareEnv();
   const releaseEnv = env as CloudflareEnv & { PORTFOLIO_PUBLISHING_ENABLED?: string };
   if (releaseEnv.PORTFOLIO_PUBLISHING_ENABLED !== "1") throw new Error("Portfolio publishing is not enabled in this environment.");
@@ -192,33 +201,32 @@ export async function publishPortfolioAction(form: FormData) {
     WHERE p.creator_id=@creator AND p.status='active'`).first<{ published_version_id: string; slug: string }>();
   if (!profile) throw new Error("Publish this creator's 18+ profile before publishing a portfolio.");
   const draft = await getPortfolioDraft(creatorId);
-  const selected = selectedIds.map((id) => draft.items.find((item) => item.asset_id === id));
-  if (selected.length < 1 || selected.length > 24 || selected.some((item) => !item)) throw new Error("Select 1 to 24 items from this creator's portfolio.");
-  const cards = selected.map((item) => {
-    if (!item || item.safety !== "nsfw" || !item.source_available || !item.category_id || !item.title.trim()) throw new Error("Classify each selected item as NSFW and assign a category before publishing.");
-    const section = draft.categories.find((label) => label.id === item.category_id)?.name;
-    const genre = item.genre_id ? draft.genres.find((label) => label.id === item.genre_id)?.name : "";
-    if (!section || genre === undefined) throw new Error("A selected category or genre is unavailable.");
-    const video = isVideoPortfolioItem(item);
-    if (video && !draft.teasers.some((teaser) => teaser.id === item.preview_asset_id && teaser.is_teaser === 1 && teaser.teaser_for_asset_id === item.asset_id)) {
-      throw new Error("Mark the selected short preview as a teaser linked to this full video in the Library before publishing.");
-    }
+  if (draft.revision !== composition.revision + 1) throw new Error("This draft changed elsewhere. Refresh and review it before publishing.");
+  if (composition.cards.length < 1 || composition.cards.length > 24) throw new Error("Add 1 to 24 cards before publishing.");
+  const cards = composition.cards.map((submitted) => {
+    const item = draft.items.find((candidate) => candidate.asset_id === submitted.assetId);
+    if (!item || item.preview_confirmed !== 1 || item.preview_asset_id || item.safety !== "nsfw" || !item.source_available || !submitted.categoryId || !submitted.title.trim()) throw new Error("Use a confirmed short preview card and assign its category before publishing.");
+    const section = draft.categories.find((label) => label.id === submitted.categoryId)?.name;
+    if (!section || /[<>]/.test(section)) throw new Error("Rename this category before publishing.");
+    const video = item.video_state !== null && item.extension.toLowerCase() === "mp4";
     const previewKey = video ? null : item.preview_r2_key;
-    const posterKey = video ? item.preview_poster_r2_key : null;
-    if ((video && (!item.preview_asset_id || !posterKey)) || (!video && !previewKey)) throw new Error("Choose a separate short video and thumbnail, or wait for the image preview, before publishing.");
-    return { id: crypto.randomUUID(), assetId: item.asset_id, previewAssetId: video ? item.preview_asset_id : null,
-      kind: video ? "video" as const : "image" as const, title: item.title, description: item.description,
-      section, genre, previewKey: video ? "" : previewKey!, posterKey };
+    const posterKey = video ? item.preview_r2_key : null;
+    if ((video && !posterKey) || (!video && !previewKey)) throw new Error("A selected preview or thumbnail is not ready.");
+    return { id: crypto.randomUUID(), assetId: item.asset_id, fullLengthAssetId: submitted.fullLengthAssetId,
+      kind: video ? "video" as const : "image" as const, title: submitted.title.trim(), description: submitted.description,
+      section, previewKey: video ? "" : previewKey!, posterKey };
   });
-  if (cards.some((card) => card.kind === "video") && !telegramUsername && !email) {
+  if (cards.some((card) => card.fullLengthAssetId) && !telegramUsername && !email) {
     throw new Error("Add a Telegram username or contact email so visitors can request a full-length video.");
   }
   const versionId = crypto.randomUUID();
-  const manifest = { schemaVersion: 1, contact: { ...(telegramUsername ? { telegramUsername } : {}), ...(email ? { email } : {}) }, cards };
+  const manifest = { schemaVersion: 2, contact: { ...(telegramUsername ? { telegramUsername } : {}), ...(email ? { email } : {}) }, cards };
   const inserted = await creatorPrepare(env.DB, creatorId, `INSERT INTO creator_portfolio_release_versions
-    (id,creator_id,adult_profile_version_id,status,manifest_json,approved_by) VALUES (?,@creator,?,'approved',?,?)`)
-    .bind(versionId, profile.published_version_id, JSON.stringify(manifest), context.email).run();
-  if (!inserted.meta?.changes) throw new Error("The portfolio release approval could not be recorded.");
+    (id,creator_id,adult_profile_version_id,status,manifest_json,approved_by)
+    SELECT ?,@creator,?,'approved',?,? FROM creator_portfolio_draft_state
+    WHERE creator_id=@creator AND revision=?`)
+    .bind(versionId, profile.published_version_id, JSON.stringify(manifest), context.email, composition.revision + 1).run();
+  if (!inserted.meta?.changes) throw new Error("This draft changed elsewhere. Refresh and review it before publishing.");
   await creatorPrepare(env.DB, creatorId, `INSERT INTO creator_portfolio_release_events
     (id,creator_id,release_version_id,actor,event_type,detail) VALUES (?,@creator,?,?,'approved',?)`)
     .bind(crypto.randomUUID(), versionId, context.email, JSON.stringify({ cardCount: cards.length, publicRightsApproved: true })).run();

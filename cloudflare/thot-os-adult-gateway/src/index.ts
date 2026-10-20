@@ -326,7 +326,8 @@ return {
       const portfolio = await currentPortfolio(env, parts[0], profile.publishedVersionId);
       if (!portfolio) return page("Not found", 404);
       const form = await request.formData().catch(() => null);
-      const card = portfolio.cards.find((item) => item.id === form?.get("previewId") && item.kind === "video");
+      const card = portfolio.cards.find((item) => item.id === form?.get("previewId") &&
+        (item.hasFullLength === true || (item.hasFullLength === undefined && item.kind === "video")));
       const name = String(form?.get("name") ?? "").trim();
       const edited = String(form?.get("message") ?? "").trim();
       const channel = String(form?.get("contactMethod") ?? "");

@@ -9,14 +9,15 @@ import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
 import { portfolioPublicationReadiness } from "../src/lib/portfolio-publication-readiness.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
+const previewFirstMigration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0068_portfolio_preview_first.sql", import.meta.url)), "utf8");
 
 function fixture() {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
   db.exec(`CREATE TABLE creators (id TEXT PRIMARY KEY);
-    CREATE TABLE assets (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES creators(id), UNIQUE(id,creator_id));
+    CREATE TABLE assets (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES creators(id), extension TEXT NOT NULL, UNIQUE(id,creator_id));
     INSERT INTO creators(id) VALUES ('creator-a'),('creator-b');
-    INSERT INTO assets(id,creator_id) VALUES ('full-a','creator-a'),('preview-a','creator-a'),('full-b','creator-b'),('preview-b','creator-b');`);
+    INSERT INTO assets(id,creator_id,extension) VALUES ('full-a','creator-a','mp4'),('preview-a','creator-a','mp4'),('image-a','creator-a','jpg'),('full-b','creator-b','mp4'),('preview-b','creator-b','mp4');`);
   db.exec(migration);
   return db;
 }
@@ -53,6 +54,61 @@ test("a portfolio item is only a private draft row", () => {
   } finally { db.close(); }
 });
 
+test("preview-first migration preserves a legacy full clip as a private linked asset", () => {
+  const db = fixture();
+  try {
+    db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,preview_asset_id,title,updated_by) VALUES ('full-a','creator-a','preview-a','Draft','creator@example.invalid')").run();
+    db.exec(previewFirstMigration);
+    assert.deepEqual(db.prepare("SELECT asset_id,full_length_asset_id,preview_asset_id,preview_confirmed FROM creator_portfolio_items").get(),
+      { asset_id: "preview-a", full_length_asset_id: "full-a", preview_asset_id: null, preview_confirmed: 1 });
+    assert.throws(() => db.prepare("UPDATE creator_portfolio_items SET full_length_asset_id='full-b'").run(), /portfolio_full_asset_creator_mismatch/);
+    assert.equal(db.prepare("SELECT revision FROM creator_portfolio_draft_state WHERE creator_id='creator-a'").get().revision, 0);
+    db.prepare("UPDATE creator_portfolio_draft_state SET revision=CASE WHEN revision=0 THEN revision+1 ELSE -1 END WHERE creator_id='creator-a'").run();
+    assert.throws(() => db.prepare("UPDATE creator_portfolio_draft_state SET revision=CASE WHEN revision=0 THEN revision+1 ELSE -1 END WHERE creator_id='creator-a'").run(), /CHECK/);
+    assert.equal(db.pragma("quick_check", { simple: true }), "ok");
+  } finally { db.close(); }
+});
+
+test("old full-video drafts without a teaser remain blocked until a preview is explicitly selected", () => {
+  const db = fixture();
+  try {
+    db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,title,updated_by) VALUES ('full-a','creator-a','Old full video','creator@example.invalid')").run();
+    db.exec(previewFirstMigration);
+    assert.deepEqual(db.prepare("SELECT asset_id,preview_asset_id,preview_confirmed FROM creator_portfolio_items").get(),
+      { asset_id: "full-a", preview_asset_id: null, preview_confirmed: 0 });
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM creator_portfolio_items WHERE preview_confirmed=1").get().count, 0);
+    db.prepare("DELETE FROM creator_portfolio_items WHERE asset_id='full-a'").run();
+    db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,title,updated_by,preview_confirmed) VALUES ('preview-a','creator-a','Selected preview','creator@example.invalid',1)").run();
+    assert.equal(db.prepare("SELECT preview_confirmed FROM creator_portfolio_items").get().preview_confirmed, 1);
+    assert.throws(() => db.prepare("UPDATE creator_portfolio_items SET preview_confirmed=2").run(), /CHECK/);
+  } finally { db.close(); }
+});
+
+test("existing image cards retain their preview intent during migration", () => {
+  const db = fixture();
+  try {
+    db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,title,updated_by) VALUES ('image-a','creator-a','Photo','creator@example.invalid')").run();
+    db.exec(previewFirstMigration);
+    assert.equal(db.prepare("SELECT preview_confirmed FROM creator_portfolio_items WHERE asset_id='image-a'").get().preview_confirmed, 1);
+  } finally { db.close(); }
+});
+
+test("migration leaves two full videos sharing a teaser private for manual review", () => {
+  const db = fixture();
+  try {
+    db.prepare("INSERT INTO assets(id,creator_id,extension) VALUES ('second-full-a','creator-a','mp4')").run();
+    const add = db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,preview_asset_id,title,updated_by) VALUES (?,'creator-a','preview-a',?,'creator@example.invalid')");
+    add.run("full-a", "First full video");
+    add.run("second-full-a", "Second full video");
+    db.exec(previewFirstMigration);
+    assert.deepEqual(db.prepare("SELECT asset_id,preview_asset_id,preview_confirmed FROM creator_portfolio_items ORDER BY asset_id").all(), [
+      { asset_id: "full-a", preview_asset_id: "preview-a", preview_confirmed: 0 },
+      { asset_id: "second-full-a", preview_asset_id: "preview-a", preview_confirmed: 0 },
+    ]);
+    assert.equal(db.pragma("quick_check", { simple: true }), "ok");
+  } finally { db.close(); }
+});
+
 test("the editor offers a separate preview chooser for imported videos without playback rows", () => {
   assert.equal(isVideoPortfolioItem({ extension: "MP4", video_state: null }), true);
   assert.equal(isVideoPortfolioItem({ extension: "mov", video_state: null }), true);
@@ -84,19 +140,15 @@ test("bulk category selection is bounded and rejects duplicate or malformed IDs"
   assert.throws(() => portfolioBulkAssetIds(["asset-a", "../other"]), /between 1 and 50/);
 });
 
-test("publication choices explain missing category and preview before approval", () => {
+test("publication readiness accepts a preview-only card without a full-length link", () => {
   const image = { asset_id: "image-a", title: "Image", safety: "nsfw", source_available: 1, category_id: null,
-    preview_asset_id: null, preview_poster_r2_key: null, preview_r2_key: "private-preview.jpg", extension: "jpg", video_state: null };
-  assert.deepEqual(portfolioPublicationReadiness(image, []), {
+    preview_r2_key: "private-preview.jpg", extension: "jpg", video_state: null };
+  assert.deepEqual(portfolioPublicationReadiness(image), {
     ready: false, message: "Choose a category", issues: [{ message: "Choose a category", href: "#portfolio-item-image-a" }],
   });
-  assert.equal(portfolioPublicationReadiness({ ...image, category_id: "category-a" }, []).ready, true);
-
-  const video = { ...image, asset_id: "full-a", extension: "mp4", category_id: "category-a", preview_asset_id: "preview-a" };
-  const teaser = [{ id: "preview-a", is_teaser: 1, teaser_for_asset_id: "full-a" }];
-  assert.equal(portfolioPublicationReadiness({ ...video, category_id: null, preview_asset_id: null }, []).issues.length, 2);
-  assert.ok(portfolioPublicationReadiness(video, []).issues.some((issue) => /Link and mark/.test(issue.message)));
-  assert.ok(portfolioPublicationReadiness(video, teaser).issues.some((issue) => /thumbnail/.test(issue.message)));
-  assert.equal(portfolioPublicationReadiness({ ...video, preview_poster_r2_key: "private-poster.jpg" }, teaser).ready, true);
-  assert.equal(portfolioPublicationReadiness({ ...video, source_available: 0 }, teaser).ready, false);
+  assert.equal(portfolioPublicationReadiness({ ...image, category_id: "category-a" }).ready, true);
+  const video = { ...image, asset_id: "preview-a", extension: "mp4", category_id: "category-a" };
+  assert.equal(portfolioPublicationReadiness({ ...video, preview_r2_key: null }).issues[0].message, "Choose a thumbnail for this short clip");
+  assert.equal(portfolioPublicationReadiness(video).ready, true);
+  assert.equal(portfolioPublicationReadiness({ ...video, source_available: 0 }).ready, false);
 });

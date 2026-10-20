@@ -39,6 +39,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ ass
     const results = await env.DB.batch([
       env.DB.prepare("UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=? AND source_available=1")
         .bind(poster.key, assetId, creatorId),
+      env.DB.prepare(`UPDATE creator_portfolio_draft_state SET revision=revision+1,updated_at=CURRENT_TIMESTAMP
+        WHERE creator_id=? AND EXISTS (SELECT 1 FROM creator_portfolio_items WHERE creator_id=? AND asset_id=?)`)
+        .bind(creatorId, creatorId, assetId),
       identityAuditStatement(env.DB, humanAuditActor(context), "private_video_poster_saved", assetId, { width: poster.width, height: poster.height }),
     ]);
     if (results[0]?.meta?.changes !== 1) throw new Error("poster_asset_unavailable");

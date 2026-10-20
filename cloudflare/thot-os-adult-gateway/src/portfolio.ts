@@ -23,6 +23,7 @@ export type LivePortfolioCard = Omit<PortfolioCard, "section" | "genre"> & {
   checksum: string;
   posterKey?: string;
   posterChecksum?: string;
+  hasFullLength?: boolean;
 };
 export type LivePortfolioProjection = {
   schemaVersion: 2;
@@ -86,10 +87,11 @@ export function validLivePortfolio(value: unknown, slug: string, profileVersionI
     !Array.isArray(projection.cards) || projection.cards.length < 1 || projection.cards.length > 24) return false;
   const ids = new Set<string>();
   return projection.cards.every((card) => {
-    if (!card || typeof card !== "object" || !onlyKeys(card, ["id", "title", "description", "section", "genre", "kind", "previewPath", "posterPath", "mediaKey", "checksum", "posterKey", "posterChecksum"]) ||
+    if (!card || typeof card !== "object" || !onlyKeys(card, ["id", "title", "description", "section", "genre", "kind", "previewPath", "posterPath", "mediaKey", "checksum", "posterKey", "posterChecksum", "hasFullLength"]) ||
       !ID.test(card.id) || ids.has(card.id) || typeof card.title !== "string" || !card.title.trim() || card.title.length > 100 ||
       typeof card.description !== "string" || card.description.length > 280 ||
       typeof card.section !== "string" || !LABEL.test(card.section) || typeof card.genre !== "string" || (card.genre !== "" && !LABEL.test(card.genre)) ||
+      (card.hasFullLength !== undefined && typeof card.hasFullLength !== "boolean") ||
       !CHECKSUM.test(card.checksum) || card.mediaKey !== `adult-portfolio/${slug}/${projection.portfolioVersionId}/${card.id}/${card.kind === "video" ? "preview.mp4" : "preview.jpg"}` ||
       card.previewPath !== `/portfolio-media/${slug}/${card.id}/preview`) return false;
     ids.add(card.id);
@@ -104,18 +106,23 @@ function html(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
 }
 
-export function fullLengthMessage(creatorName: string, previewId: string, clipTitle: string) {
-  return `Hello ${creatorName},\nI would love to see the full length. Can you please send me a payment option and the download link?\n\nAsset ID: ${previewId}\nFull-length clip: ${clipTitle}`;
+export function fullLengthMessage(creatorName: string, previewId: string, clipTitle: string, previewOnly = false) {
+  return `Hello ${creatorName},\nI would love to see the full length. Can you please send me a payment option and the download link?\n\n${previewOnly ? "Preview reference" : "Asset ID"}: ${previewId}\n${previewOnly ? "Preview title" : "Full-length clip"}: ${clipTitle}`;
+}
+
+function hasFullLengthRequest(card: PortfolioCard | LivePortfolioCard, fixture: boolean) {
+  if (fixture) return card.kind === "video";
+  return "hasFullLength" in card && card.hasFullLength !== undefined ? card.hasFullLength === true : card.kind === "video";
 }
 
 export function renderPortfolio(projection: PortfolioProjection, creatorName: string, section: string | null, genre: string | null, requestSent: boolean) {
   const sections: string[] = projection.schemaVersion === 1 ? [...SECTIONS] : [...new Set(projection.cards.map((card) => card.section))];
-  const genres: string[] = projection.schemaVersion === 1 ? [...GENRES] : [...new Set(projection.cards.map((card) => card.genre).filter(Boolean))];
+  const genres: string[] = projection.schemaVersion === 1 ? [...GENRES] : [];
   const selectedSection = section && sections.includes(section) ? section : "All sections";
-  const selectedGenre = genre && genres.includes(genre) ? genre : "All genres";
+  const selectedGenre = projection.schemaVersion === 1 && genre && genres.includes(genre) ? genre : "All genres";
   const cards = projection.cards.filter((card) =>
     (selectedSection === "All sections" || card.section === selectedSection) &&
-    (selectedGenre === "All genres" || card.genre === selectedGenre));
+    (projection.schemaVersion !== 1 || selectedGenre === "All genres" || card.genre === selectedGenre));
   const slug = encodeURIComponent(projection.creatorSlug);
   const option = (label: string, selected: string) => `<option value="${label === "All sections" || label === "All genres" ? "" : html(label)}"${label === selected ? " selected" : ""}>${html(label)}</option>`;
   const contact = projection.schemaVersion === 2 ? projection.contact : { telegramUsername: "fixture", email: "fixture@example.test" };
@@ -124,9 +131,9 @@ export function renderPortfolio(projection: PortfolioProjection, creatorName: st
     ${card.kind === "video"
       ? `<video controls preload="none" playsinline poster="${card.posterPath}" aria-label="Preview clip: ${html(card.title)}"><source src="${card.previewPath}" type="video/mp4">Your browser cannot play this preview.</video>`
       : `<img src="${card.previewPath}" alt="${html(card.title)}: ${html(card.description)}" loading="lazy">`}
-    <div class="portfolio-copy"><p class="portfolio-meta">${html(card.section)}${card.genre ? ` · ${html(card.genre)}` : ""}</p><h3>${html(card.title)}</h3><p>${html(card.description)}</p>${card.kind === "video" ? `<p class="portfolio-note">Preview clip · Full video by request</p>${contactOptions ? `<details class="portfolio-full-request"><summary>Message creator for full length <span aria-hidden="true">↗</span></summary><form method="post" action="/${slug}/portfolio/full-length/request"><input type="hidden" name="previewId" value="${html(card.id)}"><label>Your name<input name="name" type="text" required maxlength="80" autocomplete="name"></label><label>Contact the creator using<select name="contactMethod" required><option value="">Choose a contact method</option>${contactOptions}</select></label><label>Your message<textarea name="message" required minlength="10" maxlength="800" rows="7">${html(fullLengthMessage(creatorName, card.id, card.title))}</textarea></label><p>Your name is added to the prepared message. You will review and send it in Telegram or your email app.</p><button type="submit">Prepare message ↗</button></form></details>` : ""}` : ""}</div>
+    <div class="portfolio-copy"><p class="portfolio-meta">${html(card.section)}${projection.schemaVersion === 1 && card.genre ? ` · ${html(card.genre)}` : ""}</p><h3>${html(card.title)}</h3><p>${html(card.description)}</p>${card.kind === "video" ? '<p class="portfolio-note">Preview clip</p>' : ""}${hasFullLengthRequest(card, projection.schemaVersion === 1) && contactOptions ? `<details class="portfolio-full-request"><summary>Message creator for full length <span aria-hidden="true">↗</span></summary><form method="post" action="/${slug}/portfolio/full-length/request"><input type="hidden" name="previewId" value="${html(card.id)}"><label>Your name<input name="name" type="text" required maxlength="80" autocomplete="name"></label><label>Contact the creator using<select name="contactMethod" required><option value="">Choose a contact method</option>${contactOptions}</select></label><label>Your message<textarea name="message" required minlength="10" maxlength="800" rows="7">${html(fullLengthMessage(creatorName, card.id, card.title, projection.schemaVersion === 2))}</textarea></label><p>Your name is added to the prepared message. You will review and send it in Telegram or your email app.</p><button type="submit">Prepare message ↗</button></form></details>` : ""}</div>
   </article>`).join("");
-  return `<section class="portfolio" aria-labelledby="portfolio-heading"><details${section || genre ? " open" : ""}><summary id="portfolio-heading"><span><small>THE COLLECTION</small><strong>Want a sneak peek?</strong><em>Browse selected previews</em></span><span class="portfolio-arrow" aria-hidden="true"></span></summary><div class="portfolio-inside"><p class="portfolio-intro">A little look at the collection. These are previews chosen for this page.</p><form class="portfolio-filters" method="get" action="/${slug}"><label>Section<select name="section">${["All sections", ...sections].map((value) => option(value, selectedSection)).join("")}</select></label><label>Genre<select name="genre">${["All genres", ...genres].map((value) => option(value, selectedGenre)).join("")}</select></label><button type="submit">Show selection</button></form><p class="portfolio-count">${cards.length} ${cards.length === 1 ? "preview" : "previews"}</p>${cards.length ? `<div class="portfolio-grid">${cardHtml}</div>` : '<p class="portfolio-empty">No previews match these filters. Try another section or genre.</p>'}${projection.schemaVersion === 1 ? `<section class="portfolio-request" aria-labelledby="custom-heading"><div><small>MADE FOR YOU</small><h2 id="custom-heading">Have something in mind?</h2><p>Send a private custom request. Availability and price are confirmed separately.</p></div>${requestSent ? '<p role="status" class="portfolio-sent">Request received in this local preview.</p>' : ""}<form method="post" action="/${slug}/portfolio/request"><label>Request type<select name="requestType" required><option value="">Choose one</option><option value="photo">Photo set</option><option value="clip">Video clip</option><option value="other">Something else</option></select></label><label>Your request<textarea name="message" required minlength="10" maxlength="800" placeholder="Tell me what you have in mind"></textarea></label><label>Contact email <span>(optional in this local preview)</span><input name="email" type="email" maxlength="254" autocomplete="email"></label><label class="portfolio-ack"><input type="checkbox" name="acknowledge" value="yes" required><span>This is an enquiry only. Availability and price are not guaranteed.</span></label><button type="submit">Send request ↗</button></form></section>` : ""}</div></details></section>`;
+  return `<section class="portfolio" aria-labelledby="portfolio-heading"><details${section || (projection.schemaVersion === 1 && genre) ? " open" : ""}><summary id="portfolio-heading"><span><small>THE COLLECTION</small><strong>Want a sneak peek?</strong><em>Browse selected previews</em></span><span class="portfolio-arrow" aria-hidden="true"></span></summary><div class="portfolio-inside"><p class="portfolio-intro">A little look at the collection. These are previews chosen for this page.</p><form class="portfolio-filters${projection.schemaVersion === 2 ? " single" : ""}" method="get" action="/${slug}"><label>Category<select name="section">${["All sections", ...sections].map((value) => option(value, selectedSection)).join("")}</select></label>${projection.schemaVersion === 1 ? `<label>Genre<select name="genre">${["All genres", ...genres].map((value) => option(value, selectedGenre)).join("")}</select></label>` : ""}<button type="submit">Show selection</button></form><p class="portfolio-count">${cards.length} ${cards.length === 1 ? "preview" : "previews"}</p>${cards.length ? `<div class="portfolio-grid">${cardHtml}</div>` : `<p class="portfolio-empty">${projection.schemaVersion === 1 ? "No previews match these filters. Try another section or genre." : "No previews match this category."}</p>`}${projection.schemaVersion === 1 ? `<section class="portfolio-request" aria-labelledby="custom-heading"><div><small>MADE FOR YOU</small><h2 id="custom-heading">Have something in mind?</h2><p>Send a private custom request. Availability and price are confirmed separately.</p></div>${requestSent ? '<p role="status" class="portfolio-sent">Request received in this local preview.</p>' : ""}<form method="post" action="/${slug}/portfolio/request"><label>Request type<select name="requestType" required><option value="">Choose one</option><option value="photo">Photo set</option><option value="clip">Video clip</option><option value="other">Something else</option></select></label><label>Your request<textarea name="message" required minlength="10" maxlength="800" placeholder="Tell me what you have in mind"></textarea></label><label>Contact email <span>(optional in this local preview)</span><input name="email" type="email" maxlength="254" autocomplete="email"></label><label class="portfolio-ack"><input type="checkbox" name="acknowledge" value="yes" required><span>This is an enquiry only. Availability and price are not guaranteed.</span></label><button type="submit">Send request ↗</button></form></section>` : ""}</div></details></section>`;
 }
 
 export const portfolioCss = `
@@ -146,6 +153,7 @@ export const portfolioCss = `
 .portfolio-inside{padding:clamp(1rem,3vw,1.65rem)}
 .portfolio-intro{margin:0 0 1.25rem;max-width:44rem;color:var(--portfolio-muted)}
 .portfolio-filters{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;align-items:end;gap:.8rem}
+.portfolio-filters.single{grid-template-columns:minmax(0,1fr) auto}
 .portfolio label{display:grid;gap:.4rem;font-size:.8rem;font-weight:850}
 .portfolio select,.portfolio textarea,.portfolio input[type=email],.portfolio input[type=text]{font:inherit;width:100%;min-height:46px;border:2px solid var(--portfolio-ink);border-radius:0;padding:.65rem .75rem;background:var(--portfolio-card);color:var(--portfolio-ink)}
 .portfolio textarea::placeholder{color:var(--portfolio-muted);opacity:1}
