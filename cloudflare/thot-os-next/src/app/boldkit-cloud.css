@@ -429,14 +429,110 @@ body {
 .os-cloud-shell .portfolio-library-control h2 { margin: 0 0 5px; }
 .os-cloud-shell .portfolio-library-control p { margin: 0; }
 .os-cloud-shell .portfolio-publish-note { border-color: var(--foreground); background: var(--warning); color: var(--warning-foreground); }
+.os-cloud-shell .portfolio-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; padding: 0; list-style: none; }
+.os-cloud-shell .portfolio-steps li { display: grid; align-content: start; gap: 6px; min-width: 0; border: 2px solid var(--foreground); background: var(--muted-surface); padding: 14px; }
+.os-cloud-shell .portfolio-steps strong { font-size: 14px; }
+.os-cloud-shell .portfolio-steps span { color: var(--muted-foreground); font-size: 13px; line-height: 1.4; }
+.os-cloud-shell .portfolio-intro-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.os-cloud-shell .portfolio-intro-actions a { font-weight: 800; }
+.os-cloud-shell .portfolio-preview-card-body a { width: fit-content; font-size: 13px; font-weight: 850; }
+.os-cloud-shell .portfolio-card-status { border-left: 4px solid var(--warning); padding-left: 8px; color: var(--foreground); font-weight: 750; }
+.os-cloud-shell .portfolio-card-status.is-ready { border-color: var(--success); }
+.os-cloud-shell .portfolio-labels-details > summary,
+.os-cloud-shell .portfolio-item-details > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; cursor: pointer; list-style: none; }
+.os-cloud-shell .portfolio-labels-details > summary::-webkit-details-marker,
+.os-cloud-shell .portfolio-item-details > summary::-webkit-details-marker { display: none; }
+.os-cloud-shell .portfolio-labels-details > summary { padding: 4px 0; }
+.os-cloud-shell .portfolio-labels-details > summary > span:first-child,
+.os-cloud-shell .portfolio-item-summary-text { display: grid; flex: 1 1 250px; gap: 4px; min-width: 0; }
+.os-cloud-shell .portfolio-labels-details > summary strong { font-size: 21px; letter-spacing: -.03em; }
+.os-cloud-shell .portfolio-labels-details > summary small,
+.os-cloud-shell .portfolio-item-summary-text small { color: var(--muted-foreground); font-size: 13px; font-weight: 500; }
+.os-cloud-shell .portfolio-summary-action { border: 2px solid var(--foreground); background: var(--secondary); padding: 8px 12px; color: var(--secondary-foreground); font-size: 12px; font-weight: 850; }
+.os-cloud-shell .portfolio-summary-action::after { content: " +"; font-size: 15px; }
+.os-cloud-shell details[open] > summary .portfolio-summary-action { background: var(--muted-surface); color: var(--foreground); }
+.os-cloud-shell details[open] > summary .portfolio-summary-action::after { content: " −"; }
+.os-cloud-shell .portfolio-labels-details[open] .portfolio-taxonomy-grid { margin-top: 18px; }
+.os-cloud-shell .portfolio-taxonomy-grid p { font-size: 13px; line-height: 1.45; }
+.os-cloud-shell .portfolio-label-create label { display: grid; gap: 5px; min-width: 0; font-weight: 800; }
+.os-cloud-shell .portfolio-label-row button,
+.os-cloud-shell .portfolio-label-create button { min-height: 44px; }
+.os-cloud-shell .portfolio-draft-item { margin-top: 10px; padding: 0; box-shadow: none; }
+.os-cloud-shell .portfolio-item-details > summary { min-height: 70px; padding: 14px 18px; }
+.os-cloud-shell .portfolio-item-details > summary:hover { background: var(--muted-surface); }
+.os-cloud-shell .portfolio-item-details[open] > summary { border-bottom: 2px solid var(--foreground); }
+.os-cloud-shell .portfolio-item-summary-text strong { font-size: 16px; overflow-wrap: anywhere; }
+.os-cloud-shell .portfolio-item-details .portfolio-readiness { max-width: 260px; white-space: normal; line-height: 1.3; }
+.os-cloud-shell .portfolio-readiness.is-ready { background: var(--success); color: var(--success-foreground); }
+.os-cloud-shell .portfolio-item-body { display: grid; gap: 20px; padding: 18px; }
+.os-cloud-shell .portfolio-item-view { display: grid; gap: 6px; padding: 18px; }
+.os-cloud-shell .portfolio-item-view span { color: var(--muted-foreground); font-size: 13px; }
+.os-cloud-shell .portfolio-poster-step { border-top: 2px solid var(--foreground); padding-top: 18px; }
+.os-cloud-shell .portfolio-poster-step h4 { margin: 0 0 5px; font-size: 17px; }
+.os-cloud-shell .portfolio-poster-step > p,
+.os-cloud-shell .portfolio-poster-hint { margin: 0 0 12px; font-size: 13px; }
+.os-cloud-shell .portfolio-publish { background: var(--card); color: var(--card-foreground); }
+.os-cloud-shell .portfolio-public-state { border: 1px solid var(--foreground); background: var(--muted-surface); padding: 7px 10px; font-size: 12px; font-weight: 850; white-space: nowrap; }
+.os-cloud-shell .portfolio-public-state.is-live { background: var(--success); color: var(--success-foreground); }
+.os-cloud-shell .portfolio-publish-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.os-cloud-shell .portfolio-publish-overview > div { display: grid; align-content: start; gap: 5px; min-width: 0; border: 2px solid var(--foreground); background: var(--muted-surface); padding: 14px; }
+.os-cloud-shell .portfolio-publish-overview strong { font-size: 19px; line-height: 1.2; overflow-wrap: anywhere; }
+.os-cloud-shell .portfolio-publish-overview span { color: var(--muted-foreground); font-size: 12px; }
+.os-cloud-shell .portfolio-publish-attention { border-left: 5px solid var(--foreground); background: var(--warning); padding: 12px 14px; color: var(--warning-foreground); font-size: 14px; line-height: 1.5; }
+.os-cloud-shell .portfolio-release-latest { color: var(--muted-foreground); font-size: 13px; }
+.os-cloud-shell .portfolio-live-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px; border: 2px solid var(--foreground); background: var(--success); padding: 15px; color: var(--success-foreground); }
+.os-cloud-shell .portfolio-live-actions > div { flex: 1 1 220px; }
+.os-cloud-shell .portfolio-live-actions p { margin: 4px 0 0; font-size: 13px; }
+.os-cloud-shell .portfolio-live-actions a { color: inherit; font-weight: 850; }
+.os-cloud-shell .portfolio-live-actions form { margin: 0; }
+.os-cloud-shell .portfolio-release-form { display: grid; gap: 22px; margin-top: 24px; }
+.os-cloud-shell .portfolio-release-form fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
+.os-cloud-shell .portfolio-release-form legend,
+.os-cloud-shell .portfolio-release-form h3 { margin: 0 0 7px; padding: 0; font-size: 18px; font-weight: 900; }
+.os-cloud-shell .portfolio-release-form p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.os-cloud-shell .portfolio-release-choice-list { display: grid; gap: 8px; }
+.os-cloud-shell .portfolio-release-choice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; min-width: 0; border: 2px solid var(--foreground); background: var(--card); padding: 12px; }
+.os-cloud-shell .portfolio-release-choice.is-blocked { background: var(--muted-surface); }
+.os-cloud-shell .portfolio-release-choice label { display: flex; align-items: center; flex: 1 1 240px; gap: 12px; min-width: 0; cursor: pointer; }
+.os-cloud-shell .portfolio-release-choice label:has(input:disabled) { cursor: default; }
+.os-cloud-shell .portfolio-release-choice input { flex: none; width: 20px; height: 20px; margin: 0; }
+.os-cloud-shell .portfolio-release-choice label > span { display: grid; gap: 3px; min-width: 0; }
+.os-cloud-shell .portfolio-release-choice strong { overflow-wrap: anywhere; }
+.os-cloud-shell .portfolio-release-choice small { color: var(--muted-foreground); font-size: 12px; }
+.os-cloud-shell .portfolio-release-choice a { font-size: 13px; font-weight: 850; }
+.os-cloud-shell .portfolio-release-issues { display: grid; flex: 1 1 100%; gap: 6px; margin: 0 0 0 31px; padding-left: 18px; }
+.os-cloud-shell .portfolio-release-issues li { line-height: 1.4; }
+.os-cloud-shell .portfolio-release-count { margin: 12px 0 0 !important; font-weight: 850; }
+.os-cloud-shell .portfolio-release-empty { border: 2px dashed var(--foreground); padding: 16px; }
+.os-cloud-shell .portfolio-release-next,
+.os-cloud-shell .portfolio-release-approval { border-top: 2px solid var(--foreground); padding-top: 20px; }
+.os-cloud-shell .portfolio-release-contact { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.os-cloud-shell .portfolio-release-contact label { display: grid; gap: 6px; min-width: 0; font-size: 13px; font-weight: 850; }
+.os-cloud-shell .portfolio-release-contact label span { font-weight: 500; }
+.os-cloud-shell .portfolio-release-contact input { width: 100%; min-width: 0; min-height: 44px; border: 2px solid var(--foreground); background: var(--card); padding: 8px 10px; color: var(--foreground); font: inherit; }
+.os-cloud-shell .portfolio-release-hint { margin-top: 12px !important; border-left: 4px solid var(--foreground); background: var(--warning); padding: 10px 12px; color: var(--warning-foreground); font-weight: 750; }
+.os-cloud-shell .portfolio-release-approval > label { display: flex; align-items: start; gap: 12px; border: 2px solid var(--foreground); background: var(--muted-surface); padding: 14px; font-weight: 750; line-height: 1.5; cursor: pointer; }
+.os-cloud-shell .portfolio-release-approval > label input { flex: none; width: 20px; height: 20px; margin-top: 2px; }
+.os-cloud-shell .portfolio-release-submit { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-top: 16px; }
+.os-cloud-shell .portfolio-release-submit button { min-height: 48px; padding: 10px 16px; }
+.os-cloud-shell .portfolio-release-submit button:disabled { box-shadow: none; cursor: not-allowed; opacity: .55; }
+.os-cloud-shell .portfolio-release-submit small { flex: 1 1 240px; color: var(--muted-foreground); line-height: 1.4; }
 .os-cloud-shell .portfolio-taxonomy :focus-visible,
 .os-cloud-shell .portfolio-bulk-form :focus-visible,
-.os-cloud-shell .portfolio-item-form :focus-visible { outline: 3px solid var(--foreground); outline-offset: 3px; }
+.os-cloud-shell .portfolio-item-form :focus-visible,
+.os-cloud-shell .portfolio-publish :focus-visible,
+.os-cloud-shell .portfolio-item-details > summary:focus-visible { outline: 3px solid var(--foreground); outline-offset: 3px; }
 @media (max-width: 680px) {
   .os-cloud-shell .portfolio-taxonomy-grid,
   .os-cloud-shell .portfolio-item-form,
-  .os-cloud-shell .video-poster-choices { grid-template-columns: 1fr; }
+  .os-cloud-shell .video-poster-choices,
+  .os-cloud-shell .portfolio-steps,
+  .os-cloud-shell .portfolio-publish-overview,
+  .os-cloud-shell .portfolio-release-contact { grid-template-columns: 1fr; }
   .os-cloud-shell .portfolio-draft-heading { flex-direction: column; }
+  .os-cloud-shell .portfolio-label-create,
+  .os-cloud-shell .portfolio-label-row form { align-items: stretch; flex-direction: column; }
+  .os-cloud-shell .portfolio-release-submit button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

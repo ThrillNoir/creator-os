@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { isVideoPortfolioItem, suggestedLinkedPreviewAssetId } from "../src/lib/portfolio-video.ts";
 import { privatePortfolioImageObjectId } from "../src/lib/portfolio-preview.ts";
 import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
+import { portfolioPublicationReadiness } from "../src/lib/portfolio-publication-readiness.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 
@@ -81,4 +82,21 @@ test("bulk category selection is bounded and rejects duplicate or malformed IDs"
   assert.throws(() => portfolioBulkAssetIds(Array.from({ length: 51 }, (_, index) => `asset-${index}`)), /between 1 and 50/);
   assert.throws(() => portfolioBulkAssetIds(["asset-a", "asset-a"]), /once/);
   assert.throws(() => portfolioBulkAssetIds(["asset-a", "../other"]), /between 1 and 50/);
+});
+
+test("publication choices explain missing category and preview before approval", () => {
+  const image = { asset_id: "image-a", title: "Image", safety: "nsfw", source_available: 1, category_id: null,
+    preview_asset_id: null, preview_poster_r2_key: null, preview_r2_key: "private-preview.jpg", extension: "jpg", video_state: null };
+  assert.deepEqual(portfolioPublicationReadiness(image, []), {
+    ready: false, message: "Choose a category", issues: [{ message: "Choose a category", href: "#portfolio-item-image-a" }],
+  });
+  assert.equal(portfolioPublicationReadiness({ ...image, category_id: "category-a" }, []).ready, true);
+
+  const video = { ...image, asset_id: "full-a", extension: "mp4", category_id: "category-a", preview_asset_id: "preview-a" };
+  const teaser = [{ id: "preview-a", is_teaser: 1, teaser_for_asset_id: "full-a" }];
+  assert.equal(portfolioPublicationReadiness({ ...video, category_id: null, preview_asset_id: null }, []).issues.length, 2);
+  assert.ok(portfolioPublicationReadiness(video, []).issues.some((issue) => /Link and mark/.test(issue.message)));
+  assert.ok(portfolioPublicationReadiness(video, teaser).issues.some((issue) => /thumbnail/.test(issue.message)));
+  assert.equal(portfolioPublicationReadiness({ ...video, preview_poster_r2_key: "private-poster.jpg" }, teaser).ready, true);
+  assert.equal(portfolioPublicationReadiness({ ...video, source_available: 0 }, teaser).ready, false);
 });
