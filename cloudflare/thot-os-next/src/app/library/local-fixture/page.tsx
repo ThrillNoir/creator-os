@@ -68,7 +68,7 @@ export default async function LibraryLocalFixture({ searchParams }: { searchPara
       <section className="panel classification-panel"><h2>Review &amp; tag this asset</h2><p>Choose NSFW if appropriate and save classification before adding this preview.</p>
         <form action={saveSyntheticClassification}><AttributeFields asset={asset} /><button className="primary wide" type="submit">Save classification</button></form>
       </section></div>
-    <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit
+    <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit savedSafety={asset.safety}
       action={toggleSyntheticPortfolio} portfolioHref={`/portfolio/local-fixture?${portfolioQuery}`}
       categories={[{ id: clipCategoryId, name: "Clips" }, { id: photoCategoryId, name: "Photo sets" }]}
       fullVideos={[{ id: fullVideoId, basename: "Private full video.mp4" }]}

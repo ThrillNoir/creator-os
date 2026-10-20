@@ -15,6 +15,7 @@ export function AttributeFields({ asset, multiFields }: { asset?: AssetRow; mult
   function chooseSafety(next: "sfw" | "nsfw") {
     const value = safety === next ? "" : next;
     setSafety(value);
+    if (asset?.id) window.dispatchEvent(new CustomEvent("thot-os:classification-safety-changed", { detail: { assetId: asset.id, safety: value } }));
     if (value === "nsfw") setSelected((current) => new Set([...current].filter((destination) => nsfwDestinations.has(destination))));
   }
 
