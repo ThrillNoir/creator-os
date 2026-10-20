@@ -45,23 +45,21 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger records applied drafts and the pending Portfolio release migration", () => {
+test("reviewed staging ledger records the applied Portfolio release migration", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 68);
+  assert.equal(ledger.migrations.length, 69);
   assert.deepEqual(ledger.migrations.slice(-6).map(({ remoteId, name }) => ({ remoteId, name })), [
-    { remoteId: 63, name: "0061_creator_booking_module.sql" },
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
     { remoteId: 65, name: "0063_content_download_links.sql" },
     { remoteId: 66, name: "0064_content_download_message.sql" },
     { remoteId: 67, name: "0065_content_download_sales.sql" },
     { remoteId: 68, name: "0066_creator_portfolio_drafts.sql" },
+    { remoteId: 69, name: "0067_creator_portfolio_releases.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name, sha256 }) => ({ name, sha256 })), [
-    { name: "0067_creator_portfolio_releases.sql", sha256: "b8d16dd823195609252853817eeef381651d4d040af8d07982b5617bc3d34ac6" },
-  ]);
+  assert.deepEqual(ledger.pendingMigrations, []);
   assert.equal(inventory.at(-1).name, "0067_creator_portfolio_releases.sql");
   assert.equal(inventory.at(-1).sha256, "b8d16dd823195609252853817eeef381651d4d040af8d07982b5617bc3d34ac6");
   assert.deepEqual(inventory[56], {
