@@ -45,23 +45,22 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger records applied Portfolio releases and pending preview-first migration", () => {
+test("reviewed staging ledger records applied Portfolio releases and preview-first migration", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 69);
-  assert.deepEqual(ledger.migrations.slice(-6).map(({ remoteId, name }) => ({ remoteId, name })), [
+  assert.equal(ledger.migrations.length, 70);
+  assert.deepEqual(ledger.migrations.slice(-7).map(({ remoteId, name }) => ({ remoteId, name })), [
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
     { remoteId: 65, name: "0063_content_download_links.sql" },
     { remoteId: 66, name: "0064_content_download_message.sql" },
     { remoteId: 67, name: "0065_content_download_sales.sql" },
     { remoteId: 68, name: "0066_creator_portfolio_drafts.sql" },
     { remoteId: 69, name: "0067_creator_portfolio_releases.sql" },
+    { remoteId: 70, name: "0068_portfolio_preview_first.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name, sha256 }) => ({ name, sha256 })), [
-    { name: "0068_portfolio_preview_first.sql", sha256: "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764" },
-  ]);
+  assert.deepEqual(ledger.pendingMigrations, []);
   assert.equal(inventory.at(-1).name, "0068_portfolio_preview_first.sql");
   assert.equal(inventory.at(-1).sha256, "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764");
   assert.deepEqual(inventory[56], {

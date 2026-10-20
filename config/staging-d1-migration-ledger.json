@@ -395,13 +395,13 @@
       "sha256": "b8d16dd823195609252853817eeef381651d4d040af8d07982b5617bc3d34ac6",
       "purpose": "Applied approved bounded staging migration: explicit creator-scoped Portfolio release approval, state, and audit events.",
       "remoteId": 69
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0068_portfolio_preview_first.sql",
       "sha256": "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764",
-      "purpose": "Pending additive staging migration: preview-first private Portfolio fields and creator-scoped full-video links; legacy full-video rows remain unchanged for review."
+      "purpose": "Applied approved bounded staging migration: additive preview-first private Portfolio fields and creator-scoped full-video links; legacy full-video rows remain unchanged for review.",
+      "remoteId": 70
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
