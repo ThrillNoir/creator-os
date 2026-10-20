@@ -93,7 +93,8 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, ca
           : <div className="portfolio-preview-grid portfolio-editor-grid">{cards.map((card, index) => <article className="portfolio-preview-card portfolio-editable-card" key={card.assetId}>
             {canEdit && <label className="portfolio-preview-select"><input type="checkbox" checked={selected.includes(card.assetId)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, card.assetId] : current.filter((id) => id !== card.assetId))} />Select</label>}
             <div className="portfolio-preview-image">{card.video
-              ? <VerifiedVideoPreview assetId={card.assetId} basename={card.basename} className="portfolio-preview-media" poster={card.imageUrl ?? undefined} />
+              ? synthetic ? <img src={card.imageUrl ?? ""} alt={`Synthetic preview poster for ${card.title}`} />
+                : <VerifiedVideoPreview assetId={card.assetId} basename={card.basename} className="portfolio-preview-media" poster={card.imageUrl ?? undefined} />
               : card.imageUrl ? <img src={card.imageUrl} alt={`Private draft preview for ${card.title}`} loading="lazy" /> : <span>Preview preparing</span>}</div>
             <div className="portfolio-preview-card-body"><span className={issues[index].startsWith("Ready") ? "portfolio-readiness is-ready" : "portfolio-readiness"}>{issues[index]}</span>
               <h3>{card.title}</h3><small>{categories.find((category) => category.id === card.categoryId)?.name ?? "Category needed"}</small>
@@ -106,7 +107,7 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, ca
                   {fullVideos.filter((video) => video.id !== card.assetId).map((video) => <option value={video.id} key={video.id}>{video.basename}</option>)}</select></label>
                 <p className="portfolio-field-note">A linked full video stays private. Visitors can only request it using your contact method.</p>
                 <button type="button" className="danger-action" onClick={() => { setCards((current) => current.filter((item) => item.assetId !== card.assetId)); setSelected((current) => current.filter((id) => id !== card.assetId)); }}>Remove from draft</button>
-                <Link href={`/library/${encodeURIComponent(card.assetId)}`}>Review Library item →</Link></div>
+                <Link href={synthetic ? "/library/local-fixture?safety=nsfw&added=1" : `/library/${encodeURIComponent(card.assetId)}`}>Review Library item →</Link></div>
                 {card.video && !synthetic && (!dirty ? <div className="portfolio-poster-step"><VideoPosterEditor assetId={card.assetId} label="Clip thumbnail" posterUrl={card.imageUrl} /><small>Thumbnail saves privately in the Library. Publish again to change the live thumbnail.</small></div>
                   : <small>Save this draft before changing a clip thumbnail.</small>)}
               </details>}

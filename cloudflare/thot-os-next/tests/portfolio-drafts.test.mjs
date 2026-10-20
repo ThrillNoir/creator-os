@@ -7,6 +7,7 @@ import { isVideoPortfolioItem, suggestedLinkedPreviewAssetId } from "../src/lib/
 import { privatePortfolioImageObjectId } from "../src/lib/portfolio-preview.ts";
 import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
 import { portfolioPublicationReadiness } from "../src/lib/portfolio-publication-readiness.ts";
+import { portfolioLibraryEligible } from "../src/lib/portfolio-library-eligibility.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 const previewFirstMigration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0068_portfolio_preview_first.sql", import.meta.url)), "utf8");
@@ -151,4 +152,12 @@ test("publication readiness accepts a preview-only card without a full-length li
   assert.equal(portfolioPublicationReadiness({ ...video, preview_r2_key: null }).issues[0].message, "Choose a thumbnail for this short clip");
   assert.equal(portfolioPublicationReadiness(video).ready, true);
   assert.equal(portfolioPublicationReadiness({ ...video, source_available: 0 }).ready, false);
+});
+
+test("Library Add to Portfolio appears only for verified 18+ preview formats", () => {
+  const clip = { safety: "nsfw", media_authority_state: "canonical_verified", extension: "mp4", video_codec: "h264" };
+  assert.equal(portfolioLibraryEligible(clip), true);
+  assert.equal(portfolioLibraryEligible({ ...clip, safety: null }), false);
+  assert.equal(portfolioLibraryEligible({ ...clip, video_codec: "h265" }), false);
+  assert.equal(portfolioLibraryEligible({ ...clip, media_authority_state: "ingesting" }), false);
 });

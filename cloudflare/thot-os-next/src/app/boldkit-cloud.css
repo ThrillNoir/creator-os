@@ -369,7 +369,7 @@ body {
 .os-cloud-shell .portfolio-bulk-toolbar button[disabled] { cursor: not-allowed; opacity: .5; }
 .os-cloud-shell .portfolio-bulk-hint { margin: 10px 18px 0; font-size: 12px; }
 .os-cloud-shell .portfolio-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 14px; padding: 18px; }
-.os-cloud-shell .portfolio-editor-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
+.os-cloud-shell .portfolio-editor-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); align-items: start; }
 .os-cloud-shell .portfolio-editable-card { overflow: visible; }
 .os-cloud-shell .portfolio-editable-card .portfolio-preview-image { aspect-ratio: 16 / 10; }
 .os-cloud-shell .portfolio-card-controls { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--foreground); padding-top: 10px; }

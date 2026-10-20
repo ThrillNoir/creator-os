@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/app-shell";
@@ -9,15 +10,16 @@ function swatch(color: string, label: string) {
 
 async function fixtureAction(_form: FormData) { "use server"; }
 
-export default async function PortfolioLocalFixture() {
+export default async function PortfolioLocalFixture({ searchParams }: { searchParams: Promise<{ from?: string }> }) {
   const host = (await headers()).get("host") ?? "";
   if (process.env.NODE_ENV !== "development" || !/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) ||
     process.env.PORTFOLIO_SYNTHETIC_PREVIEW !== "1") notFound();
+  const fromLibrary = (await searchParams).from === "library";
   const categories = [{ id: "11111111-1111-4111-8111-111111111111", name: "Clips", sort_order: 0 },
     { id: "22222222-2222-4222-8222-222222222222", name: "Photo sets", sort_order: 1 }];
   const cards = [
     { assetId: "synthetic-preview-1", basename: "Synthetic short clip.mp4", title: "A short clip", description: "A quick look at the collection.",
-      categoryId: categories[0].id, fullLengthAssetId: null, video: true, legacy: false, safety: "nsfw" as const,
+      categoryId: fromLibrary ? null : categories[0].id, fullLengthAssetId: null, video: true, legacy: false, safety: "nsfw" as const,
       sourceAvailable: true, mediaReady: true, previewKey: "synthetic-poster-1", imageUrl: swatch("#ffb0cc", "SYNTHETIC CLIP") },
     { assetId: "synthetic-photo-2", basename: "Synthetic portrait.jpg", title: "Portrait preview", description: "A sample photo card.",
       categoryId: categories[1].id, fullLengthAssetId: "synthetic-private-full", video: false, legacy: false, safety: "nsfw" as const,
@@ -25,8 +27,9 @@ export default async function PortfolioLocalFixture() {
   ];
   return <div className="os-cloud-shell"><main className="workspace" style={{ marginLeft: 0, maxWidth: 1440 }}>
     <PageHeader title="Portfolio" eyebrow="LOCAL SYNTHETIC FIXTURE" subtitle="This local review page uses invented cards and cannot publish or save real data." />
-    <p className="portfolio-publish-attention">Synthetic review only. Buttons run no-op local actions.</p>
-    <PortfolioEditor creatorName="Example Creator" revision={0} cards={cards} categories={categories}
+    <p className="portfolio-publish-attention">Synthetic review only. Buttons run no-op local actions; no creator data is saved or published. {fromLibrary ? "This card represents the clip just selected in the synthetic Library view." : ""}</p>
+    {fromLibrary && <Link className="secondary-action" href="/library/local-fixture?safety=nsfw&added=1">← Back to synthetic Library asset</Link>}
+    <PortfolioEditor creatorName="Example Creator" revision={0} cards={fromLibrary ? cards.slice(0, 1) : cards} categories={categories}
       fullVideos={[{ id: "synthetic-private-full", basename: "Private full video.mp4" }]} canEdit publishingEnabled profileReady
       saveAction={fixtureAction} publishAction={fixtureAction} createCategoryAction={fixtureAction} renameCategoryAction={fixtureAction} synthetic />
   </main></div>;
