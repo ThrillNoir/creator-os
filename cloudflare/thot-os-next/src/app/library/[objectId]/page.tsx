@@ -14,7 +14,7 @@ import { NativeImagePreviewRetry } from "@/components/native-image-preview-retry
 import { headers } from "next/headers";
 import { ContentLinkForm } from "@/components/content-link-form";
 import { cloudflareEnv } from "@/lib/cloudflare";
-import { getPortfolioItem } from "@/lib/portfolio-authoring";
+import { getPortfolioAddChoices, getPortfolioItem } from "@/lib/portfolio-authoring";
 import { togglePortfolioItemAction } from "@/app/portfolio/actions";
 import { VideoPosterEditor } from "@/components/video-poster-editor";
 import { PortfolioLibraryControl } from "@/components/portfolio-library-control";
@@ -39,7 +39,11 @@ export default async function AssetPage({ params, searchParams }: { params: Prom
   if (!asset) notFound();
   const portfolioEnabled = String((cloudflareEnv() as { PORTFOLIO_AUTHORING_ENABLED?: string }).PORTFOLIO_AUTHORING_ENABLED) === "1";
   const portfolioAvailable = portfolioLibraryEligible(asset);
-  const [friends, attached, events, portfolioItem] = await Promise.all([getCreatorFriends(creatorId), getAttachedFriends(creatorId, asset.id), getAssetEvents(creatorId, asset.id), portfolioEnabled ? getPortfolioItem(creatorId, asset.id) : Promise.resolve(null)]);
+  const [friends, attached, events, portfolioItem, portfolioChoices] = await Promise.all([
+    getCreatorFriends(creatorId), getAttachedFriends(creatorId, asset.id), getAssetEvents(creatorId, asset.id),
+    portfolioEnabled ? getPortfolioItem(creatorId, asset.id) : Promise.resolve(null),
+    portfolioEnabled && canMutate && portfolioAvailable ? getPortfolioAddChoices(creatorId) : Promise.resolve({ categories: [], fullVideos: [] }),
+  ]);
   const query = await searchParams;
   const previewId = objectIdFor(asset);
   const video = asset.video_state !== null;
@@ -57,6 +61,8 @@ export default async function AssetPage({ params, searchParams }: { params: Prom
     <div className="asset-detail"><section className="panel detail-preview">{video ? <>{asset.video_state === "playback_ready" && <PrivateStreamPlayer assetId={asset.id} />}{canPreviewVerifiedVideo(asset.video_state) ? <><VerifiedVideoPreview assetId={asset.id} basename={asset.basename} poster={posterUrl} /><p>The original is available for review. If your browser cannot play this format, download it to review locally.</p>{asset.video_state !== "playback_ready" && <p>{asset.playback_failure_code === "stream_submission_uncertain" ? "Browser playback preparation needs checking. Your upload is safe; do not re-upload or retry preparation yet." : "Browser-compatible playback is not ready yet. You can still review and save tags."}</p>}<p>File checksum supplied by uploader; server checked size, container and storage identity.</p><a className="secondary-action" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a></> : <p>The private video is still uploading or unavailable for review.</p>}</> : previewId ? <img src={`/api/preview/${previewId}`} alt={asset.basename} /> : <><p>{asset.media_state === "preview_failed" ? "Private preview is unavailable. You can still save tags." : "Preview preparing. You can still save tags."}</p>{previewRecovery && <NativeImagePreviewRetry sessionId={previewRecovery.id} />}</>}</section><section className="panel classification-panel"><h2>{canMutate ? "Review & tag this asset" : "Classification"}</h2>{canMutate ? <><p>Saving marks this review complete and records your changes.</p><form action={saveAssetAttributesAction}><input type="hidden" name="assetId" value={asset.id} /><input type="hidden" name="returnTo" value={`/library/${objectId}`} /><AttributeFields asset={asset} multiFields={<CreatorFriendFields friends={friends} attached={attached} />} /><button className="primary wide" type="submit">Save classification</button></form></> : <><p>Viewer access is read-only.</p><dl className="account-details"><div><dt>Safety</dt><dd>{asset.safety ?? "Needs review"}</dd></div><div><dt>Destinations</dt><dd>{asset.destinations ? asset.destinations.split("|").join(", ") : "None assigned"}</dd></div><div><dt>People</dt><dd>{asset.is_multi ? `${attached.length} attached creator${attached.length === 1 ? "" : "s"}` : "Creator only"}</dd></div></dl></>}</section></div>
     {posterAvailable && <section className="panel library-video-poster"><VideoPosterEditor assetId={asset.id} posterUrl={posterUrl} /></section>}
     {portfolioEnabled && <PortfolioLibraryControl assetId={asset.id} selected={Boolean(portfolioItem)} available={portfolioAvailable} canEdit={canMutate} action={togglePortfolioItemAction}
+      selectedCategoryName={portfolioItem?.category_name} selectedFullLengthName={portfolioItem?.full_length_basename}
+      categories={portfolioChoices.categories} fullVideos={portfolioChoices.fullVideos}
       blockedReason={asset.safety !== "nsfw" ? "Only a correctly classified 18+ preview can be added. Save its classification first." : undefined} />}
     <section className="panel history"><h2>Asset use &amp; change history</h2><p>Classification, consent and future publication activity will appear here.</p>{events.length ? events.map((event) => <article key={event.id}><div><strong>{event.event_type.replaceAll("_"," ")}</strong><small>{event.actor} · {new Date(event.created_at).toLocaleString("en-AU")}</small></div><span>{eventSummary(event.snapshot)}</span></article>) : <div className="empty">No cloud changes recorded yet.</div>}</section>
     {(localContentLinks || stagingContentLinks) && canMutate && video && <ContentLinkForm assetId={asset.id} eligibility={[

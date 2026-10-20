@@ -66,6 +66,23 @@ export async function getPortfolioDraft(creatorId: string) {
 
 export async function getPortfolioItem(creatorId: string, assetId: string) {
   return creatorPrepare(cloudflareEnv().DB, creatorId,
-    "SELECT asset_id,category_id,genre_id,preview_asset_id,full_length_asset_id,title,description,sort_order FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id=?")
-    .bind(assetId).first<Pick<PortfolioDraftItem, "asset_id" | "category_id" | "genre_id" | "preview_asset_id" | "full_length_asset_id" | "title" | "description" | "sort_order">>();
+    `SELECT p.asset_id,p.category_id,p.genre_id,p.preview_asset_id,p.full_length_asset_id,p.title,p.description,p.sort_order,
+      category.name AS category_name,full.basename AS full_length_basename
+      FROM creator_portfolio_items p
+      LEFT JOIN creator_portfolio_categories category ON category.id=p.category_id AND category.creator_id=p.creator_id
+      LEFT JOIN assets full ON full.id=p.full_length_asset_id AND full.creator_id=p.creator_id
+      WHERE p.creator_id=@creator AND p.asset_id=?`)
+    .bind(assetId).first<Pick<PortfolioDraftItem, "asset_id" | "category_id" | "genre_id" | "preview_asset_id" | "full_length_asset_id" | "title" | "description" | "sort_order" | "full_length_basename"> & { category_name: string | null }>();
+}
+
+export async function getPortfolioAddChoices(creatorId: string) {
+  const DB = cloudflareEnv().DB;
+  const [categories, fullVideos] = await DB.batch([
+    creatorPrepare(DB, creatorId, "SELECT id,name,sort_order FROM creator_portfolio_categories WHERE creator_id=@creator ORDER BY sort_order,name,id").bind(),
+    creatorPrepare(DB, creatorId, `SELECT a.id,a.basename FROM assets a
+      JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+      WHERE a.creator_id=@creator AND a.source_available=1 AND lower(a.extension)='mp4'
+        AND ma.state IN ('canonical_verified','preview_ready','preview_failed') ORDER BY a.basename,a.id LIMIT 200`).bind(),
+  ]);
+  return { categories: categories.results as PortfolioLabel[], fullVideos: fullVideos.results as { id: string; basename: string }[] };
 }

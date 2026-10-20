@@ -47,7 +47,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
     {query.notice === "publication_started" && <p className="success" role="status">Publication started. The current layout is being checked before it goes live.</p>}
     {query.notice === "withdrawal_started" && <p className="success" role="status">Withdrawal started. Refresh to confirm removal from your More page.</p>}
     <div className="panel portfolio-workspace-intro"><h2>Build your More page</h2>
-      <p>Open a photo or short clip in the Content Library and choose <strong>Add to portfolio</strong>. Arrange it here. A private full-length video can be linked to a preview, but its file is never shown on More.</p>
+      <p>Open a photo or short clip in the Content Library, choose <strong>Add to Portfolio</strong>, set its category and optionally link a private full-length video, then save once. Return here to arrange cards or approve publication. The full video is never shown on More.</p>
       <Link className="secondary-action" href="/library">Open Content Library →</Link></div>
     <PortfolioEditor key={JSON.stringify([draft.revision, ...draft.items.map((item) => item.preview_r2_key)])} creatorName={context.creator.creator_name} revision={draft.revision} cards={cards}
       categories={draft.categories} fullVideos={draft.fullVideos} canEdit={roleCan(context.creator.role, "mutate")}

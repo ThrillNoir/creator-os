@@ -397,5 +397,11 @@
       "remoteId": 69
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0068_portfolio_preview_first.sql",
+      "sha256": "7c36b6705fa64dba4c99f55a64f95d7427e75e1550f144f9d471a4fbb3abcb72",
+      "purpose": "Pending reviewed staging migration: preview-first private Portfolio drafts and creator-scoped full-video links."
+    }
+  ]
 }

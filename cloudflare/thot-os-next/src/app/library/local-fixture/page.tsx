@@ -6,8 +6,13 @@ import { PageHeader } from "@/components/app-shell";
 import { PortfolioLibraryControl } from "@/components/portfolio-library-control";
 import type { AssetRow } from "@/lib/library";
 import { portfolioLibraryEligible } from "@/lib/portfolio-library-eligibility";
+import { portfolioAddFields } from "@/lib/portfolio-add-fields";
 
 const assetId = "synthetic-preview-1";
+const clipCategoryId = "11111111-1111-4111-8111-111111111111";
+const photoCategoryId = "22222222-2222-4222-8222-222222222222";
+const newCategoryId = "33333333-3333-4333-8333-333333333333";
+const fullVideoId = "synthetic-private-full";
 
 function syntheticPoster() {
   return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="650" viewBox="0 0 1000 650"><rect width="1000" height="650" fill="#f5b2ce"/><rect x="175" y="105" width="650" height="440" fill="#271c30" stroke="#17121f" stroke-width="12"/><circle cx="500" cy="325" r="92" fill="#f5b2ce"/><path d="M477 269v112l89-56z" fill="#271c30"/><text x="500" y="598" text-anchor="middle" font-size="35" font-family="sans-serif" fill="#17121f">SYNTHETIC SHORT CLIP</text></svg>`)}`;
@@ -24,16 +29,30 @@ async function toggleSyntheticPortfolio(form: FormData) {
   if (form.get("assetId") !== assetId) throw new Error("Unknown synthetic asset.");
   const intent = String(form.get("intent") ?? "");
   if (intent !== "add" && intent !== "remove") throw new Error("Choose a synthetic action.");
-  redirect(`/library/local-fixture?safety=nsfw${intent === "add" ? "&added=1" : ""}`);
+  if (intent === "remove") redirect("/library/local-fixture?safety=nsfw");
+  const fields = portfolioAddFields(form, assetId);
+  if (fields.categoryId && fields.categoryId !== clipCategoryId && fields.categoryId !== photoCategoryId) throw new Error("Choose a synthetic category.");
+  if (fields.fullLengthAssetId && fields.fullLengthAssetId !== fullVideoId) throw new Error("Choose the synthetic private video.");
+  const query = new URLSearchParams({ safety: "nsfw", added: "1", categoryId: fields.categoryId ?? newCategoryId });
+  if (fields.newCategoryName) query.set("newCategoryName", fields.newCategoryName);
+  if (fields.fullLengthAssetId) query.set("fullLengthAssetId", fields.fullLengthAssetId);
+  redirect(`/library/local-fixture?${query}`);
 }
 
-export default async function LibraryLocalFixture({ searchParams }: { searchParams: Promise<{ safety?: string; added?: string }> }) {
+export default async function LibraryLocalFixture({ searchParams }: { searchParams: Promise<{ safety?: string; added?: string; categoryId?: string; newCategoryName?: string; fullLengthAssetId?: string }> }) {
   const host = (await headers()).get("host") ?? "";
   if (process.env.NODE_ENV !== "development" || !/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) ||
     process.env.PORTFOLIO_SYNTHETIC_PREVIEW !== "1") notFound();
   const query = await searchParams;
   const safety = query.safety === "nsfw" || query.safety === "sfw" ? query.safety : null;
   const selected = safety === "nsfw" && query.added === "1";
+  const categoryId = query.categoryId === clipCategoryId || query.categoryId === photoCategoryId || query.categoryId === newCategoryId ? query.categoryId : clipCategoryId;
+  const newCategoryName = categoryId === newCategoryId && query.newCategoryName && query.newCategoryName.length <= 50 && !/[<>]/.test(query.newCategoryName) ? query.newCategoryName : "New category";
+  const categoryName = categoryId === clipCategoryId ? "Clips" : categoryId === photoCategoryId ? "Photo sets" : newCategoryName;
+  const fullLengthAssetId = query.fullLengthAssetId === fullVideoId ? fullVideoId : null;
+  const portfolioQuery = new URLSearchParams({ from: "library", categoryId });
+  if (categoryId === newCategoryId) portfolioQuery.set("newCategoryName", newCategoryName);
+  if (fullLengthAssetId) portfolioQuery.set("fullLengthAssetId", fullLengthAssetId);
   const asset: AssetRow = {
     id: assetId, creator_id: "synthetic-creator", basename: "Synthetic short clip.mp4", extension: "mp4", bytes: 8 * 1024 * 1024,
     modified_at: "2026-10-20", creator_notes: "", preview_r2_key: "synthetic-only", safety,
@@ -50,9 +69,12 @@ export default async function LibraryLocalFixture({ searchParams }: { searchPara
         <form action={saveSyntheticClassification}><AttributeFields asset={asset} /><button className="primary wide" type="submit">Save classification</button></form>
       </section></div>
     <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit
-      action={toggleSyntheticPortfolio} portfolioHref="/portfolio/local-fixture?from=library"
+      action={toggleSyntheticPortfolio} portfolioHref={`/portfolio/local-fixture?${portfolioQuery}`}
+      categories={[{ id: clipCategoryId, name: "Clips" }, { id: photoCategoryId, name: "Photo sets" }]}
+      fullVideos={[{ id: fullVideoId, basename: "Private full video.mp4" }]}
+      selectedCategoryName={selected ? categoryName : null} selectedFullLengthName={selected && fullLengthAssetId ? "Private full video.mp4" : null}
       blockedReason={safety !== "nsfw" ? "Only a correctly classified 18+ preview can be added. Save its classification first." : undefined} />
-    {selected && <p className="success" role="status">Synthetic preview selected. Open Portfolio layout to set its category and optional private full-length link.</p>}
+    {selected && <p className="success" role="status">Synthetic preview, category and optional private full-length link saved together. Open Portfolio only if you want to edit the layout or publish later.</p>}
     <section className="panel history"><h2>Asset use &amp; change history</h2><div className="empty"><b>No activity in this synthetic fixture.</b><span>Real Library events remain private in THOT OS.</span></div></section>
   </main></div>;
 }

@@ -8,6 +8,7 @@ import { privatePortfolioImageObjectId } from "../src/lib/portfolio-preview.ts";
 import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
 import { portfolioPublicationReadiness } from "../src/lib/portfolio-publication-readiness.ts";
 import { portfolioLibraryEligible } from "../src/lib/portfolio-library-eligibility.ts";
+import { portfolioAddFields } from "../src/lib/portfolio-add-fields.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 const previewFirstMigration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0068_portfolio_preview_first.sql", import.meta.url)), "utf8");
@@ -160,4 +161,44 @@ test("Library Add to Portfolio appears only for verified 18+ preview formats", (
   assert.equal(portfolioLibraryEligible({ ...clip, safety: null }), false);
   assert.equal(portfolioLibraryEligible({ ...clip, video_codec: "h265" }), false);
   assert.equal(portfolioLibraryEligible({ ...clip, media_authority_state: "ingesting" }), false);
+});
+
+test("Library add captures category and optional full video in one submission", () => {
+  const form = new FormData();
+  form.set("confirmAdd", "yes");
+  form.set("categoryChoice", "11111111-1111-4111-8111-111111111111");
+  form.set("fullLengthAssetId", "full-a");
+  assert.deepEqual(portfolioAddFields(form, "preview-a"), {
+    categoryId: "11111111-1111-4111-8111-111111111111", newCategoryName: null, fullLengthAssetId: "full-a",
+  });
+  form.set("categoryChoice", "__new__");
+  form.set("newCategoryName", "  New   Clips  ");
+  form.delete("fullLengthAssetId");
+  assert.deepEqual(portfolioAddFields(form, "preview-a"), {
+    categoryId: null, newCategoryName: "New Clips", fullLengthAssetId: null,
+  });
+  form.set("fullLengthAssetId", "preview-a");
+  assert.throws(() => portfolioAddFields(form, "preview-a"), /separate private/);
+  form.delete("confirmAdd");
+  assert.throws(() => portfolioAddFields(form, "preview-a"), /Tick Add/);
+  form.set("confirmAdd", "yes");
+  form.set("categoryChoice", "other-creator-category");
+  assert.throws(() => portfolioAddFields(form, "preview-a"), /Choose a category/);
+});
+
+test("one Library save can persist a preview category and same-creator private full link", () => {
+  const db = fixture();
+  try {
+    db.exec(previewFirstMigration);
+    db.transaction(() => {
+      db.prepare("INSERT INTO creator_portfolio_categories(id,creator_id,name) VALUES ('category-a','creator-a','Clips')").run();
+      db.prepare(`INSERT INTO creator_portfolio_items
+        (asset_id,creator_id,title,category_id,full_length_asset_id,preview_confirmed,updated_by)
+        VALUES ('preview-a','creator-a','A short clip','category-a','full-a',1,'creator@example.invalid')`).run();
+    })();
+    assert.deepEqual(db.prepare("SELECT asset_id,category_id,full_length_asset_id,preview_confirmed FROM creator_portfolio_items").get(), {
+      asset_id: "preview-a", category_id: "category-a", full_length_asset_id: "full-a", preview_confirmed: 1,
+    });
+    assert.throws(() => db.prepare("UPDATE creator_portfolio_items SET full_length_asset_id='full-b' WHERE asset_id='preview-a'").run(), /portfolio_full_asset_creator_mismatch/);
+  } finally { db.close(); }
 });

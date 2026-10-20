@@ -7,6 +7,7 @@ import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { getPortfolioDraft } from "@/lib/portfolio-authoring";
 import { fetchInternalService } from "@/lib/internal-service";
+import { portfolioAddFields } from "@/lib/portfolio-add-fields";
 
 const ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const LABEL_ID = /^[0-9a-f-]{36}$/i;
@@ -38,17 +39,43 @@ export async function togglePortfolioItemAction(form: FormData) {
   const creatorId = context.creator.creator_id;
   const assetId = field(form, "assetId");
   if (!ASSET_ID.test(assetId)) throw new Error("Choose a Library item.");
+  const intent = field(form, "intent");
+  if (intent !== "add" && intent !== "remove") throw new Error("Choose whether to add or remove this Library item.");
   const DB = portfolioDb();
   const existing = await creatorPrepare(DB, creatorId,
     "SELECT asset_id FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id=?")
     .bind(assetId).first<{ asset_id: string }>();
-  if (existing) {
+  if (intent === "remove") {
+    if (!existing) throw new Error("This preview is no longer in the private Portfolio draft. Refresh the Library item.");
     await DB.batch([
       creatorPrepare(DB, creatorId, "DELETE FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id=?").bind(assetId),
       creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_draft_state SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator").bind(),
       audit(DB, creatorId, context.email, "item_removed", assetId, {}),
     ]);
   } else {
+    if (existing) throw new Error("This preview is already in the private Portfolio draft. Refresh the Library item.");
+    const fields = portfolioAddFields(form, assetId);
+    const categoryId = fields.categoryId ?? crypto.randomUUID();
+    if (fields.categoryId) {
+      const category = await creatorPrepare(DB, creatorId, "SELECT id FROM creator_portfolio_categories WHERE creator_id=@creator AND id=?")
+        .bind(fields.categoryId).first<{ id: string }>();
+      if (!category) throw new Error("Choose this creator's category.");
+    } else {
+      const count = await creatorPrepare(DB, creatorId, "SELECT COUNT(*) AS count FROM creator_portfolio_categories WHERE creator_id=@creator")
+        .first<{ count: number }>();
+      if ((count?.count ?? 0) >= 24) throw new Error("This Portfolio already has 24 categories. Choose an existing one.");
+      const duplicate = await creatorPrepare(DB, creatorId, "SELECT id FROM creator_portfolio_categories WHERE creator_id=@creator AND name=? COLLATE NOCASE")
+        .bind(fields.newCategoryName).first<{ id: string }>();
+      if (duplicate) throw new Error("This category already exists. Choose it from the list.");
+    }
+    if (fields.fullLengthAssetId) {
+      const full = await creatorPrepare(DB, creatorId, `SELECT a.id FROM assets a
+        JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
+        WHERE a.creator_id=@creator AND a.id=? AND a.source_available=1 AND lower(a.extension)='mp4'
+          AND ma.state IN ('canonical_verified','preview_ready','preview_failed')`)
+        .bind(fields.fullLengthAssetId).first<{ id: string }>();
+      if (!full) throw new Error("Choose this creator's verified private full-length video.");
+    }
     const asset = await creatorPrepare(DB, creatorId, `SELECT a.basename FROM assets a
       JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id AND c.safety='nsfw'
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
@@ -61,12 +88,17 @@ export async function togglePortfolioItemAction(form: FormData) {
     if (!asset) throw new Error("This creator's verified Library item is unavailable.");
     const title = asset.basename.replace(/\.[^.]+$/, "").trim().slice(0, 100) || "Untitled preview";
     await DB.batch([
+      ...(fields.newCategoryName ? [creatorPrepare(DB, creatorId, `INSERT INTO creator_portfolio_categories
+        (id,creator_id,name,sort_order) VALUES (?,@creator,?,
+        COALESCE((SELECT MAX(sort_order)+1 FROM creator_portfolio_categories WHERE creator_id=@creator),0))`)
+        .bind(categoryId, fields.newCategoryName),
+        audit(DB, creatorId, context.email, "category_created", null, { id: categoryId, name: fields.newCategoryName })] : []),
       creatorPrepare(DB, creatorId, `INSERT INTO creator_portfolio_items
-        (asset_id,creator_id,title,preview_confirmed,sort_order,updated_by) VALUES (?,@creator,?,1,
+        (asset_id,creator_id,title,category_id,full_length_asset_id,preview_confirmed,sort_order,updated_by) VALUES (?,@creator,?,?,?,1,
         COALESCE((SELECT MAX(sort_order)+1 FROM creator_portfolio_items WHERE creator_id=@creator),0),?)`)
-        .bind(assetId, title, context.email),
+        .bind(assetId, title, categoryId, fields.fullLengthAssetId, context.email),
       creatorPrepare(DB, creatorId, "UPDATE creator_portfolio_draft_state SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator").bind(),
-      audit(DB, creatorId, context.email, "item_added", assetId, {}),
+      audit(DB, creatorId, context.email, "item_added", assetId, { categoryId, fullLengthLinked: Boolean(fields.fullLengthAssetId) }),
     ]);
   }
   revalidatePath("/library");

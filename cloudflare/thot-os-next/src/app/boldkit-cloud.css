@@ -446,6 +446,17 @@ body {
 .os-cloud-shell .portfolio-library-control > div { flex: 1 1 220px; }
 .os-cloud-shell .portfolio-library-control h2 { margin: 0 0 5px; }
 .os-cloud-shell .portfolio-library-control p { margin: 0; }
+.os-cloud-shell .portfolio-library-control .portfolio-library-add-flow { flex-basis: 100%; border-top: 1px solid var(--foreground); padding-top: 14px; }
+.os-cloud-shell .portfolio-library-add-toggle { display: flex; align-items: center; gap: 10px; width: fit-content; font-weight: 850; cursor: pointer; }
+.os-cloud-shell .portfolio-library-add-toggle input { width: 22px; height: 22px; accent-color: var(--primary); }
+.os-cloud-shell .portfolio-library-add-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; padding: 16px; border: 2px solid var(--foreground); background: var(--muted-surface); }
+.os-cloud-shell .portfolio-library-add-form label { display: grid; gap: 5px; min-width: 0; font-weight: 800; }
+.os-cloud-shell .portfolio-library-add-form label span { font-weight: 500; }
+.os-cloud-shell .portfolio-library-add-form :is(input:not([type="hidden"]),select) { width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 2px solid var(--foreground); background: var(--card); color: var(--foreground); font: inherit; }
+.os-cloud-shell .portfolio-library-add-form p { grid-column: 1 / -1; font-size: 13px; }
+.os-cloud-shell .portfolio-library-add-form button { grid-column: 1 / -1; width: fit-content; }
+.os-cloud-shell .portfolio-library-saved-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 620px) { .os-cloud-shell .portfolio-library-add-form { grid-template-columns: minmax(0, 1fr); } }
 .os-cloud-shell .portfolio-publish-note { border-color: var(--foreground); background: var(--warning); color: var(--warning-foreground); }
 .os-cloud-shell .portfolio-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; padding: 0; list-style: none; }
 .os-cloud-shell .portfolio-steps li { display: grid; align-content: start; gap: 6px; min-width: 0; border: 2px solid var(--foreground); background: var(--muted-surface); padding: 14px; }
