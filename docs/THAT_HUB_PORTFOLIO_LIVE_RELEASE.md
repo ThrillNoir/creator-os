@@ -1,85 +1,81 @@
-# That Hub portfolio live release target
+# That Hub Portfolio release
 
-Status: source assessment, 19 October 2026. The creator portfolio has **not**
-been deployed. The current implementation is a synthetic local fixture.
+Status: local release candidate, 20 October 2026. No D1 migration, service grant,
+Worker, or media has been released by this worktree. The existing THOT OS private
+Portfolio draft is already on staging; the live More site still has no published
+Portfolio. The older synthetic preview remains a local fixture only.
 
-## Destination
+## User flow
 
-- Creator management belongs in the existing authenticated THOT OS application
-  at `https://thot-os-staging.thot-os.workers.dev/`. Add an **Add to portfolio**
-  control to the creator's Library item, with a portfolio workspace in that
-  application for categories, genres, order, preview, publish and withdrawal.
-  Reuse its Access identity and creator membership checks. Do not create a
-  That Hub `/dashboard/portfolio` route.
-- Proposed visitor destination: published previews appear on the existing
-  age-gated `https://more.thathuboverthere.com/<creator-slug>` page. The safe
-  `https://www.thathuboverthere.com/<creator-slug>/more` route already hands off
-  to that page. Neither the safe profile nor an unauthenticated request exposes
-  the previews.
-- The Workers currently named `*-staging` serve those live That Hub domains.
-  The separately named production public-links Worker is route-less. Release
-  plans must name the actual domains and Workers, not infer audience from the
-  Worker name.
+1. A creator adds items from the THOT OS Content Library and edits categories,
+   genres, order and visual draft in the 18+ Portfolio workspace.
+2. For a full video, the creator links a separate H.264 MP4 teaser to that
+   video in the Library and chooses its thumbnail. A release accepts a teaser
+   only when its MP4 timeline is at most 60 seconds and its file is at most
+   64 MB. Both original and teaser must pass creator, rights and recorded
+   consent checks.
+3. The creator selects up to 24 ready cards, optionally sets a Telegram username
+   and/or email address, confirms public preview rights and consent, and presses
+   **Approve and publish**. This records an immutable approval in D1. An
+   authenticated control Workflow copies approved previews and thumbnails to
+   the isolated adult R2 bucket, then writes a versioned adult KV projection.
+4. A visitor on `https://more.thathuboverthere.com/<slug>` sees the published
+   cards only after a valid age session. Media is served from the adult bucket
+   through session-bound routes. Full Library originals and authoring keys stay
+   private. For a full-length request, the visitor supplies a name and reviews
+   a prepared Telegram or email message in their own app; there is no inbox,
+   payment or download entitlement in this release.
+5. **Withdraw public Portfolio** removes the projection first, then the isolated
+   media. A retry is available if withdrawal stalls. The existing 15-minute
+   control cron rechecks source rights and consent and retries withdrawal.
 
-## What is ready
+## Actual boundary
 
-The local fixture proves layout, filtering, native preview playback, selection,
-ordering, explicit publish/withdraw, two-creator isolation in fixture state,
-and preparation of a Telegram or email message for a full-length clip. The
-fixture's categories and genres are fixed examples; creator-defined taxonomy
-and Library controls have not been built. The deployed adult gateway has no
-portfolio loader or publisher. The fixture media
-paths are local-only and its media server exists only on `127.0.0.1`.
-Redeploying the current Worker would not publish the portfolio.
-The current public-links control registry also limits adult-profile publication
-to the synthetic `adelaide` creator ID; it does not authorize a general creator
-portfolio launch.
+The Worker named `thot-os-adult-gateway-staging` serves the live
+`more.thathuboverthere.com` domain. `thot-os-public-links-control-staging` uses
+staging D1 and the isolated adult KV/R2 resources for that live public reuse.
+Its publication policy currently admits only the declared `adelaide` creator.
+The canonical THOT OS manager is `thot-os-staging`. These names must not be
+mistaken for a private preview audience.
 
-## Smallest useful live slice
+## Release order and checks
 
-1. Add **Add to portfolio** to the THOT OS Library item. Its toggle changes a
-   private draft selection, not the live More page. Add a creator-scoped
-   portfolio workspace in THOT OS where the creator defines categories and
-   genres, applies them to selected items, orders them, previews the result,
-   explicitly publishes, and withdraws. Store these definitions and states in
-   D1 and use the existing Access identity and active creator membership;
-   never accept creator ID from a form field. Viewer access stays read-only.
-2. Link each chosen preview to its full private asset **inside the control
-   plane**. Validate same-creator ownership, rights, consent for anyone shown,
-   and an explicit approval for this adult public preview. The existing
-   `teaser_for_asset_id` column is only a starting point; application code does
-   not yet use it.
-3. Publish the creator's category and genre labels, ordered cards and approved
-   preview derivatives into an allowlisted projection and isolated adult
-   delivery storage. The adult gateway reads only that projection and serves
-   only those derivatives after a valid age session.
-   Withdrawal or revoked consent must prevent a new origin fetch. No original
-   Library URL, authoring R2 key, or full asset ID enters public HTML.
-4. Configure a creator-approved Telegram username or email address for the
-   full-length message draft. The visitor reviews and sends it in their own
-   app. The direct-contact feature needs no THOT OS inbox, payment flow, or
-   download entitlement. The separate local custom-request form must be
-   omitted until it has a real private delivery path.
-5. Extend the publication policy deliberately for real creator accounts only
-   after the preceding checks are enforced. Keep the existing SFW profile and
-   adult portfolio projections separate.
+All remote actions require their existing exact release plans and receipts. The
+candidate is scoped to the declared Adelaide live-public reuse; it does not
+touch production resources, social schedulers, booking, or Git remotes.
 
-## Release checks
+1. Verify the clean candidate commit and D1 ledger checksum. Back up staging D1
+   and apply only `0067_creator_portfolio_releases.sql` through the bounded D1
+   runner. Confirm its tables, trigger, index and migration receipt.
+2. Apply `config/service-auth-portfolio-capability-patch.staging.json` to the
+   existing Adelaide web service principal. This grants only
+   `adult.portfolio.publish` and `adult.portfolio.withdraw`; no token or secret
+   write is required.
+3. Release `thot-os-public-links-control-staging` with its existing private
+   service endpoint, new Workflows, and read access to the existing private
+   preview and Library R2 buckets. Confirm no public route was added.
+4. Release `thot-os-staging` web. Its publish UI and classification guard require
+   migration 0067. Confirm creator and viewer roles and an empty/unpublished
+   Portfolio state.
+5. Release `thot-os-adult-gateway-staging` only after its exact plan names
+   `more.thathuboverthere.com`. Confirm the age gate and absence of a live
+   Portfolio before any creator approval. A creator must then complete and
+   explicitly approve a real selection; this code release does not publish any
+   existing private draft or media automatically.
+6. Verify a complete approved card on the live age-gated domain: thumbnail,
+   MP4 range playback, creator labels, full-length contact choice,
+   second-creator denial, unaged denial, and withdrawal of a fresh request.
+   Keep the release receipt and checks with the deployment record.
 
-Test an authorized creator and a second creator, missing/invalid Access token,
-viewer role, cross-creator category/genre use, wrong creator asset, absent
-consent, withdrawn preview, stale profile version, absent media object, and
-missing contact destination with
-local fixtures first. Verify the THOT OS manager denies an unauthenticated user
-and the More page denies an unaged visitor. Confirm an approved preview plays,
-its full original cannot be fetched from public routes, and withdrawal blocks a
-fresh request.
-Run package checks plus repository `npm run lint` and `npm run build` after code
-changes. Review the exact route, bindings, media-copy behavior, and rollback
-before replacing traffic on the live That Hub domains.
+If the gateway release must be rolled back, withdraw the current KV projection
+first so an older gateway cannot show stale media. D1 migration 0067 is additive;
+rollback does not require deleting private draft or release history. Any newly
+copied adult preview objects remain isolated until withdrawal or cleanup.
 
-No live deploy is safe from this fixture alone: the THOT OS Library toggle,
-D1-backed creator definitions and selection, approved derivative
-publication/delivery, and real creator contact destination are absent; the
-current publication policy is synthetic only. This is an implementation
-inventory, not a new approval requirement.
+## Local evidence and limits
+
+Gateway and control package suites pass locally; THOT OS lint/build and focused
+Portfolio tests pass. A generated one-second H.264 MP4 passes the timeline
+validator. No creator session or live provider was used. Actual Adelaide release
+still needs a selected teaser, thumbnail, recorded rights/consent and an explicit
+creator approval; the code cannot infer those facts from a Library item.

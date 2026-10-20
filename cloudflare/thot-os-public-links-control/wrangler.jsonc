@@ -54,6 +54,14 @@
     {
       "binding": "ADULT_MEDIA",
       "bucket_name": "thot-os-adult-media-staging"
+    },
+    {
+      "binding": "PREVIEWS",
+      "bucket_name": "thot-os-previews-staging"
+    },
+    {
+      "binding": "LIBRARY_MEDIA",
+      "bucket_name": "thot-os-library-media-staging"
     }
   ],
   "workflows": [
@@ -76,6 +84,16 @@
       "name": "thot-os-adult-profile-withdraw-staging",
       "binding": "ADULT_PROFILE_WITHDRAW",
       "class_name": "AdultProfileWithdrawWorkflow"
+    },
+    {
+      "name": "thot-os-adult-portfolio-publish-staging",
+      "binding": "PORTFOLIO_PUBLISH",
+      "class_name": "PortfolioPublishWorkflow"
+    },
+    {
+      "name": "thot-os-adult-portfolio-withdraw-staging",
+      "binding": "PORTFOLIO_WITHDRAW",
+      "class_name": "PortfolioWithdrawWorkflow"
     }
   ],
   "send_email": [

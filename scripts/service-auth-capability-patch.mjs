@@ -19,6 +19,11 @@ const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const patchIdPattern = /^[a-z0-9][a-z0-9-]{2,100}$/i;
 const patchPolicies = {
+  "staging-adult-portfolio-capabilities-v1": {
+    principalName: "thot-os-web-public-links",
+    creatorId: "adelaide",
+    capabilities: ["adult.portfolio.publish", "adult.portfolio.withdraw"],
+  },
   "staging-adult-profile-capabilities-v1": {
     principalName: "thot-os-web-public-links",
     creatorId: "adelaide",
@@ -118,7 +123,16 @@ export function validateCapabilityPatch({ patch, activation, contract, registry 
     throw new Error("Capability patch scope does not match its approved exact capability pair.");
   }
   const canonicalKeys = activationGrantKeys(activation);
-  if (!grants.every((grant) => canonicalKeys.has(grantKey(grant)))) throw new Error("Capability patch grants must also be present in the canonical staging activation manifest.");
+  if (patch.patchId === "staging-adult-portfolio-capabilities-v1") {
+    // The new capabilities did not exist at the historical activation. Keep
+    // that record unchanged and bind this exact patch to its existing scoped
+    // web principal and Adelaide grant instead.
+    if (!canonicalKeys.has(grantKey({ principalName: "thot-os-web-public-links", creatorId: "adelaide", capability: "adult.profile.publish" }))) {
+      throw new Error("Portfolio capability patch requires the activated Adelaide public-links principal.");
+    }
+  } else if (!grants.every((grant) => canonicalKeys.has(grantKey(grant)))) {
+    throw new Error("Capability patch grants must also be present in the canonical staging activation manifest.");
+  }
   return { principals, grants };
 }
 

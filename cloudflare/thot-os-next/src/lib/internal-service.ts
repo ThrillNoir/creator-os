@@ -6,7 +6,8 @@ export type InternalServiceCapability =
   | "reddit.status.read" | "reddit.connection.manage" | "reddit.communities.read" | "reddit.publish.execute"
   | "telegram.status.read" | "telegram.connection.manage" | "telegram.messages.sync" | "telegram.messages.write"
   | "public.profile.publish" | "public.profile.withdraw"
-  | "adult.profile.publish" | "adult.profile.withdraw";
+  | "adult.profile.publish" | "adult.profile.withdraw"
+  | "adult.portfolio.publish" | "adult.portfolio.withdraw";
 
 const tokenKey: Record<InternalService, keyof CloudflareEnv> = {
   instagram: "INTERNAL_INSTAGRAM_SCHEDULER_TOKEN",

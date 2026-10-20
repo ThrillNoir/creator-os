@@ -15,6 +15,7 @@ import {
   createPortfolioCategoryAction, createPortfolioGenreAction,
   renamePortfolioCategoryAction, renamePortfolioGenreAction,
   savePortfolioItemAction, assignPortfolioCategoryAction,
+  publishPortfolioAction, withdrawPortfolioAction,
 } from "./actions";
 
 export default async function PortfolioPage() {
@@ -22,6 +23,15 @@ export default async function PortfolioPage() {
   const context = await requireCreatorContext();
   const draft = await getPortfolioDraft(context.creator.creator_id);
   const canEdit = roleCan(context.creator.role, "mutate");
+  const publishingEnabled = String((cloudflareEnv() as { PORTFOLIO_PUBLISHING_ENABLED?: string }).PORTFOLIO_PUBLISHING_ENABLED) === "1";
+  const releases = publishingEnabled ? await cloudflareEnv().DB.prepare(`SELECT r.id,r.status,r.approved_at,r.published_at,r.withdrawn_at,r.failure_code,c.slug
+    FROM creator_portfolio_release_versions r JOIN creators c ON c.id=r.creator_id
+    WHERE r.creator_id=? ORDER BY r.approved_at DESC,r.id DESC LIMIT 10`)
+    .bind(context.creator.creator_id).all<{ id: string; status: string; approved_at: string; published_at: string | null; withdrawn_at: string | null; failure_code: string | null; slug: string }>() : { results: [] };
+  const publishedRelease = releases.results.find((release) => release.status === "published" || release.status === "withdrawing");
+  const readyItems = draft.items.filter((item) => item.safety === "nsfw" && item.source_available && item.category_id &&
+    (isVideoPortfolioItem(item) ? Boolean(item.preview_asset_id && item.preview_poster_r2_key &&
+      draft.teasers.some((teaser) => teaser.id === item.preview_asset_id && teaser.is_teaser === 1 && teaser.teaser_for_asset_id === item.asset_id)) : Boolean(item.preview_r2_key)));
   const previewCards = draft.items.map((item) => {
     const category = draft.categories.find((label) => label.id === item.category_id)?.name;
     const genre = draft.genres.find((label) => label.id === item.genre_id)?.name;
@@ -58,6 +68,13 @@ export default async function PortfolioPage() {
           {canEdit && isVideoPortfolioItem(item) && item.preview_asset_id && <div id={`poster-${item.asset_id}`}><VideoPosterEditor assetId={item.preview_asset_id} label="Short preview thumbnail" posterUrl={(() => { const id = privatePortfolioImageObjectId(item.preview_poster_r2_key); return id ? `/api/preview/${id}` : null; })()} /></div>}</article>;
       }) : <div className="empty"><b>No portfolio items selected.</b><span>Add one from a Library item to start a private draft.</span></div>}
     </section>
-    <section className="panel portfolio-publish-note"><h2>Publishing is not active yet</h2><p>This staging candidate saves private creator choices. The public release control will be enabled only when approved preview media, consent checks, isolated delivery and withdrawal have been verified. Nothing on this page is automatically posted to More.</p></section>
+    <section className="panel portfolio-publish-note"><h2>Publish to your More page</h2><p>Choose the previews you want visitors to see. Only approved copies of these previews and thumbnails go to the age-gated page. Full videos stay private. Consent, the linked short clip and source integrity are checked again during release.</p>
+      {publishedRelease && <div><p><strong>Portfolio release ({publishedRelease.status}):</strong> {publishedRelease.published_at ?? publishedRelease.approved_at}</p><a href={`https://more.thathuboverthere.com/age/${publishedRelease.slug}`} target="_blank" rel="noreferrer">Open age-gated More page ↗</a>{canEdit && <form action={withdrawPortfolioAction}><input type="hidden" name="versionId" value={publishedRelease.id} /><button type="submit">{publishedRelease.status === "withdrawing" ? "Retry withdrawal" : "Withdraw public Portfolio"}</button></form>}</div>}
+      {canEdit && publishingEnabled ? <form action={publishPortfolioAction} className="portfolio-release-form"><fieldset><legend>Previews to publish</legend>{draft.items.map((item) => {
+        const ready = readyItems.some((candidate) => candidate.asset_id === item.asset_id);
+        return <label key={item.asset_id}><input type="checkbox" name="assetIds" value={item.asset_id} defaultChecked={ready} disabled={!ready} /><span>{item.title} · {ready ? "ready for release checks" : isVideoPortfolioItem(item) && item.preview_asset_id ? "Link and mark the short clip as a teaser in the Library" : portfolioItemReadiness(item)}</span></label>;
+      })}</fieldset><p>{readyItems.length} item{readyItems.length === 1 ? "" : "s"} ready for release checks. Short video previews must be separate linked H.264 MP4 clips of no more than 60 seconds and 64 MB. Incomplete items remain private.</p><div className="portfolio-taxonomy-grid"><label>Telegram username <span>(optional for image-only selections)</span><input name="telegramUsername" placeholder="@creatorname" maxLength={33} /></label><label>Contact email <span>(optional for image-only selections)</span><input name="email" type="email" maxLength={254} /></label></div><p>Add at least one contact method when publishing a video. Visitors can choose the methods you enter and review the prepared message in their own app.</p><label><input type="checkbox" name="publicRightsApproved" value="yes" required /> I confirm that I have the right to publish each selected preview and thumbnail on the public 18+ More page, and that everyone shown has consented.</label><button type="submit" disabled={!readyItems.length}>Approve and publish selected previews</button></form> : <p>{publishingEnabled ? "Your role cannot publish a Portfolio." : "Public Portfolio release is being prepared. Your draft remains private."}</p>}
+      {releases.results.length > 0 && <p>Latest release: {releases.results[0].status}{releases.results[0].failure_code === "preview_duration_failed" ? " · Short preview exceeds 60 seconds or has an unreadable timeline." : releases.results[0].status === "failed" ? " · Release checks failed; review rights, media and consent before trying again." : ""} · {releases.results[0].approved_at}</p>}
+    </section>
   </AppShell>;
 }

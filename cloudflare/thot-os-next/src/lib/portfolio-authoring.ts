@@ -22,7 +22,7 @@ export type PortfolioDraftItem = {
   preview_r2_key: string | null;
   video_state: string | null;
 };
-export type PortfolioTeaser = { id: string; basename: string; video_state: string; teaser_for_asset_id: string | null };
+export type PortfolioTeaser = { id: string; basename: string; video_state: string; teaser_for_asset_id: string | null; is_teaser: number | null };
 
 export function portfolioItemReadiness(item: PortfolioDraftItem) {
   if (!item.source_available) return "Original unavailable";
@@ -51,7 +51,7 @@ export async function getPortfolioDraft(creatorId: string) {
       LEFT JOIN assets preview ON preview.id=p.preview_asset_id AND preview.creator_id=p.creator_id
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE p.creator_id=@creator ORDER BY p.sort_order,p.created_at,p.asset_id`).bind(),
-    creatorPrepare(DB, creatorId, `SELECT a.id,a.basename,vp.state AS video_state,c.teaser_for_asset_id
+    creatorPrepare(DB, creatorId, `SELECT a.id,a.basename,vp.state AS video_state,c.teaser_for_asset_id,c.is_teaser
       FROM assets a JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
       JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       LEFT JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id

@@ -1,5 +1,5 @@
 import { livePublicHostGuard } from "../../shared/live-public-host.ts";
-import { portfolioCss, renderPortfolio, validPortfolio, type PortfolioProjection } from "./portfolio.ts";
+import { portfolioCss, renderPortfolio, validPortfolio, validLivePortfolio, type LivePortfolioCard, type PortfolioProjection } from "./portfolio.ts";
 
 type AdultProfile = {
   schemaVersion: 1 | 2 | 3 | 4;
@@ -37,6 +37,7 @@ function fromBase64(value: string) {
 }
 
 function profileKey(slug: string) { return `adult-profile:${slug}`; }
+function portfolioKey(slug: string) { return `adult-portfolio:${slug}`; }
 
 function hasOnlyKeys(value: object, keys: readonly string[]) {
   return Object.keys(value).every((key) => keys.includes(key));
@@ -211,6 +212,32 @@ function validAdultMediaObject(object: R2ObjectBody, profile: AdultProfile, medi
     && hexChecksum(object.checksums.sha256) === media.checksum;
 }
 
+function validPortfolioObject(object: R2Object, profile: AdultProfile, portfolio: PortfolioProjection & { schemaVersion: 2 }, card: LivePortfolioCard, kind: "preview" | "poster") {
+  const expectedType = kind === "poster" || card.kind === "image" ? "image/jpeg" : "video/mp4";
+  const expectedChecksum = kind === "poster" ? card.posterChecksum : card.checksum;
+  const metadata = object.customMetadata;
+  return object.httpMetadata?.contentType === expectedType && metadata?.surface === "adult_portfolio"
+    && metadata.creatorSlug === profile.creator.slug && metadata.profileVersionId === profile.publishedVersionId
+    && metadata.portfolioVersionId === portfolio.portfolioVersionId && metadata.cardId === card.id
+    && metadata.kind === kind && metadata.checksum === expectedChecksum
+    && hexChecksum(object.checksums.sha256) === expectedChecksum;
+}
+
+function portfolioRange(header: string | null, size: number) {
+  if (!header) return null;
+  const match = /^bytes=(\d+)-(\d*)$/.exec(header);
+  if (!match) return "invalid" as const;
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || end >= size) return "invalid" as const;
+  return { offset: start, length: end - start + 1 };
+}
+
+async function currentPortfolio(env: Env, slug: string, profileVersionId: string) {
+  const value = await env.ADULT_PROFILES.get(portfolioKey(slug), "json");
+  return validLivePortfolio(value, slug, profileVersionId) ? value : null;
+}
+
 function gate(profile: AdultProfile, siteKey: string) {
   const name = profile.creator.displayName ? `More from ${escapeHtml(profile.creator.displayName)}` : "More from this creator";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name}</title><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><style>body{font:16px/1.5 system-ui,sans-serif;background:#100c16;color:#fbf8fe;margin:0}.card{max-width:32rem;margin:3rem auto;padding:1.25rem}button,a{font:inherit;padding:.8rem 1rem;border-radius:.55rem}.yes{border:0;background:#c5a4ff;color:#170c24;font-weight:700;width:100%}.no{display:block;color:inherit;text-align:center;margin-top:.8rem}</style></head><body><main class="card"><h1>Are you 18 or older?</h1><p>This area may contain adult-oriented creator links and images.</p><form method="post" action="/age/${encodeURIComponent(profile.creator.slug)}/confirm"><div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="adult_access"></div><button class="yes" type="submit">Yes, continue</button></form><a class="no" href="${escapeHtml(profile.creator.safeProfileUrl)}">No, go back</a></main></body></html>`;
@@ -235,7 +262,7 @@ return {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
-    const liveSlug = parts[0] === "age" || parts[0] === "media" || parts[0] === "r" ? parts[1] : parts[0];
+    const liveSlug = parts[0] === "age" || parts[0] === "media" || parts[0] === "r" || parts[0] === "portfolio-media" ? parts[1] : parts[0];
     const guarded = livePublicHostGuard(request, env, "adult", liveSlug);
     if (guarded) return guarded;
     if (request.method === "GET" && parts.length === 2 && parts[0] === "age" && SLUG.test(parts[1])) {
@@ -261,13 +288,56 @@ return {
       if (!profile || !await validSession(request, profile, env)) return page("Not found", 404);
       event(env, profile, "adult_profile_view");
       let portfolio: PortfolioProjection | undefined;
-      if (loadPortfolio) {
+      {
         try {
-          const candidate = await loadPortfolio(profile.creator.slug, profile.publishedVersionId);
+          const candidate = loadPortfolio
+            ? await loadPortfolio(profile.creator.slug, profile.publishedVersionId)
+            : await currentPortfolio(env, profile.creator.slug, profile.publishedVersionId);
           if (validPortfolio(candidate, profile.creator.slug, profile.publishedVersionId)) portfolio = candidate;
         } catch { /* A portfolio outage cannot bypass the age gate or break the profile. */ }
       }
       return page(adultPage(profile, portfolio, url));
+    }
+    if (request.method === "GET" && parts.length === 4 && parts[0] === "portfolio-media" && SLUG.test(parts[1]) && ITEM_ID.test(parts[2]) && (parts[3] === "preview" || parts[3] === "poster")) {
+      const profile = await loadProfile(env, parts[1]);
+      if (!profile || !await validSession(request, profile, env)) return page("Not found", 404);
+      const portfolio = await currentPortfolio(env, parts[1], profile.publishedVersionId);
+      const card = portfolio?.cards.find((item) => item.id === parts[2]);
+      const kind = parts[3] as "preview" | "poster";
+      if (!portfolio || !card || (kind === "poster" && card.kind !== "video")) return page("Not found", 404);
+      const key = kind === "poster" ? card.posterKey! : card.mediaKey;
+      const head = await env.ADULT_MEDIA.head(key);
+      if (!head || !validPortfolioObject(head, profile, portfolio, card, kind)) return page("Not found", 404);
+      const range = card.kind === "video" && kind === "preview" ? portfolioRange(request.headers.get("range"), head.size) : null;
+      if (range === "invalid") return new Response(null, { status: 416, headers: { ...securityHeaders(), "content-range": `bytes */${head.size}`, "accept-ranges": "bytes" } });
+      const object = await env.ADULT_MEDIA.get(key, { onlyIf: { etagMatches: head.etag }, ...(range ? { range } : {}) });
+      if (!object || !("body" in object) || !validPortfolioObject(object, profile, portfolio, card, kind)) return page("Not found", 404);
+      event(env, profile, "adult_portfolio_media_view", card.id);
+      const contentType = kind === "poster" || card.kind === "image" ? "image/jpeg" : "video/mp4";
+      return new Response(object.body, { status: range ? 206 : 200, headers: {
+        ...securityHeaders(), "content-type": contentType, "content-length": String(range?.length ?? head.size),
+        ...(contentType === "video/mp4" ? { "accept-ranges": "bytes" } : {}),
+        ...(range ? { "content-range": `bytes ${range.offset}-${range.offset + range.length - 1}/${head.size}` } : {}),
+      } });
+    }
+    if (request.method === "POST" && parts.length === 4 && SLUG.test(parts[0]) && parts[1] === "portfolio" && parts[2] === "full-length" && parts[3] === "request") {
+      const profile = await loadProfile(env, parts[0]);
+      if (!profile || !await validSession(request, profile, env) || request.headers.get("origin") !== url.origin) return page("Not found", 404);
+      const portfolio = await currentPortfolio(env, parts[0], profile.publishedVersionId);
+      if (!portfolio) return page("Not found", 404);
+      const form = await request.formData().catch(() => null);
+      const card = portfolio.cards.find((item) => item.id === form?.get("previewId") && item.kind === "video");
+      const name = String(form?.get("name") ?? "").trim();
+      const edited = String(form?.get("message") ?? "").trim();
+      const channel = String(form?.get("contactMethod") ?? "");
+      if (!card || !name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name) || edited.length < 10 || edited.length > 800) return page("Invalid request", 400);
+      const message = `${edited}\n\nFrom: ${name}`;
+      let destination: string | null = null;
+      if (channel === "telegram" && portfolio.contact.telegramUsername) destination = `https://t.me/${portfolio.contact.telegramUsername}?text=${encodeURIComponent(message)}`;
+      if (channel === "email" && portfolio.contact.email) destination = `mailto:${portfolio.contact.email}?subject=${encodeURIComponent(`Full-length request: ${card.title}`)}&body=${encodeURIComponent(message)}`;
+      if (!destination) return page("Contact method unavailable", 400);
+      event(env, profile, "adult_portfolio_contact_open", card.id);
+      return new Response(null, { status: 303, headers: { ...securityHeaders(), location: destination } });
     }
     if (request.method === "GET" && parts.length === 3 && parts[0] === "media" && SLUG.test(parts[1]) && ITEM_ID.test(parts[2])) {
       const profile = await loadProfile(env, parts[1]);

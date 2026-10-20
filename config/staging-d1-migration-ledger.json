@@ -391,5 +391,11 @@
       "remoteId": 68
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0067_creator_portfolio_releases.sql",
+      "sha256": "b8d16dd823195609252853817eeef381651d4d040af8d07982b5617bc3d34ac6",
+      "purpose": "Pending bounded staging migration: explicit creator-scoped Portfolio release approval, state, and audit events."
+    }
+  ]
 }

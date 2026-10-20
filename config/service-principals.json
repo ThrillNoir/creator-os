@@ -56,7 +56,9 @@
         "public.profile.publish",
         "public.profile.withdraw",
         "adult.profile.publish",
-        "adult.profile.withdraw"
+        "adult.profile.withdraw",
+        "adult.portfolio.publish",
+        "adult.portfolio.withdraw"
       ]
     }
   ]

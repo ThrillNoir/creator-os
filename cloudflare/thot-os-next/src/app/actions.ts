@@ -477,6 +477,12 @@ export async function saveAssetAttributesAction(formData: FormData) {
   const placeholders = assetIds.map(() => "?").join(",");
   const owned = await creatorPrepare(DB, creatorId, `SELECT id FROM assets WHERE creator_id=@creator AND source_available=1 AND id IN (${placeholders})`).bind(...assetIds).all<{ id: string }>();
   if (owned.results.length !== assetIds.length) throw new Error("One or more selected assets are unavailable.");
+  const livePortfolioUse = await creatorPrepare(DB, creatorId, `SELECT r.id FROM creator_portfolio_release_versions r,
+      json_each(r.manifest_json,'$.cards') card
+    WHERE r.creator_id=@creator AND r.status IN ('publishing','published','withdrawing')
+      AND (json_extract(card.value,'$.assetId') IN (${placeholders}) OR json_extract(card.value,'$.previewAssetId') IN (${placeholders}))
+    LIMIT 1`).bind(...assetIds, ...assetIds).first<{ id: string }>();
+  if (livePortfolioUse) throw new Error("Withdraw the public Portfolio and wait for withdrawal before changing a released item's classification or consent.");
 
   const replacePeople = formData.get("peopleMode") === "replace";
   const personIds = [...new Set(values(formData, "personId").map(Number).filter((value) => Number.isInteger(value) && value > 0))];

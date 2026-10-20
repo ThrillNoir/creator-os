@@ -11,6 +11,8 @@ test("staging publication control keeps SFW and adult projections in separate is
     { binding: "MEDIA", bucket_name: "thot-os-media-staging" },
     { binding: "PUBLIC_MEDIA", bucket_name: "thot-os-public-media-staging" },
     { binding: "ADULT_MEDIA", bucket_name: "thot-os-adult-media-staging" },
+    { binding: "PREVIEWS", bucket_name: "thot-os-previews-staging" },
+    { binding: "LIBRARY_MEDIA", bucket_name: "thot-os-library-media-staging" },
   ]);
   assert.deepEqual(config.kv_namespaces, [
     { binding: "PUBLIC_LINKS", id: "34a4601e8bbb4d3bb05656bf1f59c2c1" },
@@ -33,5 +35,7 @@ test("staging publication control keeps SFW and adult projections in separate is
     { binding: "PUBLIC_PROFILE_WITHDRAW", class_name: "PublicProfileWithdrawWorkflow" },
     { binding: "ADULT_PROFILE_PUBLISH", class_name: "AdultProfilePublishWorkflow" },
     { binding: "ADULT_PROFILE_WITHDRAW", class_name: "AdultProfileWithdrawWorkflow" },
+    { binding: "PORTFOLIO_PUBLISH", class_name: "PortfolioPublishWorkflow" },
+    { binding: "PORTFOLIO_WITHDRAW", class_name: "PortfolioWithdrawWorkflow" },
   ]);
 });

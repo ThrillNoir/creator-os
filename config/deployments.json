@@ -202,7 +202,7 @@
           "requiredSecrets": [],
           "resources": {
             "d1": ["thot-os-staging"],
-            "r2": ["thot-os-media-staging", "thot-os-public-media-staging", "thot-os-adult-media-staging"],
+            "r2": ["thot-os-media-staging", "thot-os-public-media-staging", "thot-os-adult-media-staging", "thot-os-previews-staging", "thot-os-library-media-staging"],
             "queues": [],
             "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a", "57d716b2562b4bb989e62482df6f6b19"],
             "analytics": [],

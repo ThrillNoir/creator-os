@@ -5,6 +5,8 @@ import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { publicationIsAllowed, publicationPolicy } from "./publication-policy.ts";
 import { markProjectionDeliveredFailClosed, writeProjectionFailClosed } from "./projection-delivery.ts";
+import { PortfolioPublishWorkflow, PortfolioWithdrawWorkflow, beginPortfolioWithdrawal, reconcilePublishedPortfolios, type PortfolioParams } from "./portfolio-release.ts";
+export { PortfolioPublishWorkflow, PortfolioWithdrawWorkflow };
 
 type PublishParams = { creatorId: string; profileId: string; versionId: string };
 type WithdrawParams = PublishParams;
@@ -765,6 +767,13 @@ function parsePublishParams(value: unknown): PublishParams | null {
   return { creatorId: input.creatorId, profileId: input.profileId, versionId: input.versionId };
 }
 
+function parsePortfolioParams(value: unknown): PortfolioParams | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Partial<PortfolioParams>;
+  if (typeof input.creatorId !== "string" || !CREATOR_ID.test(input.creatorId) || typeof input.versionId !== "string" || !RECORD_ID.test(input.versionId)) return null;
+  return { creatorId: input.creatorId, versionId: input.versionId };
+}
+
 const routes = {
   "/publish": { capability: "public.profile.publish", workflow: "PUBLIC_PROFILE_PUBLISH", prefix: "public-profile", surface: "public" },
   "/withdraw": { capability: "public.profile.withdraw", workflow: "PUBLIC_PROFILE_WITHDRAW", prefix: "public-profile-withdraw", surface: "public" },
@@ -779,10 +788,34 @@ function routePublicationPolicy(env: Env, surface: "public" | "adult") {
 }
 
 export default {
-  async scheduled(_event: ScheduledController, env: Env) { await purgeBookingReceipts(env); },
+  async scheduled(_event: ScheduledController, env: Env) {
+    await purgeBookingReceipts(env);
+    await reconcilePublishedPortfolios(env);
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/booking/")) return handleBooking(request, env);
+    if (request.method === "POST" && (url.pathname === "/adult/portfolio/publish" || url.pathname === "/adult/portfolio/withdraw")) {
+      const params = parsePortfolioParams(await request.clone().json().catch(() => null));
+      if (!params) return Response.json({ ok: false, error: "invalid_publication_request" }, { status: 400 });
+      const action = url.pathname.endsWith("/withdraw") ? "withdraw" : "publish";
+      try {
+        const service = await requireInternalServiceForCreator(request, env.DB, params.creatorId, "thot-os-web-public-links", `adult.portfolio.${action}`);
+        await internalServiceAuditStatement(env.DB, service, url.pathname).run();
+      } catch { return Response.json({ ok: false, error: "unauthorized" }, { status: 401 }); }
+      if (!publicationIsAllowed(routePublicationPolicy(env, "adult"), params.creatorId)) return Response.json({ ok: false, error: "publication_unavailable" }, { status: 503 });
+      try {
+        const workflow = action === "publish" ? env.PORTFOLIO_PUBLISH : env.PORTFOLIO_WITHDRAW;
+        if (!workflow || !env.PREVIEWS || !env.LIBRARY_MEDIA || !env.ADULT_MEDIA || !env.ADULT_PROFILES) throw new Error("portfolio_release_bindings_unavailable");
+        if (action === "withdraw") await beginPortfolioWithdrawal(env, params);
+        const instance = await workflow.create({ id: action === "withdraw" ? `adult-portfolio-withdraw-${params.versionId}-${crypto.randomUUID()}` : `adult-portfolio-publish-${params.versionId}`, params });
+        return Response.json({ ok: true, instanceId: instance.id }, { status: 202 });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "unknown";
+        if (/already exists|already.*instance/i.test(message)) return Response.json({ ok: true, duplicate: true }, { status: 202 });
+        return Response.json({ ok: false, error: "publication_unavailable" }, { status: 503 });
+      }
+    }
     const route = routes[url.pathname as keyof typeof routes];
     if (request.method !== "POST" || !route) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
     const params = parsePublishParams(await request.clone().json().catch(() => null));

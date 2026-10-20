@@ -7,6 +7,8 @@ import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { isVideoPortfolioItem } from "@/lib/portfolio-video";
 import { portfolioBulkAssetIds } from "@/lib/portfolio-bulk";
+import { getPortfolioDraft } from "@/lib/portfolio-authoring";
+import { fetchInternalService } from "@/lib/internal-service";
 
 const ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const LABEL_ID = /^[0-9a-f-]{36}$/i;
@@ -170,4 +172,75 @@ export async function savePortfolioItemAction(form: FormData) {
   ]);
   revalidatePath("/portfolio");
   redirect("/portfolio");
+}
+
+export async function publishPortfolioAction(form: FormData) {
+  const context = await requireCreatorContext("mutate");
+  const creatorId = context.creator.creator_id;
+  if (field(form, "publicRightsApproved") !== "yes") throw new Error("Confirm public preview rights and consent before publishing.");
+  const telegramUsername = field(form, "telegramUsername").replace(/^@/, "");
+  const email = field(form, "email");
+  if ((telegramUsername && !/^[A-Za-z0-9_]{5,32}$/.test(telegramUsername)) ||
+      (email && !/^[^\s@<>]{1,64}@[^\s@<>]{1,190}$/.test(email))) throw new Error("Check the Telegram username or contact email.");
+  const selectedIds = portfolioBulkAssetIds(form.getAll("assetIds"));
+  const env = cloudflareEnv();
+  const releaseEnv = env as CloudflareEnv & { PORTFOLIO_PUBLISHING_ENABLED?: string };
+  if (releaseEnv.PORTFOLIO_PUBLISHING_ENABLED !== "1") throw new Error("Portfolio publishing is not enabled in this environment.");
+  const profile = await creatorPrepare(env.DB, creatorId, `SELECT p.published_version_id,c.slug
+    FROM creator_adult_profiles p JOIN creators c ON c.id=p.creator_id
+    JOIN creator_adult_profile_versions v ON v.id=p.published_version_id AND v.creator_id=p.creator_id AND v.status='published'
+    WHERE p.creator_id=@creator AND p.status='active'`).first<{ published_version_id: string; slug: string }>();
+  if (!profile) throw new Error("Publish this creator's 18+ profile before publishing a portfolio.");
+  const draft = await getPortfolioDraft(creatorId);
+  const selected = selectedIds.map((id) => draft.items.find((item) => item.asset_id === id));
+  if (selected.length < 1 || selected.length > 24 || selected.some((item) => !item)) throw new Error("Select 1 to 24 items from this creator's portfolio.");
+  const cards = selected.map((item) => {
+    if (!item || item.safety !== "nsfw" || !item.source_available || !item.category_id || !item.title.trim()) throw new Error("Classify each selected item as NSFW and assign a category before publishing.");
+    const section = draft.categories.find((label) => label.id === item.category_id)?.name;
+    const genre = item.genre_id ? draft.genres.find((label) => label.id === item.genre_id)?.name : "";
+    if (!section || genre === undefined) throw new Error("A selected category or genre is unavailable.");
+    const video = isVideoPortfolioItem(item);
+    if (video && !draft.teasers.some((teaser) => teaser.id === item.preview_asset_id && teaser.is_teaser === 1 && teaser.teaser_for_asset_id === item.asset_id)) {
+      throw new Error("Mark the selected short preview as a teaser linked to this full video in the Library before publishing.");
+    }
+    const previewKey = video ? null : item.preview_r2_key;
+    const posterKey = video ? item.preview_poster_r2_key : null;
+    if ((video && (!item.preview_asset_id || !posterKey)) || (!video && !previewKey)) throw new Error("Choose a separate short video and thumbnail, or wait for the image preview, before publishing.");
+    return { id: crypto.randomUUID(), assetId: item.asset_id, previewAssetId: video ? item.preview_asset_id : null,
+      kind: video ? "video" as const : "image" as const, title: item.title, description: item.description,
+      section, genre, previewKey: video ? "" : previewKey!, posterKey };
+  });
+  if (cards.some((card) => card.kind === "video") && !telegramUsername && !email) {
+    throw new Error("Add a Telegram username or contact email so visitors can request a full-length video.");
+  }
+  const versionId = crypto.randomUUID();
+  const manifest = { schemaVersion: 1, contact: { ...(telegramUsername ? { telegramUsername } : {}), ...(email ? { email } : {}) }, cards };
+  const inserted = await creatorPrepare(env.DB, creatorId, `INSERT INTO creator_portfolio_release_versions
+    (id,creator_id,adult_profile_version_id,status,manifest_json,approved_by) VALUES (?,@creator,?,'approved',?,?)`)
+    .bind(versionId, profile.published_version_id, JSON.stringify(manifest), context.email).run();
+  if (!inserted.meta?.changes) throw new Error("The portfolio release approval could not be recorded.");
+  await creatorPrepare(env.DB, creatorId, `INSERT INTO creator_portfolio_release_events
+    (id,creator_id,release_version_id,actor,event_type,detail) VALUES (?,@creator,?,?,'approved',?)`)
+    .bind(crypto.randomUUID(), versionId, context.email, JSON.stringify({ cardCount: cards.length, publicRightsApproved: true })).run();
+  const response = await fetchInternalService(env, "public_links_control", "adult.portfolio.publish", env.PUBLIC_LINKS_CONTROL,
+    "https://public-links-control/adult/portfolio/publish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId, versionId }) });
+  if (response.status !== 202) throw new Error(`Portfolio publication control did not accept this request (${response.status}). The approved release remains private.`);
+  revalidatePath("/portfolio");
+  redirect("/portfolio?notice=publication_started");
+}
+
+export async function withdrawPortfolioAction(form: FormData) {
+  const context = await requireCreatorContext("mutate");
+  const creatorId = context.creator.creator_id;
+  const versionId = field(form, "versionId");
+  if (!LABEL_ID.test(versionId)) throw new Error("Choose a published portfolio release.");
+  const env = cloudflareEnv();
+  const release = await creatorPrepare(env.DB, creatorId, "SELECT id FROM creator_portfolio_release_versions WHERE creator_id=@creator AND id=? AND status IN ('published','withdrawing')")
+    .bind(versionId).first<{ id: string }>();
+  if (!release) throw new Error("This creator has no matching published portfolio release.");
+  const response = await fetchInternalService(env, "public_links_control", "adult.portfolio.withdraw", env.PUBLIC_LINKS_CONTROL,
+    "https://public-links-control/adult/portfolio/withdraw", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creatorId, versionId }) });
+  if (response.status !== 202) throw new Error(`Portfolio withdrawal control did not accept this request (${response.status}).`);
+  revalidatePath("/portfolio");
+  redirect("/portfolio?notice=withdrawal_started");
 }

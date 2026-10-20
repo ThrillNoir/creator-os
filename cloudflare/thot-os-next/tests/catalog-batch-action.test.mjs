@@ -9,7 +9,7 @@ const start = source.indexOf("export async function saveAssetAttributesAction(")
 const end = source.indexOf("\nexport ", start + 1);
 const code = stripTypeScriptTypes(source.slice(start, end).replace("export async", "async"));
 
-function fixture({ role = "creator", foreign = false } = {}) {
+function fixture({ role = "creator", foreign = false, released = false } = {}) {
   let reads = 0;
   let batches = 0;
   let writes = [];
@@ -26,6 +26,10 @@ function fixture({ role = "creator", foreign = false } = {}) {
       return { sql, bind(...args) {
         this.args = args;
         return this;
+      }, async first() {
+        reads++;
+        assert.match(this.sql, /creator_portfolio_release_versions/);
+        return released ? { id: "release-1" } : null;
       }, async all() {
         reads++;
         return { results: foreign ? [] : this.args.map((id) => ({ id })) };
@@ -68,4 +72,10 @@ test("foreign assets and viewer requests cannot mutate catalogue metadata", asyn
   await assert.rejects(viewer.action(selection(1)), /denied/);
   assert.equal(viewer.state().reads, 0);
   assert.equal(viewer.state().batches, 0);
+});
+
+test("a released portfolio item cannot have its classification changed before withdrawal", async () => {
+  const { action, state } = fixture({ released: true });
+  await assert.rejects(action(selection(1)), /Withdraw the public Portfolio/);
+  assert.equal(state().batches, 0);
 });
