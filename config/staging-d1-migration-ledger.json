@@ -409,5 +409,11 @@
       "remoteId": 71
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0070_asset_display_names.sql",
+      "sha256": "732cc5f26f6a7cd290c0c1452b303d538bfa622e1bb0900843a1e15b2148869b",
+      "purpose": "Pending approved staging migration: optional creator-facing Library names without changing original filenames, asset IDs, or R2 object keys."
+    }
+  ]
 }
