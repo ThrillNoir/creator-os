@@ -143,6 +143,23 @@ test("full length contact uses only configured destinations and needs a same-ori
   assert.equal(legacyLink.searchParams.has("cc"), false);
 });
 
+test("privacy-browser contact POST accepts only proven same-origin navigation", async () => {
+  const { env } = await setup();
+  const path = `/${slug}/portfolio/full-length/request`;
+  const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "telegram", message: "Please send the full clip and payment option." });
+  const browserMetadata = { "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+  const post = (headers, cookie) => fetchPage(env, path, cookie, {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body,
+  });
+  assert.equal((await post({ origin: "null", ...browserMetadata }, await session())).status, 200);
+  assert.equal((await post(browserMetadata, await session())).status, 200);
+  assert.equal((await post({ origin: "null" }, await session())).status, 404);
+  assert.equal((await post({}, await session())).status, 404);
+  assert.equal((await post({ origin: "null", ...browserMetadata, "sec-fetch-site": "cross-site" }, await session())).status, 404);
+  assert.equal((await post({ origin: "https://other.example", ...browserMetadata }, await session())).status, 404);
+  assert.equal((await post({ origin: "null", ...browserMetadata }, null)).status, 404);
+});
+
 test("preview-only clips have no false full-length request or private asset identifier", async () => {
   const { projection, env } = await setup();
   projection.cards[0].hasFullLength = false;

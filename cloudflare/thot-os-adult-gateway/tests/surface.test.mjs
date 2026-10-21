@@ -121,6 +121,14 @@ test("a null Origin is accepted only for a browser-proven same-origin navigation
     }), env);
     assert.equal(sameOrigin.status, 303);
 
+    const omittedOriginForm = new FormData(); omittedOriginForm.set("cf-turnstile-response", "valid-token");
+    const omittedOrigin = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", {
+      method: "POST",
+      headers: { "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+      body: omittedOriginForm,
+    }), env);
+    assert.equal(omittedOrigin.status, 303);
+
     const crossSiteForm = new FormData(); crossSiteForm.set("cf-turnstile-response", "valid-token");
     const crossSite = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", {
       method: "POST",

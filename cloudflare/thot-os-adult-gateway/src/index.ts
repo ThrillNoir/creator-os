@@ -158,17 +158,16 @@ async function validSession(request: Request, profile: AdultProfile, env: Env) {
 type TurnstileVerification = { accepted: true } | { accepted: false; reason: "missing_token" | "oversized_token" | "origin_mismatch" | "siteverify_http_error" | "siteverify_invalid_response" | "challenge_rejected" | "action_mismatch" | "hostname_mismatch" };
 
 /**
- * Some privacy-preserving browser contexts submit an ordinary same-origin
- * navigation with Origin: null. Accept that narrowly defined browser case,
- * while retaining the exact Origin check everywhere else. Fetch Metadata
- * request headers are browser-controlled and distinguish it from a
- * cross-site form post; Turnstile still validates the host and action.
+ * Some privacy-preserving browser contexts send Origin: null or omit Origin
+ * for a same-origin form navigation. Accept only when browser-controlled
+ * Fetch Metadata proves a same-origin document navigation. Cross-site forms
+ * and non-browser requests without that proof remain blocked.
  */
-function sameOriginAgeConfirmation(request: Request) {
+function sameOriginBrowserForm(request: Request) {
   const expectedOrigin = new URL(request.url).origin;
   const origin = request.headers.get("origin");
   if (origin === expectedOrigin) return true;
-  return origin === "null"
+  return (origin === "null" || origin === null)
     && request.headers.get("sec-fetch-site") === "same-origin"
     && request.headers.get("sec-fetch-mode") === "navigate"
     && request.headers.get("sec-fetch-dest") === "document";
@@ -181,7 +180,7 @@ function sameOriginAgeConfirmation(request: Request) {
 async function verifyTurnstile(token: string, request: Request, env: Env): Promise<TurnstileVerification> {
   if (!token) return { accepted: false, reason: "missing_token" };
   if (token.length > 2048) return { accepted: false, reason: "oversized_token" };
-  if (!sameOriginAgeConfirmation(request)) return { accepted: false, reason: "origin_mismatch" };
+  if (!sameOriginBrowserForm(request)) return { accepted: false, reason: "origin_mismatch" };
   const body = new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: token });
   let response: Response;
   try {
@@ -328,7 +327,7 @@ return {
     }
     if (request.method === "POST" && parts.length === 4 && SLUG.test(parts[0]) && parts[1] === "portfolio" && parts[2] === "full-length" && parts[3] === "request") {
       const profile = await loadProfile(env, parts[0]);
-      if (!profile || !await validSession(request, profile, env) || request.headers.get("origin") !== url.origin) return page("Not found", 404);
+      if (!profile || !await validSession(request, profile, env) || !sameOriginBrowserForm(request)) return page("Not found", 404);
       const portfolio = await currentPortfolio(env, parts[0], profile.publishedVersionId);
       if (!portfolio) return page("Not found", 404);
       const form = await request.formData().catch(() => null);
