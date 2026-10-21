@@ -132,6 +132,28 @@ test("v4 public image projections contain only an environment-controlled deliver
   assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(v4).env)).status, 404);
 });
 
+test("v5 creator photos render an ordered carousel and reject malformed media", async () => {
+  const v5 = structuredClone(snapshot);
+  v5.schemaVersion = 5;
+  v5.actions = [];
+  v5.appearance = { themeKey: "thot-noir", buttonStyle: "solid-rounded", backgroundMode: "solid", backgroundColor: "#0d0c10", primaryColor: "#7655f6", textColor: "#f8f6fa", cardColor: "#211a29", radiusScale: "comfortable" };
+  v5.media = ["portrait", "gallery"].map((id, position) => ({ id, position, imageRole: position ? "gallery" : "avatar", href: `https://media.example/media/adelaide/profile-version-1/${id}`, altText: "", contentType: "image/webp", checksum: "a".repeat(64) }));
+  const env = environment(v5, { PUBLIC_MEDIA_BASE_URL: "https://media.example" }).env;
+  const response = await worker.fetch(new Request("https://links.example/adelaide"), env);
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /photo-carousel/);
+  assert.match(body, /aria-label="Photo 2"/);
+  for (const mutate of [
+    (value) => { value.media[1].position = 0; },
+    (value) => { value.media[1].imageRole = "background"; },
+    (value) => { value.media[1].href = "https://private.example/source"; },
+  ]) {
+    const invalid = structuredClone(v5); mutate(invalid);
+    assert.equal((await worker.fetch(new Request("https://links.example/adelaide"), environment(invalid, { PUBLIC_MEDIA_BASE_URL: "https://media.example" }).env)).status, 404);
+  }
+});
+
 test("v2 interaction actions use the exact configured safe friendly entrance", async () => {
   const v2 = structuredClone(snapshot);
   v2.schemaVersion = 2;

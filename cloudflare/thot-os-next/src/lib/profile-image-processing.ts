@@ -2,7 +2,7 @@ export const PROFILE_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
 export const PROFILE_IMAGE_MAX_PIXELS = 20_000_000;
 export type ProfileImageSurface = "public_sfw" | "adult_profile";
 export type ProfileImageRole = "avatar" | "background";
-export type DetectedImageType = "image/jpeg" | "image/png" | "image/webp" | "image/avif";
+export type DetectedImageType = "image/jpeg" | "image/png" | "image/webp" | "image/avif" | "image/heic";
 
 export type ProcessedProfileImage = {
   detectedContentType: DetectedImageType;
@@ -52,6 +52,7 @@ export function detectImageType(bytes: Uint8Array): DetectedImageType | null {
   if (String.fromCharCode(...bytes.slice(4, 8)) === "ftyp") {
     const brand = String.fromCharCode(...bytes.slice(8, 12)).toLowerCase();
     if (brand === "avif" || brand === "avis") return "image/avif";
+    if (["heic", "heix", "hevc", "hevx", "mif1", "msf1"].includes(brand)) return "image/heic";
   }
   return null;
 }
@@ -84,7 +85,7 @@ export function validateImageUpload(bytes: Uint8Array, declaredContentType: stri
   if (!bytes.length) throw new Error("Choose a non-empty image file.");
   if (bytes.byteLength > PROFILE_IMAGE_MAX_BYTES) throw new Error("Images must be 12 MB or smaller.");
   const detected = detectImageType(bytes);
-  if (!detected) throw new Error("Use a JPEG, PNG, WebP, or AVIF image.");
+  if (!detected) throw new Error("Use a JPEG, PNG, WebP, AVIF, or HEIC image.");
   if (declaredContentType !== detected) throw new Error("The image type does not match the uploaded file.");
   if (isPotentiallyAnimatedImage(bytes, detected)) throw new Error("Animated images are not supported.");
   return detected;
@@ -126,7 +127,7 @@ export class CloudflareProfileImageProcessor implements ProfileImageProcessor {
   async process({ bytes, declaredContentType, role }: { bytes: Uint8Array; declaredContentType: string; role: ProfileImageRole }): Promise<ProcessedProfileImage> {
     const detectedContentType = validateImageUpload(bytes, declaredContentType);
     const source = await this.images.info(byteStream(bytes));
-    if (source.format !== detectedContentType) throw new Error("The image type does not match the uploaded file.");
+    if (source.format !== detectedContentType && !(detectedContentType === "image/heic" && source.format === "heic")) throw new Error("The image type does not match the uploaded file.");
     assertDimensions(source);
 
     const [display, preview, sourceSha256] = await Promise.all([

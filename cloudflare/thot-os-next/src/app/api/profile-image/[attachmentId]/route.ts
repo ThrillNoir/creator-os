@@ -4,15 +4,15 @@ import { isSameOriginRequest } from "@/lib/audit-identity";
 
 const ATTACHMENT_ID = /^[a-zA-Z0-9_-]{1,160}$/;
 
-export async function GET(_: Request, { params }: { params: Promise<{ attachmentId: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ attachmentId: string }> }) {
   const context = await requireCreatorContext();
   const { attachmentId } = await params;
   if (!ATTACHMENT_ID.test(attachmentId)) return new Response("Not found", { status: 404 });
   const { DB, MEDIA } = cloudflareEnv();
-  // Attachments intentionally reference the display derivative because that
-  // is the only derivative eligible for a future publication projection. An
-  // authenticated editor/preview must instead serve its smaller sibling.
-  const item = await DB.prepare(`SELECT preview.object_key,preview.content_type,preview.sha256
+  // The small image keeps picker cards light. The authenticated phone preview
+  // can request the exact display derivative copied at publication.
+  const variant = new URL(request.url).searchParams.get("variant") === "display" ? "display" : "preview";
+  const item = await DB.prepare(`SELECT ${variant}.object_key,${variant}.content_type,${variant}.sha256
     FROM creator_profile_image_attachments a
     JOIN creator_profile_image_derivatives display ON display.id=a.derivative_id AND display.creator_id=a.creator_id AND display.derivative_kind='display'
     JOIN creator_profile_image_derivatives preview ON preview.upload_id=display.upload_id AND preview.creator_id=display.creator_id AND preview.derivative_kind='preview'

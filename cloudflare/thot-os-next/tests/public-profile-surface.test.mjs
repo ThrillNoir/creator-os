@@ -80,7 +80,7 @@ test("image uploads process before attachment and compensate failed persistence"
   assert.match(uploadRoute, /SET status='rejected'/);
 });
 
-test("creator profile publishing remains tenant-scoped and private image reads use the preview derivative", async () => {
+test("creator profile publishing remains tenant-scoped and private image reads default to the preview derivative", async () => {
   const [authorization, actions, publicPage, publicEditor, adultPage, adultEditor, imageRoute, appearanceEditor, safePreview] = await Promise.all([
     source("src/lib/authorization.ts"),
     source("src/app/actions.ts"),

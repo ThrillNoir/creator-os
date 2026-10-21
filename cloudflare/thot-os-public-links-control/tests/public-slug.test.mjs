@@ -20,7 +20,7 @@ test("publication rejects a reserved slug before loading or writing a projection
 test("adult publication requires the active safe public profile slug", async () => {
   const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("async function loadApprovedAdultProfile("), source.indexOf("async function copyAdultDisplayMedia("));
-  const load = new Function("isPublicCreatorSlug", "configuredOrigin", "adultMediaDeliveryConfigured", "validHttpsDestination", `return (${stripTypeScriptTypes(body)})`)(isPublicCreatorSlug, () => "https://safe.example", () => true, () => true);
+  const load = new Function("isPublicCreatorSlug", "configuredOrigin", "adultMediaDeliveryConfigured", "validHttpsDestination", "loadLibraryProfileMedia", `return (${stripTypeScriptTypes(body)})`)(isPublicCreatorSlug, () => "https://safe.example", () => true, () => true, async () => []);
   let reads = 0;
   const env = {
     ADULT_PROFILES: {},
@@ -36,7 +36,7 @@ test("adult publication requires the active safe public profile slug", async () 
 test("adult publication builds its safe link from the active public profile slug", async () => {
   const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("async function loadApprovedAdultProfile("), source.indexOf("async function copyAdultDisplayMedia("));
-  const load = new Function("isPublicCreatorSlug", "configuredOrigin", "adultMediaDeliveryConfigured", "validHttpsDestination", `return (${stripTypeScriptTypes(body)})`)(isPublicCreatorSlug, () => "https://safe.example", () => true, () => true);
+  const load = new Function("isPublicCreatorSlug", "configuredOrigin", "adultMediaDeliveryConfigured", "validHttpsDestination", "loadLibraryProfileMedia", `return (${stripTypeScriptTypes(body)})`)(isPublicCreatorSlug, () => "https://safe.example", () => true, () => true, async () => []);
   let reads = 0;
   const profile = { slug: "canonical", safe_profile_slug: "thrill-noir", profile_status: "active", version_status: "approved", approved_by: "test-admin", approved_at: "test-date", inherit_sfw_theme: 0 };
   const env = {

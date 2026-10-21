@@ -3,13 +3,13 @@ import { portfolioCss, renderPortfolio, validPortfolio, validLivePortfolio, type
 import { portfolioContactName, portfolioContactReferenceKey } from "../../shared/portfolio-contact-reference.ts";
 
 type AdultProfile = {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5;
   publishedVersionId: string;
   creator: { slug: string; displayName: string; bio: string; safeProfileUrl: string };
   links: Array<{ id: string; label: string; destinationUrl: string; destinationHost: string }>;
   // Version 4 contains only a key from the isolated ADULT_MEDIA bucket. It
   // never accepts an authoring-bucket key and is never copied to the safe hub.
-  media: Array<{ id: string; mediaKey?: string; checksum?: string; altText: string; contentType?: "image/webp"; imageRole?: "avatar" | "background" }>;
+  media: Array<{ id: string; mediaKey?: string; checksum?: string; altText: string; contentType?: "image/webp"; imageRole?: "avatar" | "background" | "gallery"; position?: number }>;
   appearance?: { themeKey: string; buttonStyle: string; backgroundMode: string; backgroundColor: string; primaryColor: string; textColor: string; cardColor: string; radiusScale: string };
 };
 
@@ -99,16 +99,22 @@ function validProfile(value: unknown, slug: string): value is AdultProfile {
   const profile = value as Partial<AdultProfile>;
   const versionId = profile.publishedVersionId;
   const mediaItems = profile.media;
-  if (!hasOnlyKeys(profile, ["schemaVersion", "publishedVersionId", "creator", "links", "media", "appearance"]) || (profile.schemaVersion !== 1 && profile.schemaVersion !== 2 && profile.schemaVersion !== 3 && profile.schemaVersion !== 4) || typeof versionId !== "string" || !ITEM_ID.test(versionId) || !profile.creator || !hasOnlyKeys(profile.creator, ["slug", "displayName", "bio", "safeProfileUrl"]) || profile.creator.slug !== slug || !SLUG.test(slug) || typeof profile.creator.displayName !== "string" || typeof profile.creator.bio !== "string" || !safePublicProfileUrl(profile.creator.safeProfileUrl) || !Array.isArray(profile.links) || !Array.isArray(mediaItems) || profile.creator.displayName.length > 120 || profile.creator.bio.length > 2000) return false;
-  if ((profile.schemaVersion === 2 || profile.schemaVersion === 3 || profile.schemaVersion === 4) && !validAppearance(profile.appearance)) return false;
+  if (!hasOnlyKeys(profile, ["schemaVersion", "publishedVersionId", "creator", "links", "media", "appearance"]) || (profile.schemaVersion !== 1 && profile.schemaVersion !== 2 && profile.schemaVersion !== 3 && profile.schemaVersion !== 4 && profile.schemaVersion !== 5) || typeof versionId !== "string" || !ITEM_ID.test(versionId) || !profile.creator || !hasOnlyKeys(profile.creator, ["slug", "displayName", "bio", "safeProfileUrl"]) || profile.creator.slug !== slug || !SLUG.test(slug) || typeof profile.creator.displayName !== "string" || typeof profile.creator.bio !== "string" || !safePublicProfileUrl(profile.creator.safeProfileUrl) || !Array.isArray(profile.links) || !Array.isArray(mediaItems) || profile.creator.displayName.length > 120 || profile.creator.bio.length > 2000) return false;
+  if ((profile.schemaVersion === 2 || profile.schemaVersion === 3 || profile.schemaVersion === 4 || profile.schemaVersion === 5) && !validAppearance(profile.appearance)) return false;
   if (profile.schemaVersion === 1 && profile.appearance !== undefined) return false;
+  if (profile.schemaVersion === 5 && (mediaItems.length < 1 || mediaItems.length > 6)) return false;
   const imageRoles = new Set<string>();
   return profile.links.every((link) => Boolean(link && typeof link === "object" && hasOnlyKeys(link, ["id", "label", "destinationUrl", "destinationHost"]) && ITEM_ID.test(link.id) && typeof link.label === "string" && link.label.length > 0 && link.label.length <= 80 && typeof link.destinationUrl === "string" && typeof link.destinationHost === "string" && safeHttpsUrl(link.destinationUrl, link.destinationHost)))
-    && mediaItems.every((media) => {
+    && mediaItems.every((media, position) => {
       if (!media || typeof media !== "object" || !ITEM_ID.test(media.id) || typeof media.altText !== "string" || media.altText.length > 500) return false;
       // Older projections remain readable only if they contain no media. A
       // legacy private authoring key must never be served by this gateway.
-      if (profile.schemaVersion !== 4) return mediaItems.length === 0;
+      if (profile.schemaVersion !== 4 && profile.schemaVersion !== 5) return mediaItems.length === 0;
+      if (profile.schemaVersion === 5) return hasOnlyKeys(media, ["id", "mediaKey", "checksum", "altText", "contentType", "imageRole", "position"])
+        && media.contentType === "image/webp" && media.position === position
+        && media.imageRole === (position === 0 ? "avatar" : "gallery")
+        && !imageRoles.has(media.id) && SHA256.test(String(media.checksum))
+        && validAdultMediaKey(media.mediaKey, slug, versionId, media.id) && (imageRoles.add(media.id), true);
       if (!hasOnlyKeys(media, ["id", "mediaKey", "checksum", "altText", "contentType", "imageRole"]) || media.contentType !== "image/webp" || (media.imageRole !== "avatar" && media.imageRole !== "background") || imageRoles.has(media.imageRole) || !SHA256.test(String(media.checksum)) || !validAdultMediaKey(media.mediaKey, slug, versionId, media.id)) return false;
       imageRoles.add(media.imageRole);
       return true;
@@ -261,9 +267,11 @@ function adultPage(profile: AdultProfile, portfolio?: PortfolioProjection, url?:
   const links = profile.links.map((link) => `<a class="link ${style}" href="/r/${encodeURIComponent(profile.creator.slug)}/${encodeURIComponent(link.id)}" rel="noreferrer">${escapeHtml(link.label)}<span aria-hidden="true">↗</span></a>`).join("");
   const title = escapeHtml(profile.creator.displayName || "Creator");
   const bio = profile.creator.bio ? `<p>${escapeHtml(profile.creator.bio)}</p>` : "";
-  const gallery = media ? `<section aria-label="Image carousel"><div class="carousel">${media}</div>${controls}</section>` : "";
+  const gallery = profile.schemaVersion === 5 && profile.media.length === 1
+    ? `<img class="profile-avatar" src="/media/${encodeURIComponent(profile.creator.slug)}/${encodeURIComponent(profile.media[0].id)}" alt="${escapeHtml(profile.media[0].altText)}" loading="lazy">`
+    : media ? `<section aria-label="Image carousel"><div class="carousel">${media}</div>${controls}</section>` : "";
   const portfolioHtml = portfolio ? renderPortfolio(portfolio, profile.creator.displayName || "Creator", url?.searchParams.get("section") ?? null, url?.searchParams.get("genre") ?? null, url?.searchParams.get("request") === "sent") : "";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.5 system-ui,sans-serif;background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor};color:${appearance.textColor};margin:0}.card{max-width:${portfolio ? "72rem" : "36rem"};margin:0 auto;padding:2rem 1rem}h1{margin:0}.carousel{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:.75rem;margin:1.5rem 0}.carousel figure{flex:0 0 100%;scroll-snap-align:center;margin:0}.carousel img{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:${radius};background:${appearance.cardColor}}.carousel figcaption{font-size:.8rem;opacity:.7}.carousel-controls{display:flex;gap:.75rem}.carousel-controls a,.link{border:1px solid ${appearance.textColor}66;border-radius:${radius};padding:.65rem;color:inherit;text-decoration:none}.links{display:grid;gap:.75rem;margin-top:1.5rem}.link{display:flex;justify-content:space-between;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 5px 0 ${appearance.primaryColor}55}.link.pill{border-radius:999px}${portfolio ? portfolioCss : ""}</style></head><body><main class="card" style="--portfolio-accent:${appearance.primaryColor};--portfolio-bg:${appearance.backgroundColor}"><h1>${title}</h1>${bio}${gallery}<nav class="links" aria-label="Creator links">${links}</nav>${portfolioHtml}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.5 system-ui,sans-serif;background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor};color:${appearance.textColor};margin:0}.card{box-sizing:border-box;max-width:${portfolio ? "72rem" : "38rem"};margin:2rem auto;padding:2rem;border:2px solid ${appearance.textColor};background:${appearance.cardColor};box-shadow:8px 8px 0 ${appearance.primaryColor}}.page-label{display:block;margin-bottom:1rem;color:${appearance.primaryColor};font-size:.72rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-size:clamp(2rem,7vw,3rem);line-height:1.1;letter-spacing:-.045em}.profile-avatar{display:block;width:min(100%,13rem);aspect-ratio:1;object-fit:cover;margin:1.5rem auto;border-radius:${radius}}.carousel{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:.75rem;margin:1.5rem 0}.carousel figure{flex:0 0 100%;scroll-snap-align:center;margin:0}.carousel img{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:${radius};background:${appearance.cardColor}}.carousel figcaption{font-size:.8rem;opacity:.7}.carousel-controls{display:flex;gap:.75rem}.carousel-controls a,.link{border:2px solid ${appearance.textColor};border-radius:${radius};padding:.65rem;color:inherit;text-decoration:none}.carousel-controls a:focus-visible,.link:focus-visible{outline:3px solid ${appearance.primaryColor};outline-offset:4px}.links{display:grid;gap:.75rem;margin-top:1.5rem}.link{display:flex;justify-content:space-between;background:${appearance.primaryColor};color:${appearance.backgroundColor};font-weight:700;box-shadow:4px 4px 0 ${appearance.textColor}}.link:hover{transform:translate(2px,2px);box-shadow:2px 2px 0 ${appearance.textColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 5px 0 ${appearance.primaryColor}55}.link.pill{border-radius:999px}@media(max-width:480px){.card{margin:1rem;padding:1.25rem;box-shadow:5px 5px 0 ${appearance.primaryColor}}}${portfolio ? portfolioCss : ""}</style></head><body><main class="card" style="--portfolio-accent:${appearance.primaryColor};--portfolio-bg:${appearance.backgroundColor}"><span class="page-label">More from this creator</span><h1>${title}</h1>${bio}${gallery}<nav class="links" aria-label="Creator links">${links}</nav>${portfolioHtml}</main></body></html>`;
 }
 
 export function createAdultGateway(loadPortfolio?: (slug: string, versionId: string) => Promise<unknown>): ExportedHandler<Env> {
@@ -363,9 +371,9 @@ return {
       const profile = await loadProfile(env, parts[1]);
       const media = profile?.media.find((item) => item.id === parts[2]);
       if (!profile || !media || !await validSession(request, profile, env)) return page("Not found", 404);
-      // validProfile accepts media only in the v4 isolated-media shape.
+      // Both supported media projections contain only isolated delivery keys.
       const object = await env.ADULT_MEDIA.get(media.mediaKey!);
-      if (!object || profile.schemaVersion !== 4 || !validAdultMediaObject(object, profile, media)) return page("Not found", 404);
+      if (!object || (profile.schemaVersion !== 4 && profile.schemaVersion !== 5) || !validAdultMediaObject(object, profile, media)) return page("Not found", 404);
       event(env, profile, "adult_media_view", media.id);
       return new Response(object.body, { headers: { ...securityHeaders(), "content-type": "image/webp", etag: `"${media.checksum}"` } });
     }

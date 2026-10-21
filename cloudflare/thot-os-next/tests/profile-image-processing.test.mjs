@@ -45,10 +45,19 @@ test("profile image editing is offered only when the server has its Images bindi
 
 test("profile image validation rejects non-images and declared-type mismatches", () => {
   assert.equal(detectImageType(new TextEncoder().encode("<svg></svg>")), null);
-  assert.throws(() => validateImageUpload(new TextEncoder().encode("<html>bad</html>"), "text/html"), /JPEG, PNG, WebP, or AVIF/);
+  assert.throws(() => validateImageUpload(new TextEncoder().encode("<html>bad</html>"), "text/html"), /JPEG, PNG, WebP, AVIF, or HEIC/);
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
   assert.throws(() => validateImageUpload(jpeg, "image/png"), /does not match/);
   assert.throws(() => validateImageUpload(new Uint8Array(PROFILE_IMAGE_MAX_BYTES + 1), "image/jpeg"), /12 MB/);
+});
+
+test("Library HEIC header is recognized without treating the filename as the format", () => {
+  const heic = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0]);
+  assert.equal(detectImageType(heic), "image/heic");
+  assert.equal(validateImageUpload(heic, "image/heic"), "image/heic");
+  heic.set([0x6d, 0x69, 0x66, 0x31], 8);
+  assert.equal(detectImageType(heic), "image/heic");
+  assert.throws(() => validateImageUpload(heic, "image/jpeg"), /does not match/);
 });
 
 test("local profile derivatives are re-encoded WebP without source metadata", async () => {

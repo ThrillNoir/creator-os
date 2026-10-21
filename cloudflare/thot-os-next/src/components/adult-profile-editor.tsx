@@ -15,11 +15,13 @@ type Props = {
   displayName: string;
   images: ProfileImageAttachment[];
   draftVersionId?: string;
+  viewVersionId?: string;
   versionForPublishId?: string;
   published: boolean;
   canPublish: boolean;
   publishingConfigured: boolean;
   imageUploadsEnabled: boolean;
+  liveBackgroundPresent: boolean;
 };
 
 const initialAdultProfileDraftState: AdultProfileDraftState = {
@@ -69,7 +71,7 @@ export function AdultProfileEditor(props: Props) {
         <label>HTTPS destination<input name="adultLinkDestination" type="url" value={values.linkDestinations[index] ?? ""} onChange={(event) => updateLink("linkDestinations", index, event.target.value)} placeholder="https://example.com" {...fieldProps(`adultLinkDestination.${index}`)} />{error(`adultLinkDestination.${index}`) && <span className="field-error" id={errorId(`adultLinkDestination.${index}`)}>{error(`adultLinkDestination.${index}`)}</span>}</label>
       </div>)}
       <div aria-invalid={Boolean(error("appearance")) || undefined} aria-describedby={error("appearance") ? errorId("appearance") : undefined}>
-        <ProfileAppearanceEditor surface="adult" initialAppearance={props.appearance} inheritedAppearance={props.inheritedAppearance} displayName={props.displayName} sampleLinks={values.linkLabels} versionId={props.draftVersionId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} />
+        <ProfileAppearanceEditor surface="adult" initialAppearance={props.appearance} inheritedAppearance={props.inheritedAppearance} displayName={props.displayName} sampleLinks={values.linkLabels} versionId={props.draftVersionId} viewVersionId={props.viewVersionId} draftFormId={formId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} liveBackgroundPresent={props.liveBackgroundPresent} />
       </div>
       {error("appearance") && <span className="field-error wide" id={errorId("appearance")}>{error("appearance")}</span>}
     </form>

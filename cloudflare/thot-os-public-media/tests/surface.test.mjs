@@ -37,6 +37,25 @@ test("public media serves only a projected derivative with matching immutable me
   assert.deepEqual(keys, [`public-media/adelaide/version-1/${attachmentId}.webp`]);
 });
 
+test("v5 gallery media requires its ordered projection and exact copied metadata", async () => {
+  const projected = structuredClone(snapshot);
+  projected.schemaVersion = 5;
+  projected.media[0].position = 0;
+  projected.media.push({ id: "gallery-2", href: "https://media.example/media/adelaide/version-1/gallery-2", altText: "", contentType: "image/webp", imageRole: "gallery", checksum, position: 1 });
+  const route = "https://media.example/media/adelaide/version-1/gallery-2";
+  const metadata = { creatorSlug: "adelaide", versionId: "version-1", attachmentId: "gallery-2", checksum, surface: "public_sfw", imageRole: "gallery" };
+  assert.equal((await worker.fetch(new Request(route), environment(projected, { objectMetadata: metadata }).env)).status, 200);
+  projected.media[1].position = 0;
+  assert.equal((await worker.fetch(new Request(route), environment(projected, { objectMetadata: metadata }).env)).status, 404);
+  projected.media[1].position = 1;
+  projected.media[1].id = attachmentId;
+  projected.media[1].href = `https://media.example/media/adelaide/version-1/${attachmentId}`;
+  assert.equal((await worker.fetch(new Request(`https://media.example/media/adelaide/version-1/${attachmentId}`), environment(projected).env)).status, 404);
+  projected.media[1].id = "gallery-2";
+  projected.media[1].href = route;
+  assert.equal((await worker.fetch(new Request(route), environment(projected, { objectMetadata: { ...metadata, imageRole: "avatar" } }).env)).status, 404);
+});
+
 test("live media serves only configured creators and redirects its legacy host", async () => {
   const projected = structuredClone(snapshot);
   projected.media[0].href = `https://www.thathuboverthere.com/media/adelaide/version-1/${attachmentId}`;

@@ -34,10 +34,12 @@ type Props = {
   appearance: ProfileAppearance;
   images: ProfileImageAttachment[];
   draftVersionId?: string;
+  viewVersionId?: string;
   versionForPublishId?: string;
   canPublish: boolean;
   publishingConfigured: boolean;
   imageUploadsEnabled: boolean;
+  liveBackgroundPresent: boolean;
   slugLocked: boolean;
 };
 
@@ -164,7 +166,7 @@ export function PublicProfileEditor(props: Props) {
         <label>HTTPS destination<input name="linkDestination" type="url" value={values.linkDestinations[index] ?? ""} onChange={(event) => updateLink("linkDestinations", index, event.target.value)} placeholder="https://example.com" {...fieldProps(`linkDestination.${index}`)} />{error(`linkDestination.${index}`) && <span className="field-error" id={errorId(`linkDestination.${index}`)}>{error(`linkDestination.${index}`)}</span>}</label>
       </div>)}
       <div aria-invalid={Boolean(error("appearance")) || undefined} aria-describedby={error("appearance") ? errorId("appearance") : undefined}>
-        <ProfileAppearanceEditor surface="sfw" initialAppearance={props.appearance} displayName={values.displayName} sampleLinks={values.linkLabels} previewActions={previewActions} versionId={props.draftVersionId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} />
+        <ProfileAppearanceEditor surface="sfw" initialAppearance={props.appearance} displayName={values.displayName} sampleLinks={values.linkLabels} previewActions={previewActions} versionId={props.draftVersionId} viewVersionId={props.viewVersionId} draftFormId={formId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} liveBackgroundPresent={props.liveBackgroundPresent} />
       </div>
       {error("appearance") && <span className="field-error wide" id={errorId("appearance")}>{error("appearance")}</span>}
       </div>

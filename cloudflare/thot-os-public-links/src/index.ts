@@ -15,7 +15,7 @@ type PublicAction = {
 };
 
 type PublicProfileSnapshot = {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5;
   publishedVersionId: string;
   creator: {
     slug: string;
@@ -30,7 +30,7 @@ type PublicProfileSnapshot = {
    * These are opaque identifiers delivered by a separately configured media
    * Worker. They are never R2 keys, source upload IDs, or adult media values.
    */
-  media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: "avatar" | "background"; checksum: string }>;
+  media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: "avatar" | "background" | "gallery"; checksum: string; position?: number }>;
 };
 
 type PublicAmaProjection = {
@@ -139,7 +139,7 @@ function validSnapshot(value: unknown, requestedSlug: string, env: Env): value i
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Partial<PublicProfileSnapshot>;
   const versionId = snapshot.publishedVersionId;
-  if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media"]) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2 && snapshot.schemaVersion !== 3 && snapshot.schemaVersion !== 4) || typeof versionId !== "string" || !LINK_ID.test(versionId) || !snapshot.creator || !Array.isArray(snapshot.links)) return false;
+  if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media"]) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2 && snapshot.schemaVersion !== 3 && snapshot.schemaVersion !== 4 && snapshot.schemaVersion !== 5) || typeof versionId !== "string" || !LINK_ID.test(versionId) || !snapshot.creator || !Array.isArray(snapshot.links)) return false;
   const creator = snapshot.creator;
   if (!hasOnlyKeys(creator, ["slug", "displayName", "headline", "bio"]) || creator.slug !== requestedSlug || !isPublicCreatorSlug(creator.slug) || typeof creator.displayName !== "string" || typeof creator.headline !== "string" || typeof creator.bio !== "string") return false;
   if (creator.displayName.length < 1 || creator.displayName.length > 120 || creator.headline.length > 280 || creator.bio.length > 2000) return false;
@@ -157,8 +157,19 @@ function validSnapshot(value: unknown, requestedSlug: string, env: Env): value i
     return validActionUrl(action.href, action.id, requestedSlug, env);
   });
   if (!actionsValid || (snapshot.schemaVersion === 2 ? snapshot.appearance !== undefined : !validAppearance(snapshot.appearance))) return false;
-  if (snapshot.schemaVersion !== 4) return snapshot.media === undefined;
-  if (!Array.isArray(snapshot.media) || snapshot.media.length > 2) return false;
+  if (snapshot.schemaVersion !== 4 && snapshot.schemaVersion !== 5) return snapshot.media === undefined;
+  if (!Array.isArray(snapshot.media) || snapshot.media.length > (snapshot.schemaVersion === 5 ? 6 : 2) || (snapshot.schemaVersion === 5 && !snapshot.media.length)) return false;
+  if (snapshot.schemaVersion === 5) {
+    const ids = new Set<string>();
+    return snapshot.media.every((media, position) => Boolean(media && typeof media === "object"
+      && hasOnlyKeys(media, ["id", "href", "altText", "contentType", "imageRole", "checksum", "position"])
+      && typeof media.id === "string" && LINK_ID.test(media.id) && !ids.has(media.id)
+      && media.position === position && media.imageRole === (position === 0 ? "avatar" : "gallery")
+      && media.contentType === "image/webp" && typeof media.altText === "string" && media.altText.length <= 500
+      && typeof media.checksum === "string" && /^[a-f0-9]{64}$/i.test(media.checksum)
+      && validPublicMediaUrl(media.href, requestedSlug, versionId, media.id, env)
+      && (ids.add(media.id), true)));
+  }
   const imageRoles = new Set<string>();
   return snapshot.media.every((media) => Boolean(media && typeof media === "object" && hasOnlyKeys(media, ["id", "href", "altText", "contentType", "imageRole", "checksum"])
     && typeof media.id === "string" && LINK_ID.test(media.id)
@@ -283,12 +294,16 @@ function renderProfile(snapshot: PublicProfileSnapshot) {
   const title = escapeHtml(snapshot.creator.displayName);
   const headline = snapshot.creator.headline ? `<p>${escapeHtml(snapshot.creator.headline)}</p>` : "";
   const bio = snapshot.creator.bio ? `<p class="bio">${escapeHtml(snapshot.creator.bio)}</p>` : "";
-  const media = snapshot.media?.map((item) => `<img class="media media-${item.imageRole}" src="${escapeHtml(item.href)}" alt="${escapeHtml(item.altText)}" loading="lazy">`).join("\n") ?? "";
+  const media = snapshot.schemaVersion === 5
+    ? snapshot.media!.length === 1
+      ? `<img class="media media-avatar" src="${escapeHtml(snapshot.media![0].href)}" alt="${escapeHtml(snapshot.media![0].altText)}" loading="lazy">`
+      : `<section class="photo-carousel" aria-label="Creator photos"><div class="photo-carousel-track">${snapshot.media!.map((item, index) => `<img id="photo-${index}" class="media" src="${escapeHtml(item.href)}" alt="${escapeHtml(item.altText)}" loading="lazy">`).join("")}</div><nav aria-label="Choose a photo">${snapshot.media!.map((_, index) => `<a href="#photo-${index}" aria-label="Photo ${index + 1}">${index + 1}</a>`).join("")}</nav></section>`
+    : snapshot.media?.map((item) => `<img class="media media-${item.imageRole}" src="${escapeHtml(item.href)}" alt="${escapeHtml(item.altText)}" loading="lazy">`).join("\n") ?? "";
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
-<style>html{color-scheme:dark;background:${appearance.backgroundColor}}body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;color:${appearance.textColor};background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor}}main{width:min(100% - 2rem,36rem);padding:3rem 0;text-align:center}h1{margin:0;font-size:clamp(2rem,7vw,3rem)}p{margin:.5rem auto;white-space:pre-line}.bio{color:${appearance.textColor};opacity:.8;max-width:34rem}.media{display:block;width:100%;max-height:34rem;object-fit:cover;border-radius:${radius};margin:1rem 0;background:${appearance.cardColor}}.media-avatar{aspect-ratio:1;max-width:13rem;margin:1rem auto}.actions,.links{display:grid;gap:.75rem;margin-top:2rem}.action,.link{display:flex;justify-content:space-between;gap:1rem;align-items:center;border:1px solid ${appearance.textColor}2f;border-radius:${radius};padding:1rem 1.1rem;color:inherit;background:${appearance.cardColor};text-decoration:none;text-align:left}.action{justify-content:center;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link{background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 6px 0 ${appearance.primaryColor}55}.action:hover,.action:focus-visible,.link:hover,.link:focus-visible{filter:brightness(1.08);outline:0}.link span{opacity:.75}</style></head>
-<body><main><h1>${title}</h1>${media}${headline}${bio}${actions ? `<nav class="actions" aria-label="Creator actions">${actions}</nav>` : ""}${links ? `<nav class="links" aria-label="Links">${links}</nav>` : ""}</main></body></html>`;
+<style>html{color-scheme:dark;background:${appearance.backgroundColor}}body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;color:${appearance.textColor};background:${appearance.backgroundMode === "gradient" ? `linear-gradient(145deg,${appearance.backgroundColor},${appearance.primaryColor}33)` : appearance.backgroundColor}}main{box-sizing:border-box;width:min(100% - 2rem,38rem);margin:2rem auto;padding:2rem;text-align:center;border:2px solid ${appearance.textColor};background:${appearance.cardColor};box-shadow:8px 8px 0 ${appearance.primaryColor}}.page-label{display:block;margin-bottom:1rem;font-size:.72rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:${appearance.primaryColor}}h1{margin:0;font-size:clamp(2rem,7vw,3rem);line-height:1.1;letter-spacing:-.045em}p{margin:.5rem auto;white-space:pre-line}.bio{color:${appearance.textColor};opacity:.8;max-width:34rem}.media{display:block;width:100%;max-height:34rem;object-fit:cover;border-radius:${radius};margin:1rem 0;background:${appearance.cardColor}}.media-avatar{aspect-ratio:1;max-width:13rem;margin:1rem auto}.photo-carousel-track{display:flex;gap:.75rem;overflow-x:auto;scroll-snap-type:x mandatory}.photo-carousel-track .media{flex:0 0 100%;height:min(70vw,27rem);margin:1rem 0;scroll-snap-align:center}.photo-carousel nav{display:flex;justify-content:center;gap:.5rem}.photo-carousel nav a{min-width:1.5rem;padding:.2rem;border:2px solid currentColor;color:inherit;text-decoration:none}.photo-carousel nav a:focus-visible{outline:3px solid ${appearance.primaryColor};outline-offset:3px}.actions,.links{display:grid;gap:.75rem;margin-top:2rem}.action,.link{display:flex;justify-content:space-between;gap:1rem;align-items:center;border:2px solid ${appearance.textColor};border-radius:${radius};padding:1rem 1.1rem;color:inherit;background:${appearance.cardColor};text-decoration:none;text-align:left;font-weight:700;box-shadow:4px 4px 0 ${appearance.textColor}}.action{justify-content:center;background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link{background:${appearance.primaryColor};color:${appearance.backgroundColor}}.link.outline{background:transparent;border-color:${appearance.primaryColor};color:${appearance.textColor}}.link.soft{background:${appearance.cardColor};color:${appearance.textColor}}.link.elevated{box-shadow:0 6px 0 ${appearance.primaryColor}55}.action:hover,.link:hover{transform:translate(2px,2px);box-shadow:2px 2px 0 ${appearance.textColor}}.action:focus-visible,.link:focus-visible{outline:3px solid ${appearance.primaryColor};outline-offset:4px}.link span{opacity:.75}@media(max-width:480px){main{width:calc(100% - 2rem);padding:1.25rem;box-shadow:5px 5px 0 ${appearance.primaryColor}}}</style></head>
+<body><main><span class="page-label">Creator page</span><h1>${title}</h1>${media}${headline}${bio}${actions ? `<nav class="actions" aria-label="Creator actions">${actions}</nav>` : ""}${links ? `<nav class="links" aria-label="Links">${links}</nav>` : ""}</main></body></html>`;
 }
 
 function renderAma(profile: PublicProfileSnapshot, projection: PublicAmaProjection, siteKey?: string, sent = false) {

@@ -38,7 +38,8 @@ type ProfileRow = {
 };
 type LinkRow = { id: string; label: string; destination_url: string; destination_host: string };
 type ContactRow = { channel: "sms" | "email"; contact_value: string };
-type SfwMediaRow = { id: string; object_key: string; sha256: string; content_type: "image/webp"; image_role: "avatar" | "background" };
+type ProfileImageRole = "avatar" | "background" | "gallery";
+type SfwMediaRow = { id: string; object_key: string; sha256: string; content_type: "image/webp"; image_role: ProfileImageRole; position?: number };
 type ActiveProfileRow = { profile_id: string; creator_id: string; slug: string; version_id: string; approved_by: string };
 
 type AdultProfileRow = {
@@ -72,11 +73,11 @@ type AdultProfileRow = {
   sfw_radius_scale: string | null;
   safe_profile_slug: string | null;
 };
-type AdultMediaRow = { id: string; object_key: string; sha256: string; alt_text: string; content_type: "image/webp"; image_role: "avatar" | "background" };
+type AdultMediaRow = { id: string; object_key: string; sha256: string; alt_text: string; content_type: "image/webp"; image_role: ProfileImageRole; position?: number };
 type ActiveAdultProfileRow = { profile_id: string; creator_id: string; slug: string; version_id: string; approved_by: string };
 
 type PublicProfileSnapshot = {
-  schemaVersion: 3 | 4;
+  schemaVersion: 3 | 4 | 5;
   publishedVersionId: string;
   creator: { slug: string; displayName: string; headline: string; bio: string };
   links: Array<{ id: string; label: string; destinationUrl: string; destinationHost: string }>;
@@ -84,7 +85,7 @@ type PublicProfileSnapshot = {
   // Contact values and adult destinations never enter this snapshot.
   actions: Array<{ id: "book" | "more"; label: string; href: string }>;
   appearance: { themeKey: string; buttonStyle: string; backgroundMode: string; backgroundColor: string; primaryColor: string; textColor: string; cardColor: string; radiusScale: string };
-  media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: "avatar" | "background"; checksum: string }>;
+  media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: ProfileImageRole; checksum: string; position?: number }>;
 };
 
 type ContactProfileSnapshot = {
@@ -96,14 +97,14 @@ type ContactProfileSnapshot = {
 };
 
 type AdultProfileSnapshot = {
-  schemaVersion: 4;
+  schemaVersion: 4 | 5;
   publishedVersionId: string;
   creator: { slug: string; displayName: string; bio: string; safeProfileUrl: string };
   links: Array<{ id: string; label: string; destinationUrl: string; destinationHost: string }>;
   // This projection contains only a key from the isolated ADULT_MEDIA bucket,
   // never an authoring-bucket key. The age gateway reads it only after a
   // creator/version-bound HttpOnly session has been verified.
-  media: Array<{ id: string; mediaKey: string; checksum: string; altText: string; contentType: "image/webp"; imageRole: "avatar" | "background" }>;
+  media: Array<{ id: string; mediaKey: string; checksum: string; altText: string; contentType: "image/webp"; imageRole: ProfileImageRole; position?: number }>;
   appearance: { themeKey: string; buttonStyle: string; backgroundMode: string; backgroundColor: string; primaryColor: string; textColor: string; cardColor: string; radiusScale: string };
 };
 
@@ -195,7 +196,7 @@ async function sha256Hex(bytes: Uint8Array) {
   return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-async function copyDisplayDerivative(source: R2Bucket, destination: R2Bucket, sourceKey: string, destinationKey: string, expected: { creatorId: string; creatorSlug: string; versionId: string; attachmentId: string; checksum: string; imageRole: "avatar" | "background"; surface: "public_sfw" | "adult_profile" }) {
+async function copyDisplayDerivative(source: R2Bucket, destination: R2Bucket, sourceKey: string, destinationKey: string, expected: { creatorId: string; creatorSlug: string; versionId: string; attachmentId: string; checksum: string; imageRole: ProfileImageRole; surface: "public_sfw" | "adult_profile" }) {
   const object = await source.get(sourceKey);
   if (!object || object.httpMetadata?.contentType !== "image/webp") throw new Error("The approved image display derivative is unavailable.");
   const bytes = new Uint8Array(await object.arrayBuffer());
@@ -227,6 +228,42 @@ async function attachedMediaIds(env: Env, surface: "public_sfw" | "adult_profile
     WHERE a.creator_id=? AND a.${column}=? AND a.surface=? AND a.status='attached'
       AND d.derivative_kind='display' AND d.content_type='image/webp'
       AND u.surface=? AND u.status='processed'`).bind(creatorId, versionId, surface, surface).all<{ id: string }>();
+  const library = await env.DB.prepare(`SELECT id FROM creator_profile_library_photo_selections
+    WHERE creator_id=? AND surface=? AND ${column}=?`).bind(creatorId, surface, versionId).all<{ id: string }>();
+  return [...rows.results, ...library.results];
+}
+
+async function loadLibraryProfileMedia(env: Env, surface: "public_sfw" | "adult_profile", creatorId: string, versionId: string) {
+  const column = surface === "public_sfw" ? "public_profile_version_id" : "adult_profile_version_id";
+  const count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM creator_profile_library_photo_selections
+    WHERE creator_id=? AND surface=? AND ${column}=?`).bind(creatorId, surface, versionId).first<{ total: number }>();
+  if (!count?.total) return [];
+  const rows = await env.DB.prepare(`SELECT s.id,d.display_object_key AS object_key,d.display_sha256 AS sha256,
+      'image/webp' AS content_type,'' AS alt_text,
+      CASE WHEN s.position=0 THEN 'avatar' ELSE 'gallery' END AS image_role,s.position
+    FROM creator_profile_library_photo_selections s
+    JOIN creator_profile_library_photo_derivatives d ON d.id=s.derivative_id AND d.creator_id=s.creator_id
+    JOIN assets a ON a.id=d.asset_id AND a.creator_id=d.creator_id AND a.source_available=1
+    JOIN asset_storage_objects o ON o.id=d.storage_object_id AND o.asset_id=d.asset_id AND o.creator_id=d.creator_id
+    JOIN asset_media_authorities ma ON ma.asset_id=d.asset_id AND ma.creator_id=d.creator_id
+      AND ma.canonical_storage_object_id=o.id AND ma.authority_kind='r2_native'
+    JOIN creator_profile_library_photo_grants g ON g.creator_id=d.creator_id AND g.asset_id=d.asset_id
+      AND g.surface=s.surface AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>CURRENT_TIMESTAMP)
+    WHERE s.creator_id=? AND s.surface=? AND s.${column}=?
+      AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media'
+      AND o.ingest_status='verified' AND o.object_key=a.media_r2_key AND o.sha256=d.source_sha256
+      AND o.r2_version=d.source_r2_version AND o.r2_etag=d.source_r2_etag
+      AND ma.state IN ('canonical_verified','preview_ready','preview_failed')
+      AND NOT EXISTS (SELECT 1 FROM asset_people ap
+        WHERE ap.creator_id=d.creator_id AND ap.asset_id=d.asset_id
+          AND NOT EXISTS (SELECT 1 FROM creator_profile_library_subject_grants sg
+            WHERE sg.creator_id=d.creator_id AND sg.asset_id=d.asset_id AND sg.person_id=ap.person_id
+              AND sg.surface=s.surface AND sg.revoked_at IS NULL
+              AND (sg.expires_at IS NULL OR sg.expires_at>CURRENT_TIMESTAMP)))
+    ORDER BY s.position`).bind(creatorId, surface, versionId).all<AdultMediaRow>();
+  if (rows.results.length !== count.total || rows.results.length > 6 || rows.results.some((row, index) => row.position !== index)) {
+    throw new Error("A selected Library photo no longer passes source or permission checks. Review the profile photos before publishing.");
+  }
   return rows.results;
 }
 
@@ -278,7 +315,8 @@ async function loadApprovedProfile(env: Env, params: PublishParams) {
     ORDER BY CASE a.image_role WHEN 'background' THEN 0 ELSE 1 END`).bind(profile.creator_id, profile.version_id).all<SfwMediaRow>();
   const booking = await env.DB.prepare("SELECT config_json FROM creator_booking_configs WHERE creator_id=? AND profile_version_id=?").bind(profile.creator_id, profile.version_id).first<{ config_json: string }>();
   if (booking) profile.booking = validateBookingConfig(JSON.parse(booking.config_json));
-  return { profile, links: links.results, contacts: contacts.results, media: media.results };
+  const libraryMedia = await loadLibraryProfileMedia(env, "public_sfw", profile.creator_id, profile.version_id);
+  return { profile, links: links.results, contacts: contacts.results, media: libraryMedia.length ? libraryMedia : media.results };
 }
 
 async function loadCurrentPublicProfile(env: Env, creatorId: string) {
@@ -330,7 +368,7 @@ async function copyPublicDisplayMedia(env: Env, profile: ProfileRow, media: SfwM
       if (!existed) created.push(destinationKey);
       const href = publicMediaHref(env, profile, item);
       if (!href) throw new Error("Public image delivery origin is not configured.");
-      hrefs.push({ id: item.id, href, altText: "", contentType: item.content_type, imageRole: item.image_role, checksum: result.checksum } as const);
+      hrefs.push({ id: item.id, href, altText: "", contentType: item.content_type, imageRole: item.image_role, checksum: result.checksum, ...(item.position === undefined ? {} : { position: item.position }) } as const);
     }
     return hrefs;
   } catch (error) {
@@ -345,7 +383,7 @@ function publicDisplayMediaProjection(env: Env, profile: ProfileRow, media: SfwM
   return media.map((item) => {
     const href = publicMediaHref(env, profile, item);
     if (!href) throw new Error("Public image delivery origin is not configured.");
-    return { id: item.id, href, altText: "", contentType: item.content_type, imageRole: item.image_role, checksum: item.sha256.toLowerCase() } as const;
+    return { id: item.id, href, altText: "", contentType: item.content_type, imageRole: item.image_role, checksum: item.sha256.toLowerCase(), ...(item.position === undefined ? {} : { position: item.position }) } as const;
   });
 }
 
@@ -355,7 +393,7 @@ async function toPublicSnapshot(env: Env, profile: ProfileRow, links: LinkRow[],
   // boundary. The snapshot contains its controlled route, never an R2 key.
   const publicMedia = publicDisplayMediaProjection(env, profile, media);
   return {
-    schemaVersion: publicMedia.length ? 4 : 3,
+    schemaVersion: publicMedia.some((item) => item.position !== undefined) ? 5 : publicMedia.length ? 4 : 3,
     publishedVersionId: profile.version_id,
     creator: { slug: profile.slug, displayName: profile.display_name, headline: profile.headline, bio: profile.bio },
     links: links.map((link) => ({ id: link.id, label: link.label, destinationUrl: link.destination_url, destinationHost: link.destination_host })),
@@ -562,7 +600,8 @@ async function loadApprovedAdultProfile(env: Env, params: AdultPublishParams) {
       AND d.derivative_kind='display' AND d.content_type='image/webp'
       AND u.surface='adult_profile' AND u.image_role=a.image_role AND u.status='processed'
     ORDER BY CASE a.image_role WHEN 'background' THEN 0 ELSE 1 END`).bind(profile.profile_id, profile.creator_id, profile.version_id).all<AdultMediaRow>();
-  return { profile, links: links.results, media: media.results, safeProfileUrl: `${safeOrigin}/${encodeURIComponent(profile.safe_profile_slug)}` };
+  const libraryMedia = await loadLibraryProfileMedia(env, "adult_profile", profile.creator_id, profile.version_id);
+  return { profile, links: links.results, media: libraryMedia.length ? libraryMedia : media.results, safeProfileUrl: `${safeOrigin}/${encodeURIComponent(profile.safe_profile_slug)}` };
 }
 
 async function copyAdultDisplayMedia(env: Env, profile: AdultProfileRow, media: AdultMediaRow[]) {
@@ -579,7 +618,7 @@ async function copyAdultDisplayMedia(env: Env, profile: AdultProfileRow, media: 
         checksum: item.sha256, imageRole: item.image_role, surface: "adult_profile",
       });
       if (!existed) created.push(destinationKey);
-      copied.push({ id: item.id, mediaKey: result.destinationKey, checksum: result.checksum, altText: item.alt_text, contentType: item.content_type, imageRole: item.image_role } as const);
+      copied.push({ id: item.id, mediaKey: result.destinationKey, checksum: result.checksum, altText: item.alt_text, contentType: item.content_type, imageRole: item.image_role, ...(item.position === undefined ? {} : { position: item.position }) } as const);
     }
     return copied;
   } catch (error) {
@@ -598,6 +637,7 @@ function adultDisplayMediaProjection(env: Env, profile: AdultProfileRow, media: 
     altText: item.alt_text,
     contentType: item.content_type,
     imageRole: item.image_role,
+    ...(item.position === undefined ? {} : { position: item.position }),
   } as const));
 }
 
@@ -605,7 +645,7 @@ function toAdultSnapshot(env: Env, loaded: Awaited<ReturnType<typeof loadApprove
   const useSafeAppearance = loaded.profile.inherit_sfw_theme === 1 && loaded.profile.sfw_theme_key && loaded.profile.sfw_button_style && loaded.profile.sfw_background_mode && loaded.profile.sfw_background_color && loaded.profile.sfw_primary_color && loaded.profile.sfw_text_color && loaded.profile.sfw_card_color && loaded.profile.sfw_radius_scale;
   const appearance = useSafeAppearance ? { themeKey: loaded.profile.sfw_theme_key!, buttonStyle: loaded.profile.sfw_button_style!, backgroundMode: loaded.profile.sfw_background_mode!, backgroundColor: loaded.profile.sfw_background_color!, primaryColor: loaded.profile.sfw_primary_color!, textColor: loaded.profile.sfw_text_color!, cardColor: loaded.profile.sfw_card_color!, radiusScale: loaded.profile.sfw_radius_scale! } : { themeKey: loaded.profile.theme_key, buttonStyle: loaded.profile.button_style, backgroundMode: loaded.profile.background_mode, backgroundColor: loaded.profile.background_color, primaryColor: loaded.profile.primary_color, textColor: loaded.profile.text_color, cardColor: loaded.profile.card_color, radiusScale: loaded.profile.radius_scale };
   return {
-    schemaVersion: 4,
+    schemaVersion: loaded.media.some((item) => item.position !== undefined) ? 5 : 4,
     publishedVersionId: loaded.profile.version_id,
     creator: { slug: loaded.profile.slug, displayName: loaded.profile.display_name, bio: loaded.profile.adult_bio, safeProfileUrl: loaded.safeProfileUrl },
     links: loaded.links.map((link) => ({ id: link.id, label: link.label, destinationUrl: link.destination_url, destinationHost: link.destination_host })),

@@ -214,6 +214,31 @@ test("processed adult image projections remain session-bound, no-store, and do n
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("v5 protected carousel stays behind the age session and rejects wrong image metadata", async () => {
+  const v5 = structuredClone(protectedImageProfile);
+  v5.schemaVersion = 5;
+  v5.media[0].position = 0;
+  const second = { id: "second-photo", mediaKey: "adult-media/adelaide/adult-v3/second-photo.webp", checksum: "a".repeat(64), altText: "", contentType: "image/webp", imageRole: "gallery", position: 1 };
+  v5.media.push(second);
+  const { env } = environment(v5);
+  const metadata = { creatorId: "adelaide", creatorSlug: "adelaide", versionId: "adult-v3", attachmentId: second.id, checksum: second.checksum, surface: "adult_profile", imageRole: "gallery" };
+  env.ADULT_MEDIA.get = async () => ({ body: new Blob(["image"]), httpMetadata: { contentType: "image/webp" }, customMetadata: metadata, checksums: { sha256: Uint8Array.from(second.checksum.match(/../g), (value) => Number.parseInt(value, 16)).buffer } });
+  const route = new Request(`https://adult.example/media/adelaide/${second.id}`);
+  assert.equal((await worker.fetch(route, env)).status, 404);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ success: true, hostname: "adult.example", action: "adult_access" });
+  try {
+    const form = new FormData(); form.set("cf-turnstile-response", "valid-token");
+    const confirmed = await worker.fetch(new Request("https://adult.example/age/adelaide/confirm", { method: "POST", headers: { origin: "https://adult.example" }, body: form }), env);
+    const session = { headers: { cookie: cookie(confirmed) } };
+    assert.equal((await worker.fetch(new Request(`https://adult.example/media/adelaide/${second.id}`, session), env)).status, 200);
+    metadata.imageRole = "avatar";
+    assert.equal((await worker.fetch(new Request(`https://adult.example/media/adelaide/${second.id}`, session), env)).status, 404);
+    const invalid = structuredClone(v5); invalid.media[1].position = 0;
+    assert.equal((await worker.fetch(new Request("https://adult.example/age/adelaide"), environment(invalid).env)).status, 404);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("adult v4 image snapshots fail closed on a cross-surface key, unexpected metadata, checksum, or R2 content type", async () => {
   const crossSurface = structuredClone(protectedImageProfile);
   crossSurface.media[0].mediaKey = "public-media/adelaide/adult-v3/5cbf9896-a553-4b3c-8706-3f7c16c4d021.webp";

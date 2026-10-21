@@ -1398,6 +1398,24 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
     ] : [creatorPrepare(DB, creatorId, `INSERT INTO creator_public_profile_versions
       (id,profile_id,creator_id,version_number,display_name,headline,bio,avatar_media_id,content_checksum,created_by)
       VALUES (?,?,@creator,?,?,?, ?,NULL,?,?)`).bind(versionId, profileId, versionNumber, displayName, headline, bio, checksum, identity.email)]),
+    ...(!draft && profile ? [creatorPrepare(DB, creatorId, `INSERT INTO creator_profile_image_attachments
+      (id,creator_id,surface,image_role,public_profile_version_id,derivative_id)
+      SELECT lower(hex(randomblob(16))),a.creator_id,a.surface,a.image_role,?,a.derivative_id
+      FROM creator_profile_image_attachments a
+      WHERE a.creator_id=@creator AND a.surface='public_sfw' AND a.status='attached'
+        AND a.public_profile_version_id=(SELECT id FROM creator_public_profile_versions
+          WHERE creator_id=@creator AND profile_id=? AND status IN ('approved','published')
+          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END,version_number DESC LIMIT 1)`)
+      .bind(versionId, profileId)] : []),
+    ...(!draft && profile ? [creatorPrepare(DB, creatorId, `INSERT INTO creator_profile_library_photo_selections
+      (id,creator_id,surface,public_profile_version_id,derivative_id,position)
+      SELECT lower(hex(randomblob(16))),s.creator_id,s.surface,?,s.derivative_id,s.position
+      FROM creator_profile_library_photo_selections s
+      WHERE s.creator_id=@creator AND s.surface='public_sfw'
+        AND s.public_profile_version_id=(SELECT id FROM creator_public_profile_versions
+          WHERE creator_id=@creator AND profile_id=? AND status IN ('approved','published')
+          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END,version_number DESC LIMIT 1)`)
+      .bind(versionId, profileId)] : []),
     ...links.map((link) => creatorPrepare(DB, creatorId, `INSERT INTO creator_public_links
       (id,creator_id,profile_version_id,label,destination_url,destination_host,sort_order)
       VALUES (?,@creator,?,?,?,?,?)`).bind(link.id, versionId, link.label, link.destinationUrl, link.destinationHost, link.sortOrder)),
@@ -1426,7 +1444,11 @@ export async function savePublicProfileDraftAction(_previousState: PublicProfile
   ];
   try {
     await DB.batch(statements);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("profile_library_selection_invalid")) return {
+      status: "error", message: "A selected Library photo needs its source or permissions reviewed before this draft can be saved.",
+      reasonCode: "profile_photo_review_required", fieldErrors: {}, values,
+    };
     return { status: "error", message: "We could not save this profile. Try again.", reasonCode: "profile_save_failed", fieldErrors: {}, values };
   }
   revalidatePath("/public-profile");
@@ -1546,6 +1568,24 @@ export async function saveAdultProfileDraftAction(_previousState: AdultProfileDr
     ] : [creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_profile_versions
       (id,profile_id,creator_id,version_number,adult_bio,content_checksum,created_by)
       VALUES (?,?,@creator,?,?,?,?)`).bind(versionId, profileId, versionNumber, bio, checksum, identity.email)]),
+    ...(!draft && profile ? [creatorPrepare(DB, creatorId, `INSERT INTO creator_profile_image_attachments
+      (id,creator_id,surface,image_role,adult_profile_version_id,derivative_id)
+      SELECT lower(hex(randomblob(16))),a.creator_id,a.surface,a.image_role,?,a.derivative_id
+      FROM creator_profile_image_attachments a
+      WHERE a.creator_id=@creator AND a.surface='adult_profile' AND a.status='attached'
+        AND a.adult_profile_version_id=(SELECT id FROM creator_adult_profile_versions
+          WHERE creator_id=@creator AND profile_id=? AND status IN ('approved','published')
+          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END,version_number DESC LIMIT 1)`)
+      .bind(versionId, profileId)] : []),
+    ...(!draft && profile ? [creatorPrepare(DB, creatorId, `INSERT INTO creator_profile_library_photo_selections
+      (id,creator_id,surface,adult_profile_version_id,derivative_id,position)
+      SELECT lower(hex(randomblob(16))),s.creator_id,s.surface,?,s.derivative_id,s.position
+      FROM creator_profile_library_photo_selections s
+      WHERE s.creator_id=@creator AND s.surface='adult_profile'
+        AND s.adult_profile_version_id=(SELECT id FROM creator_adult_profile_versions
+          WHERE creator_id=@creator AND profile_id=? AND status IN ('approved','published')
+          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END,version_number DESC LIMIT 1)`)
+      .bind(versionId, profileId)] : []),
     ...links.flatMap((link) => [
       creatorPrepare(DB, creatorId, "INSERT OR IGNORE INTO creator_adult_link_entities (id,creator_id) VALUES (?,@creator)").bind(link.stableId),
       creatorPrepare(DB, creatorId, `INSERT INTO creator_adult_link_revisions
@@ -1563,7 +1603,15 @@ export async function saveAdultProfileDraftAction(_previousState: AdultProfileDr
       .bind(versionId, appearance.themeKey, appearance.buttonStyle, appearance.backgroundMode, appearance.backgroundColor, appearance.primaryColor, appearance.textColor, appearance.cardColor, appearance.radiusScale, appearance.inheritSfwTheme ? 1 : 0),
     identityAuditStatement(DB, actor, draft ? "adult_profile_draft_updated" : "adult_profile_draft_created", versionId, { profileId, versionNumber, linkCount: links.length, contentChecksum: checksum, appearance: appearance.themeKey, adultSurface: true }),
   ];
-  await DB.batch(statements);
+  try {
+    await DB.batch(statements);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("profile_library_selection_invalid")) return {
+      status: "error", message: "A selected Library photo needs its source or permissions reviewed before this draft can be saved.",
+      reasonCode: "profile_photo_review_required", fieldErrors: {}, values,
+    };
+    return { status: "error", message: "We could not save this profile. Try again.", reasonCode: "profile_save_failed", fieldErrors: {}, values };
+  }
   revalidatePath("/adult-profile");
   redirect("/adult-profile?notice=draft_saved");
 }

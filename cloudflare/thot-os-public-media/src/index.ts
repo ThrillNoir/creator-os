@@ -6,11 +6,12 @@ type PublicMediaItem = {
   href: string;
   checksum: string;
   contentType: "image/webp";
-  imageRole: "avatar" | "background";
+  imageRole: "avatar" | "background" | "gallery";
+  position?: number;
 };
 
 type PublicSnapshot = {
-  schemaVersion: 4;
+  schemaVersion: 4 | 5;
   publishedVersionId: string;
   creator: { slug: string; displayName: string; headline: string; bio: string };
   media: PublicMediaItem[];
@@ -66,12 +67,21 @@ function validSnapshot(value: unknown, requestOrigin: string, slug: string, vers
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Partial<PublicSnapshot>;
   if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media"])
-    || snapshot.schemaVersion !== 4 || snapshot.publishedVersionId !== versionId || !validCreator(snapshot.creator, slug) || !Array.isArray(snapshot.media)) return false;
+    || (snapshot.schemaVersion !== 4 && snapshot.schemaVersion !== 5) || snapshot.publishedVersionId !== versionId || !validCreator(snapshot.creator, slug) || !Array.isArray(snapshot.media)) return false;
+  if (snapshot.schemaVersion === 5 && (snapshot.media.length < 1 || snapshot.media.length > 6
+    || new Set(snapshot.media.map((item) => item?.id)).size !== snapshot.media.length
+    || !snapshot.media.every((item, index) => item && ID.test(item.id)
+    && item.position === index && item.imageRole === (index === 0 ? "avatar" : "gallery")
+    && item.contentType === "image/webp" && SHA256.test(item.checksum)
+    && validHref(item.href, requestOrigin, slug, versionId, item.id)))) return false;
   const selected = snapshot.media.filter((item) => item && typeof item === "object" && item.id === attachmentId);
   if (selected.length !== 1) return false;
   const media = selected[0];
-  return hasOnlyKeys(media, ["id", "href", "altText", "contentType", "imageRole", "checksum"])
-    && media.contentType === "image/webp" && (media.imageRole === "avatar" || media.imageRole === "background")
+  const position = snapshot.media.findIndex((item) => item.id === attachmentId);
+  return hasOnlyKeys(media, snapshot.schemaVersion === 5 ? ["id", "href", "altText", "contentType", "imageRole", "checksum", "position"] : ["id", "href", "altText", "contentType", "imageRole", "checksum"])
+    && media.contentType === "image/webp" && (snapshot.schemaVersion === 5
+      ? media.position === position && media.imageRole === (position === 0 ? "avatar" : "gallery")
+      : media.imageRole === "avatar" || media.imageRole === "background")
     && typeof media.checksum === "string" && SHA256.test(media.checksum)
     && validHref(media.href, requestOrigin, slug, versionId, attachmentId);
 }
