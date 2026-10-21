@@ -401,13 +401,13 @@
       "sha256": "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764",
       "purpose": "Applied approved bounded staging migration: additive preview-first private Portfolio fields and creator-scoped full-video links; legacy full-video rows remain unchanged for review.",
       "remoteId": 70
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0069_portfolio_draft_visibility.sql",
       "sha256": "75959e6de1a1e68429e3b737c70ddd2d679141a5a5338fed065e35188412abfb",
-      "purpose": "Pending bounded staging migration: private Portfolio card visibility and creator contact draft fields."
+      "purpose": "Applied approved bounded staging migration: private Portfolio card visibility and creator contact draft fields.",
+      "remoteId": 71
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
