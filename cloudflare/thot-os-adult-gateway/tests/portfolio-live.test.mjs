@@ -58,6 +58,12 @@ async function fetchPage(env, path, cookie, init = {}) {
   return worker.fetch(new Request(`https://more.example${path}`, { ...init, headers: { ...(cookie ? { cookie } : {}), ...init.headers } }), env);
 }
 
+function contactLink(markup) {
+  const href = /<a class="action" href="([^"]+)"/.exec(markup)?.[1];
+  assert.ok(href, "the visitor needs an explicit link to open their chosen app");
+  return href.replaceAll("&amp;", "&");
+}
+
 test("live projection accepts creator labels and never exposes private source IDs", async () => {
   const { projection, env } = await setup();
   assert.equal(validLivePortfolio(projection, slug, profileVersion), true);
@@ -111,20 +117,30 @@ test("full length contact uses only configured destinations and needs a same-ori
   assert.equal((await post(null, "https://more.example")).status, 404);
   assert.equal((await post(await session(), "https://other.example")).status, 404);
   const response = await post(await session(), "https://more.example");
-  assert.equal(response.status, 303);
-  assert.match(response.headers.get("location"), /^https:\/\/t\.me\/TestCreator\?text=/);
-  assert.match(decodeURIComponent(response.headers.get("location")), /From: Viewer/);
-  assert.match(decodeURIComponent(response.headers.get("location")), /Creator file: Renamed full video\.mp4/);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const telegramPage = await response.text();
+  assert.match(telegramPage, /Message ready · not sent|Open Telegram with this message/);
+  assert.doesNotMatch(telegramPage, /href="https:\/\/t\.me\/TestCreator[^\"]*preview-card-1/);
+  const telegramLink = new URL(contactLink(telegramPage));
+  assert.equal(telegramLink.origin, "https://t.me");
+  assert.equal(telegramLink.pathname, "/TestCreator");
+  assert.match(telegramLink.searchParams.get("text"), /From: Viewer/);
+  assert.match(telegramLink.searchParams.get("text"), /Creator file: Renamed full video\.mp4/);
   const wrong = new URLSearchParams(body); wrong.set("previewId", "private-source-asset");
   assert.equal((await post(await session(), "https://more.example", wrong)).status, 400);
   const email = new URLSearchParams(body); email.set("contactMethod", "email");
-  const emailLocation = (await post(await session(), "https://more.example", email)).headers.get("location");
-  assert.match(emailLocation, /^mailto:creator@example\.test\?/);
-  assert.match(decodeURIComponent(emailLocation), /Creator file: Renamed full video\.mp4/);
+  const emailPage = await (await post(await session(), "https://more.example", email)).text();
+  assert.match(emailPage, /Open email app with this message/);
+  const emailLink = new URL(contactLink(emailPage));
+  assert.equal(emailLink.protocol, "mailto:");
+  assert.equal(emailLink.pathname, "creator@example.test");
+  assert.equal(emailLink.searchParams.get("subject"), "Full-length request: A short preview");
+  assert.match(emailLink.searchParams.get("body"), /Creator file: Renamed full video\.mp4\r\nFrom: Viewer/);
   projection.contact.email = "a?cc=other@example.com"; // possible legacy projection; never allow it to add a mailto query
-  const legacyLocation = (await post(await session(), "https://more.example", email)).headers.get("location");
-  assert.match(legacyLocation, /^mailto:a%3Fcc%3Dother@example\.com\?subject=/);
-  assert.equal(new URL(legacyLocation).searchParams.has("cc"), false);
+  const legacyLink = new URL(contactLink(await (await post(await session(), "https://more.example", email)).text()));
+  assert.match(legacyLink.href, /^mailto:a%3Fcc%3Dother@example\.com\?subject=/);
+  assert.equal(legacyLink.searchParams.has("cc"), false);
 });
 
 test("preview-only clips have no false full-length request or private asset identifier", async () => {
@@ -150,8 +166,8 @@ test("a mismatched private reference is ignored without exposing another release
   const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "email", message: "Please send the full clip." });
   const response = await fetchPage(env, `/${slug}/portfolio/full-length/request`, await session(),
     { method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body });
-  assert.equal(response.status, 303);
-  assert.doesNotMatch(decodeURIComponent(response.headers.get("location")), /Renamed full video\.mp4|Creator file:/);
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(contactLink(await response.text()), /Renamed full video\.mp4|Creator file:/);
 });
 
 test("a private-reference lookup outage does not block the visitor's contact choice", async () => {
@@ -164,6 +180,19 @@ test("a private-reference lookup outage does not block the visitor's contact cho
   const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "telegram", message: "Please send the full clip." });
   const response = await fetchPage(env, `/${slug}/portfolio/full-length/request`, await session(),
     { method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body });
-  assert.equal(response.status, 303);
-  assert.doesNotMatch(decodeURIComponent(response.headers.get("location")), /Creator file:/);
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(contactLink(await response.text()), /Creator file:/);
+});
+
+test("prepared contact page escapes visitor text before offering an external app link", async () => {
+  const { env } = await setup();
+  const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "telegram",
+    message: "Please send <img src=x onerror=alert(1)> this clip." });
+  const response = await fetchPage(env, `/${slug}/portfolio/full-length/request`, await session(),
+    { method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body });
+  const markup = await response.text();
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(markup, /<img src=x/);
+  assert.match(markup, /&lt;img src=x/);
+  assert.match(new URL(contactLink(markup)).searchParams.get("text"), /<img src=x onerror=alert\(1\)>/);
 });

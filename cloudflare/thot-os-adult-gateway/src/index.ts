@@ -61,6 +61,11 @@ function page(body: string, status = 200, headers: HeadersInit = {}) {
   return new Response(body, { status, headers: { ...securityHeaders(), "content-type": "text/html; charset=utf-8", ...headers } });
 }
 
+function preparedContactPage(creatorName: string, slug: string, title: string, channel: "telegram" | "email", message: string, destination: string) {
+  const app = channel === "telegram" ? "Telegram" : "email app";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Message ${escapeHtml(creatorName)}</title><style>body{font:16px/1.5 system-ui,sans-serif;background:#241f28;color:#241f28;margin:0}main{width:min(100% - 2rem,40rem);box-sizing:border-box;margin:clamp(1rem,5vw,3rem) auto;padding:clamp(1rem,4vw,2rem);border:3px solid #241f28;background:#fffaf7;box-shadow:8px 8px #ffb0cc}small{font-weight:850;letter-spacing:.12em;text-transform:uppercase}h1{line-height:1.1;margin:.5rem 0}p{margin:.75rem 0 1rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:2px solid #241f28;padding:1rem;font:inherit}.action{display:block;padding:.8rem 1rem;border:2px solid #241f28;background:#ffb0cc;box-shadow:4px 4px #241f28;color:#241f28;font-weight:850;text-align:center;text-decoration:none}.back{display:inline-block;margin-top:1.5rem;color:#523368}:focus-visible{outline:3px solid #241f28;outline-offset:4px}</style></head><body><main><small>Message ready · not sent</small><h1>Review your message</h1><p>About ${escapeHtml(title)}. Open ${app}, check the recipient and message, then press Send there.</p><pre>${escapeHtml(message)}</pre><a class="action" href="${escapeHtml(destination)}" rel="noreferrer noopener">Open ${app} with this message ↗</a><p>If your app does not open, copy the message above and contact the creator directly.</p><a class="back" href="/${encodeURIComponent(slug)}">← Back to previews</a></main></body></html>`;
+}
+
 function safeHttpsUrl(value: string, host: string) {
   try {
     const url = new URL(value);
@@ -343,10 +348,10 @@ return {
       const message = `${edited}\n\n${creatorFile ? `Creator file: ${creatorFile}\n` : ""}From: ${name}`;
       let destination: string | null = null;
       if (channel === "telegram" && portfolio.contact.telegramUsername) destination = `https://t.me/${portfolio.contact.telegramUsername}?text=${encodeURIComponent(message)}`;
-      if (channel === "email" && portfolio.contact.email) destination = `mailto:${encodeURIComponent(portfolio.contact.email).replace(/%40/gi, "@")}?subject=${encodeURIComponent(`Full-length request: ${card.title}`)}&body=${encodeURIComponent(message)}`;
+      if (channel === "email" && portfolio.contact.email) destination = `mailto:${encodeURIComponent(portfolio.contact.email).replace(/%40/gi, "@")}?subject=${encodeURIComponent(`Full-length request: ${card.title}`)}&body=${encodeURIComponent(message.replace(/\n/g, "\r\n"))}`;
       if (!destination) return page("Contact method unavailable", 400);
-      event(env, profile, "adult_portfolio_contact_open", card.id);
-      return new Response(null, { status: 303, headers: { ...securityHeaders(), location: destination } });
+      event(env, profile, "adult_portfolio_contact_prepare", card.id);
+      return page(preparedContactPage(profile.creator.displayName || "Creator", parts[0], card.title, channel as "telegram" | "email", message, destination));
     }
     if (request.method === "GET" && parts.length === 3 && parts[0] === "media" && SLUG.test(parts[1]) && ITEM_ID.test(parts[2])) {
       const profile = await loadProfile(env, parts[1]);
