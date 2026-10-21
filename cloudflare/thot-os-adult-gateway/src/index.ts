@@ -335,7 +335,7 @@ return {
       const message = `${edited}\n\nFrom: ${name}`;
       let destination: string | null = null;
       if (channel === "telegram" && portfolio.contact.telegramUsername) destination = `https://t.me/${portfolio.contact.telegramUsername}?text=${encodeURIComponent(message)}`;
-      if (channel === "email" && portfolio.contact.email) destination = `mailto:${portfolio.contact.email}?subject=${encodeURIComponent(`Full-length request: ${card.title}`)}&body=${encodeURIComponent(message)}`;
+      if (channel === "email" && portfolio.contact.email) destination = `mailto:${encodeURIComponent(portfolio.contact.email).replace(/%40/gi, "@")}?subject=${encodeURIComponent(`Full-length request: ${card.title}`)}&body=${encodeURIComponent(message)}`;
       if (!destination) return page("Contact method unavailable", 400);
       event(env, profile, "adult_portfolio_contact_open", card.id);
       return new Response(null, { status: 303, headers: { ...securityHeaders(), location: destination } });

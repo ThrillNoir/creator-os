@@ -2,7 +2,7 @@ const ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const LABEL_ID = /^[0-9a-f-]{36}$/i;
 
 export function portfolioAddFields(form: FormData, assetId: string) {
-  if (form.get("confirmAdd") !== "yes") throw new Error("Tick Add to portfolio to confirm this private draft selection.");
+  if (form.get("confirmAdd") !== "yes") throw new Error("Choose Add to private Portfolio to save this draft selection.");
   const choice = String(form.get("categoryChoice") ?? "").trim();
   const newCategoryName = String(form.get("newCategoryName") ?? "").trim().normalize("NFKC").replace(/\s+/g, " ");
   if (choice !== "__new__" && !LABEL_ID.test(choice)) throw new Error("Choose a category or create one.");

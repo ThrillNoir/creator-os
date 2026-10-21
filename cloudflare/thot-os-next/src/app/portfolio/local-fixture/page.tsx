@@ -30,16 +30,16 @@ export default async function PortfolioLocalFixture({ searchParams }: { searchPa
   const cards = [
     { assetId: "synthetic-preview-1", basename: "Synthetic short clip.mp4", title: "A short clip", description: "A quick look at the collection.",
       categoryId: fromLibrary ? selectedCategoryId : categories[0].id, fullLengthAssetId: fromLibrary ? selectedFullLengthId : null, video: true, legacy: false, safety: "nsfw" as const,
-      sourceAvailable: true, mediaReady: true, previewKey: "synthetic-poster-1", imageUrl: swatch("#ffb0cc", "SYNTHETIC CLIP") },
+      sourceAvailable: true, visible: true, mediaReady: true, previewKey: "synthetic-poster-1", imageUrl: swatch("#ffb0cc", "SYNTHETIC CLIP") },
     { assetId: "synthetic-photo-2", basename: "Synthetic portrait.jpg", title: "Portrait preview", description: "A sample photo card.",
       categoryId: categories[1].id, fullLengthAssetId: "synthetic-private-full", video: false, legacy: false, safety: "nsfw" as const,
-      sourceAvailable: true, mediaReady: true, previewKey: "synthetic-preview-2", imageUrl: swatch("#b3e9cc", "SYNTHETIC PHOTO") },
+      sourceAvailable: true, visible: true, mediaReady: true, previewKey: "synthetic-preview-2", imageUrl: swatch("#b3e9cc", "SYNTHETIC PHOTO") },
   ];
   return <div className="os-cloud-shell"><main className="workspace" style={{ marginLeft: 0, maxWidth: 1440 }}>
     <PageHeader title="Portfolio" eyebrow="LOCAL SYNTHETIC FIXTURE" subtitle="This local review page uses invented cards and cannot publish or save real data." />
     <p className="portfolio-publish-attention">Synthetic review only. Buttons run no-op local actions; no creator data is saved or published. {fromLibrary ? "The category and optional private full video below came from the one-step Library selection." : ""}</p>
     {fromLibrary && <Link className="secondary-action" href={`/library/local-fixture?${libraryQuery}`}>← Back to synthetic Library asset</Link>}
-    <PortfolioEditor creatorName="Example Creator" revision={0} cards={fromLibrary ? cards.slice(0, 1) : cards} categories={categories}
+    <PortfolioEditor creatorName="Example Creator" revision={0} cards={fromLibrary ? cards.slice(0, 1) : cards} initialContact={{ telegramUsername: "", email: "", message: "" }} categories={categories}
       fullVideos={[{ id: "synthetic-private-full", basename: "Private full video.mp4" }]} canEdit publishingEnabled profileReady
       saveAction={fixtureAction} publishAction={fixtureAction} createCategoryAction={fixtureAction} renameCategoryAction={fixtureAction} synthetic />
   </main></div>;

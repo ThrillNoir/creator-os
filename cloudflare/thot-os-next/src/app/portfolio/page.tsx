@@ -36,7 +36,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
     const privateImageId = privatePortfolioImageObjectId(item.preview_r2_key);
     return { assetId: item.asset_id, basename: item.basename, title: item.title, description: item.description,
       categoryId: item.category_id, fullLengthAssetId: item.full_length_asset_id,
-      video: isVideoPortfolioItem(item), legacy: item.preview_confirmed !== 1, safety: item.safety, sourceAvailable: Boolean(item.source_available),
+      video: isVideoPortfolioItem(item), legacy: item.preview_confirmed !== 1, visible: item.is_visible === 1, safety: item.safety, sourceAvailable: Boolean(item.source_available),
       mediaReady: Boolean(item.preview_r2_key), previewKey: item.preview_r2_key,
       imageUrl: privateImageId ? `/api/preview/${privateImageId}` : null };
   });
@@ -49,7 +49,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
     <div className="panel portfolio-workspace-intro"><h2>Build your More page</h2>
       <p>Open a photo or short clip in the Content Library, choose <strong>Add to Portfolio</strong>, set its category and optionally link a private full-length video, then save once. Return here to arrange cards or approve publication. The full video is never shown on More.</p>
       <Link className="secondary-action" href="/library">Open Content Library →</Link></div>
-    <PortfolioEditor key={JSON.stringify([draft.revision, ...draft.items.map((item) => item.preview_r2_key)])} creatorName={context.creator.creator_name} revision={draft.revision} cards={cards}
+    <PortfolioEditor key={JSON.stringify([draft.revision, ...draft.items.map((item) => item.preview_r2_key)])} creatorName={context.creator.creator_name} revision={draft.revision} cards={cards} initialContact={draft.contact}
       categories={draft.categories} fullVideos={draft.fullVideos} canEdit={roleCan(context.creator.role, "mutate")}
       publishingEnabled={publishingEnabled} profileReady={Boolean(profile)}
       saveAction={savePortfolioDraftAction} publishAction={publishPortfolioAction}

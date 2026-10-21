@@ -5,7 +5,7 @@ import { AttributeFields } from "@/components/attribute-fields";
 import { PageHeader } from "@/components/app-shell";
 import { PortfolioLibraryControl } from "@/components/portfolio-library-control";
 import type { AssetRow } from "@/lib/library";
-import { portfolioLibraryEligible } from "@/lib/portfolio-library-eligibility";
+import { portfolioLibraryBlockedReason, portfolioLibraryEligible } from "@/lib/portfolio-library-eligibility";
 import { portfolioAddFields } from "@/lib/portfolio-add-fields";
 
 const assetId = "synthetic-preview-1";
@@ -67,13 +67,13 @@ export default async function LibraryLocalFixture({ searchParams }: { searchPara
       <p>This still stands in for a private video. There is no real playback or thumbnail upload in this fixture.</p></section>
       <section className="panel classification-panel"><h2>Review &amp; tag this asset</h2><p>Choose NSFW if appropriate and save classification before adding this preview.</p>
         <form action={saveSyntheticClassification}><AttributeFields asset={asset} /><button className="primary wide" type="submit">Save classification</button></form>
-      </section></div>
-    <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit savedSafety={asset.safety}
+    <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit savedSafety={asset.safety} embedded
       action={toggleSyntheticPortfolio} portfolioHref={`/portfolio/local-fixture?${portfolioQuery}`}
       categories={[{ id: clipCategoryId, name: "Clips" }, { id: photoCategoryId, name: "Photo sets" }]}
       fullVideos={[{ id: fullVideoId, basename: "Private full video.mp4" }]}
       selectedCategoryName={selected ? categoryName : null} selectedFullLengthName={selected && fullLengthAssetId ? "Private full video.mp4" : null}
-      blockedReason={safety !== "nsfw" ? "Only a correctly classified 18+ preview can be added. Save its classification first." : undefined} />
+      blockedReason={portfolioLibraryBlockedReason(asset) ?? undefined} />
+      </section></div>
     {selected && <p className="success" role="status">Synthetic preview, category and optional private full-length link saved together. Open Portfolio only if you want to edit the layout or publish later.</p>}
     <section className="panel history"><h2>Asset use &amp; change history</h2><div className="empty"><b>No activity in this synthetic fixture.</b><span>Real Library events remain private in THOT OS.</span></div></section>
   </main></div>;

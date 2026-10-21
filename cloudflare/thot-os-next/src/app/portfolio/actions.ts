@@ -141,8 +141,9 @@ async function saveLabel(form: FormData, kind: "category" | "genre", rename: boo
 
 export async function createPortfolioCategoryAction(form: FormData) { return saveLabel(form, "category", false); }
 export async function renamePortfolioCategoryAction(form: FormData) { return saveLabel(form, "category", true); }
-type CompositionCard = { assetId: string; title: string; description: string; categoryId: string | null; fullLengthAssetId: string | null; previewKey: string | null };
-type Composition = { revision: number; cards: CompositionCard[] };
+type CompositionCard = { assetId: string; title: string; description: string; categoryId: string | null; fullLengthAssetId: string | null; previewKey: string | null; visible?: boolean };
+type CompositionContact = { telegramUsername: string; email: string; message: string };
+type Composition = { revision: number; cards: CompositionCard[]; contact: CompositionContact };
 
 function parseComposition(form: FormData): Composition {
   const raw = field(form, "composition");
@@ -152,11 +153,23 @@ function parseComposition(form: FormData): Composition {
   if (!value || typeof value !== "object") throw new Error("Portfolio draft could not be read.");
   const data = value as Partial<Composition>;
   if (typeof data.revision !== "number" || !Number.isSafeInteger(data.revision) || !Array.isArray(data.cards) || data.cards.length > 24) throw new Error("Portfolio draft must contain at most 24 cards.");
+  const contact = data.contact ?? { telegramUsername: "", email: "", message: "" };
+  if (!contact || typeof contact !== "object" || typeof contact.telegramUsername !== "string" ||
+      typeof contact.email !== "string" || typeof contact.message !== "string") throw new Error("Check your creator contact details.");
+  const telegramUsername = contact.telegramUsername.trim().replace(/^@/, "");
+  const email = contact.email.trim();
+  const message = contact.message.trim().replace(/\r\n/g, "\n");
+  if ((telegramUsername && !/^[A-Za-z0-9_]{5,32}$/.test(telegramUsername)) ||
+      (email && (email.length > 254 || !/^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(email))) ||
+      message.length > 500 || /[\u0000-\u0009\u000b-\u001f\u007f<>]/.test(message)) {
+    throw new Error("Check your Telegram username, contact email or custom message.");
+  }
   const ids = new Set<string>();
   for (const card of data.cards) {
     if (!card || typeof card !== "object" || !ASSET_ID.test(card.assetId) || ids.has(card.assetId) ||
       typeof card.title !== "string" || !card.title.trim() || card.title.length > 100 ||
       typeof card.description !== "string" || card.description.length > 280 ||
+      (card.visible !== undefined && typeof card.visible !== "boolean") ||
       (card.previewKey !== null && (typeof card.previewKey !== "string" || card.previewKey.length > 1024)) ||
       (card.categoryId !== null && (typeof card.categoryId !== "string" || !LABEL_ID.test(card.categoryId))) ||
       (card.fullLengthAssetId !== null && (typeof card.fullLengthAssetId !== "string" || !ASSET_ID.test(card.fullLengthAssetId) || card.fullLengthAssetId === card.assetId))) {
@@ -164,7 +177,7 @@ function parseComposition(form: FormData): Composition {
     }
     ids.add(card.assetId);
   }
-  return data as Composition;
+  return { revision: data.revision, cards: data.cards, contact: { telegramUsername, email, message } };
 }
 
 async function saveComposition(form: FormData) {
@@ -181,7 +194,8 @@ async function saveComposition(form: FormData) {
   }
   const categories = new Set(draft.categories.map((category) => category.id));
   if (composition.cards.some((card) => card.categoryId && !categories.has(card.categoryId))) throw new Error("Choose this creator's category.");
-  const fullIds = [...new Set(composition.cards.map((card) => card.fullLengthAssetId).filter((id): id is string => Boolean(id)))];
+  const fullIds = [...new Set(composition.cards.filter((card) => card.visible !== false)
+    .map((card) => card.fullLengthAssetId).filter((id): id is string => Boolean(id)))];
   if (fullIds.length) {
     const full = await creatorPrepare(DB, creatorId, `SELECT a.id FROM assets a
       JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
@@ -193,12 +207,13 @@ async function saveComposition(form: FormData) {
   const chosen = new Set(composition.cards.map((card) => card.assetId));
   const statements = [
     creatorPrepare(DB, creatorId, `UPDATE creator_portfolio_draft_state
-      SET revision=CASE WHEN revision=? THEN revision+1 ELSE -1 END,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator`).bind(composition.revision),
+      SET revision=CASE WHEN revision=? THEN revision+1 ELSE -1 END,contact_telegram=?,contact_email=?,contact_message=?,updated_at=CURRENT_TIMESTAMP WHERE creator_id=@creator`)
+      .bind(composition.revision, composition.contact.telegramUsername, composition.contact.email, composition.contact.message),
     ...composition.cards.flatMap((card, order) => [
       creatorPrepare(DB, creatorId, `UPDATE creator_portfolio_items SET title=?,description=?,category_id=?,genre_id=NULL,
-        full_length_asset_id=?,sort_order=?,updated_at=CURRENT_TIMESTAMP,updated_by=?
-        WHERE creator_id=@creator AND asset_id=?`).bind(card.title.trim(), card.description, card.categoryId, card.fullLengthAssetId, order, context.email, card.assetId),
-      audit(DB, creatorId, context.email, "item_saved", card.assetId, { categoryId: card.categoryId, fullLengthLinked: Boolean(card.fullLengthAssetId), order }),
+        full_length_asset_id=?,is_visible=?,sort_order=?,updated_at=CURRENT_TIMESTAMP,updated_by=?
+        WHERE creator_id=@creator AND asset_id=?`).bind(card.title.trim(), card.description, card.categoryId, card.fullLengthAssetId, card.visible === false ? 0 : 1, order, context.email, card.assetId),
+      audit(DB, creatorId, context.email, "item_saved", card.assetId, { categoryId: card.categoryId, fullLengthLinked: Boolean(card.fullLengthAssetId), visible: card.visible !== false, order }),
     ]),
     ...draft.items.filter((item) => !chosen.has(item.asset_id)).flatMap((item) => [
       creatorPrepare(DB, creatorId, "DELETE FROM creator_portfolio_items WHERE creator_id=@creator AND asset_id=?").bind(item.asset_id),
@@ -218,11 +233,8 @@ export async function savePortfolioDraftAction(form: FormData) {
 
 export async function publishPortfolioAction(form: FormData) {
   if (field(form, "publicRightsApproved") !== "yes") throw new Error("Confirm public preview rights and consent before publishing.");
-  const telegramUsername = field(form, "telegramUsername").replace(/^@/, "");
-  const email = field(form, "email");
-  if ((telegramUsername && !/^[A-Za-z0-9_]{5,32}$/.test(telegramUsername)) ||
-      (email && !/^[^\s@<>]{1,64}@[^\s@<>]{1,190}$/.test(email))) throw new Error("Check the Telegram username or contact email.");
   const { context, composition } = await saveComposition(form);
+  const { telegramUsername, email, message } = composition.contact;
   const creatorId = context.creator.creator_id;
   const env = cloudflareEnv();
   const releaseEnv = env as CloudflareEnv & { PORTFOLIO_PUBLISHING_ENABLED?: string };
@@ -234,8 +246,9 @@ export async function publishPortfolioAction(form: FormData) {
   if (!profile) throw new Error("Publish this creator's 18+ profile before publishing a portfolio.");
   const draft = await getPortfolioDraft(creatorId);
   if (draft.revision !== composition.revision + 1) throw new Error("This draft changed elsewhere. Refresh and review it before publishing.");
-  if (composition.cards.length < 1 || composition.cards.length > 24) throw new Error("Add 1 to 24 cards before publishing.");
-  const cards = composition.cards.map((submitted) => {
+  const visibleCards = composition.cards.filter((card) => card.visible !== false);
+  if (visibleCards.length < 1 || visibleCards.length > 24) throw new Error("Show at least one card before publishing.");
+  const cards = visibleCards.map((submitted) => {
     const item = draft.items.find((candidate) => candidate.asset_id === submitted.assetId);
     if (!item || item.preview_confirmed !== 1 || item.preview_asset_id || item.safety !== "nsfw" || !item.source_available || !submitted.categoryId || !submitted.title.trim()) throw new Error("Use a confirmed short preview card and assign its category before publishing.");
     const section = draft.categories.find((label) => label.id === submitted.categoryId)?.name;
@@ -252,7 +265,7 @@ export async function publishPortfolioAction(form: FormData) {
     throw new Error("Add a Telegram username or contact email so visitors can request a full-length video.");
   }
   const versionId = crypto.randomUUID();
-  const manifest = { schemaVersion: 2, contact: { ...(telegramUsername ? { telegramUsername } : {}), ...(email ? { email } : {}) }, cards };
+  const manifest = { schemaVersion: 2, contact: { ...(telegramUsername ? { telegramUsername } : {}), ...(email ? { email } : {}), ...(message ? { message } : {}) }, cards };
   const inserted = await creatorPrepare(env.DB, creatorId, `INSERT INTO creator_portfolio_release_versions
     (id,creator_id,adult_profile_version_id,status,manifest_json,approved_by)
     SELECT ?,@creator,?,'approved',?,? FROM creator_portfolio_draft_state

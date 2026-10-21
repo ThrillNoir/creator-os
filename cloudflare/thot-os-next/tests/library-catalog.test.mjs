@@ -68,6 +68,23 @@ test("library type filters include HEIC photos case-insensitively and keep video
   } finally { db.close(); }
 });
 
+test("teaser filter describes the asset itself and stays creator scoped", () => {
+  const db = database();
+  try {
+    const insertAsset = db.prepare("INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,1,?)");
+    const insertAuthority = db.prepare("INSERT INTO asset_media_authorities VALUES (?,?,'r2_native','canonical_verified')");
+    const insertClassification = db.prepare("INSERT INTO asset_classifications VALUES (?,?,'nsfw',?,0,'')");
+    for (const [id, creator, teaser] of [["teaser-a", "creator-a", 1], ["full-a", "creator-a", 0], ["teaser-b", "creator-b", 1]]) {
+      insertAsset.run(id, creator, `${id}.mp4`, "mp4", 10, "2026-10-01", "", null, `/${id}`);
+      insertAuthority.run(id, creator);
+      insertClassification.run(id, creator, teaser);
+    }
+    assert.deepEqual(query(db, "creator-a", { teaser: "yes" }).map((row) => row.id), ["teaser-a"]);
+    assert.deepEqual(query(db, "creator-a", { teaser: "no" }).map((row) => row.id), ["full-a"]);
+    assert.deepEqual(query(db, "creator-a", { teaser: "unknown" }).map((row) => row.id).sort(), ["full-a", "teaser-a"]);
+  } finally { db.close(); }
+});
+
 test("library search covers notes, creator notes and IDs with literal LIKE wildcards", () => {
   const db = database();
   try {

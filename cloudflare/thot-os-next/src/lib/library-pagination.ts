@@ -16,7 +16,7 @@ export function normalizeLibraryQuery(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, LIBRARY_QUERY_MAX_LENGTH) : "";
 }
 
-export function buildLibraryAssetsQuery(filters: { safety?: string; destination?: string; type?: string; query?: string; page?: string | number } = {}, destinations: readonly string[] = [], lookahead = false) {
+export function buildLibraryAssetsQuery(filters: { safety?: string; destination?: string; type?: string; teaser?: string; query?: string; page?: string | number } = {}, destinations: readonly string[] = [], lookahead = false) {
   const conditions = ["a.creator_id=?", "a.source_available=1", "ma.asset_id IS NOT NULL"];
   const values: unknown[] = [];
   if (filters.safety === "review") conditions.push("c.safety IS NULL");
@@ -27,6 +27,8 @@ export function buildLibraryAssetsQuery(filters: { safety?: string; destination?
   }
   if (filters.type === "photos") conditions.push("lower(a.extension) IN ('jpg','jpeg','png','webp','heic')");
   if (filters.type === "videos") conditions.push("lower(a.extension) IN ('mp4','mov','m4v','webm')");
+  if (filters.teaser === "yes") conditions.push("c.is_teaser=1");
+  if (filters.teaser === "no") conditions.push("COALESCE(c.is_teaser,0)=0");
   const query = normalizeLibraryQuery(filters.query);
   if (query) {
     const like = `%${escapeLibraryLikeQuery(query)}%`;

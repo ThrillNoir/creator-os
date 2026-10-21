@@ -27,7 +27,7 @@ export interface AssetRow {
   playback_failure_code: string | null;
 }
 
-export interface LibraryFilters { safety?: string; destination?: string; type?: string; query?: string; page?: string | number }
+export interface LibraryFilters { safety?: string; destination?: string; type?: string; teaser?: string; query?: string; page?: string | number }
 export interface CreatorFriend { id: number; display_name: string; stage_name: string | null; consent_status: string }
 export interface AttachedFriend extends CreatorFriend { evidence_platform: string | null; confirmed_at: string | null }
 export interface AssetEvent { id: string; actor: string; event_type: string; snapshot: string; created_at: string }

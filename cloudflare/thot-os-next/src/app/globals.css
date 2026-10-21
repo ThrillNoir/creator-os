@@ -174,7 +174,7 @@ button, input, textarea, select { font: inherit; }
 .view-links { display: flex; gap: 6px; }
 .view-links a { display: block; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; }
 .view-links a.active { border-color: var(--purple); background: var(--purple); }
-.library-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(125px, auto)) auto auto; gap: 9px; align-items: end; margin: 20px 0 12px; }
+.library-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(4, minmax(125px, auto)) auto auto; gap: 9px; align-items: end; margin: 20px 0 12px; }
 .library-toolbar label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .library-toolbar input, .library-toolbar select { width: 100%; min-height: 42px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: #100c16; color: var(--ink); }
 .library-toolbar select { text-transform: capitalize; }

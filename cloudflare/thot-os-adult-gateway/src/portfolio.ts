@@ -30,7 +30,7 @@ export type LivePortfolioProjection = {
   creatorSlug: string;
   publishedProfileVersionId: string;
   portfolioVersionId: string;
-  contact: { telegramUsername?: string; email?: string };
+  contact: { telegramUsername?: string; email?: string; message?: string };
   cards: LivePortfolioCard[];
 };
 export type PortfolioProjection = FixturePortfolioProjection | LivePortfolioProjection;
@@ -41,6 +41,8 @@ const GENRES = ["Portraits", "Performance", "Everyday"] as const;
 const CHECKSUM = /^[a-f0-9]{64}$/;
 const LABEL = /^[^\u0000-\u001f\u007f<>]{1,50}$/;
 const TELEGRAM = /^[A-Za-z0-9_]{5,32}$/;
+// Keep reading already-published projections created under the earlier address contract.
+// New releases use a stricter validator; the mailto builder percent-encodes legacy addresses.
 const EMAIL = /^[^\s@<>]{1,64}@[^\s@<>]{1,190}$/;
 
 function onlyKeys(value: object, keys: string[]) {
@@ -81,9 +83,11 @@ export function validLivePortfolio(value: unknown, slug: string, profileVersionI
     projection.publishedProfileVersionId !== profileVersionId || !ID.test(profileVersionId) ||
     !projection.portfolioVersionId || !ID.test(projection.portfolioVersionId) ||
     !projection.contact || typeof projection.contact !== "object" || Array.isArray(projection.contact) ||
-    !onlyKeys(projection.contact, ["telegramUsername", "email"]) ||
+    !onlyKeys(projection.contact, ["telegramUsername", "email", "message"]) ||
     (projection.contact.telegramUsername !== undefined && !TELEGRAM.test(projection.contact.telegramUsername)) ||
     (projection.contact.email !== undefined && !EMAIL.test(projection.contact.email)) ||
+    (projection.contact.message !== undefined && (typeof projection.contact.message !== "string" || projection.contact.message.length < 1 ||
+      projection.contact.message.length > 500 || /[\u0000-\u0009\u000b-\u001f\u007f<>]/.test(projection.contact.message))) ||
     !Array.isArray(projection.cards) || projection.cards.length < 1 || projection.cards.length > 24) return false;
   const ids = new Set<string>();
   return projection.cards.every((card) => {
@@ -106,8 +110,9 @@ function html(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
 }
 
-export function fullLengthMessage(creatorName: string, previewId: string, clipTitle: string, previewOnly = false) {
-  return `Hello ${creatorName},\nI would love to see the full length. Can you please send me a payment option and the download link?\n\n${previewOnly ? "Preview reference" : "Asset ID"}: ${previewId}\n${previewOnly ? "Preview title" : "Full-length clip"}: ${clipTitle}`;
+export function fullLengthMessage(creatorName: string, previewId: string, clipTitle: string, previewOnly = false, creatorMessage = "") {
+  const opening = creatorMessage.trim() || `Hello ${creatorName},\nI would love to see the full length. Can you please send me a payment option and the download link?`;
+  return `${opening}\n\n${previewOnly ? "Preview reference" : "Asset ID"}: ${previewId}\n${previewOnly ? "Preview title" : "Full-length clip"}: ${clipTitle}`;
 }
 
 function hasFullLengthRequest(card: PortfolioCard | LivePortfolioCard, fixture: boolean) {
@@ -125,13 +130,13 @@ export function renderPortfolio(projection: PortfolioProjection, creatorName: st
     (projection.schemaVersion !== 1 || selectedGenre === "All genres" || card.genre === selectedGenre));
   const slug = encodeURIComponent(projection.creatorSlug);
   const option = (label: string, selected: string) => `<option value="${label === "All sections" || label === "All genres" ? "" : html(label)}"${label === selected ? " selected" : ""}>${html(label)}</option>`;
-  const contact = projection.schemaVersion === 2 ? projection.contact : { telegramUsername: "fixture", email: "fixture@example.test" };
+  const contact = projection.schemaVersion === 2 ? projection.contact : { telegramUsername: "fixture", email: "fixture@example.test", message: "" };
   const contactOptions = `${contact.telegramUsername ? '<option value="telegram">Telegram</option>' : ""}${contact.email ? '<option value="email">Email</option>' : ""}`;
   const cardHtml = cards.map((card) => `<article class="portfolio-card">
     ${card.kind === "video"
       ? `<video controls preload="none" playsinline poster="${card.posterPath}" aria-label="Preview clip: ${html(card.title)}"><source src="${card.previewPath}" type="video/mp4">Your browser cannot play this preview.</video>`
       : `<img src="${card.previewPath}" alt="${html(card.title)}: ${html(card.description)}" loading="lazy">`}
-    <div class="portfolio-copy"><p class="portfolio-meta">${html(card.section)}${projection.schemaVersion === 1 && card.genre ? ` · ${html(card.genre)}` : ""}</p><h3>${html(card.title)}</h3><p>${html(card.description)}</p>${card.kind === "video" ? '<p class="portfolio-note">Preview clip</p>' : ""}${hasFullLengthRequest(card, projection.schemaVersion === 1) && contactOptions ? `<details class="portfolio-full-request"><summary>Message creator for full length <span aria-hidden="true">↗</span></summary><form method="post" action="/${slug}/portfolio/full-length/request"><input type="hidden" name="previewId" value="${html(card.id)}"><label>Your name<input name="name" type="text" required maxlength="80" autocomplete="name"></label><label>Contact the creator using<select name="contactMethod" required><option value="">Choose a contact method</option>${contactOptions}</select></label><label>Your message<textarea name="message" required minlength="10" maxlength="800" rows="7">${html(fullLengthMessage(creatorName, card.id, card.title, projection.schemaVersion === 2))}</textarea></label><p>Your name is added to the prepared message. You will review and send it in Telegram or your email app.</p><button type="submit">Prepare message ↗</button></form></details>` : ""}</div>
+    <div class="portfolio-copy"><p class="portfolio-meta">${html(card.section)}${projection.schemaVersion === 1 && card.genre ? ` · ${html(card.genre)}` : ""}</p><h3>${html(card.title)}</h3><p>${html(card.description)}</p>${card.kind === "video" ? '<p class="portfolio-note">Preview clip</p>' : ""}${hasFullLengthRequest(card, projection.schemaVersion === 1) && contactOptions ? `<details class="portfolio-full-request"><summary>Message creator for full length <span aria-hidden="true">↗</span></summary><form method="post" action="/${slug}/portfolio/full-length/request"><input type="hidden" name="previewId" value="${html(card.id)}"><label>Your name<input name="name" type="text" required maxlength="80" autocomplete="name"></label><label>Contact the creator using<select name="contactMethod" required><option value="">Choose a contact method</option>${contactOptions}</select></label><label>Your message<textarea name="message" required minlength="10" maxlength="800" rows="7">${html(fullLengthMessage(creatorName, card.id, card.title, projection.schemaVersion === 2, contact.message))}</textarea></label><p>Your name is added to the prepared message. You will review and send it in Telegram or your email app.</p><button type="submit">Prepare message ↗</button></form></details>` : ""}</div>
   </article>`).join("");
   return `<section class="portfolio" aria-labelledby="portfolio-heading"><details${section || (projection.schemaVersion === 1 && genre) ? " open" : ""}><summary id="portfolio-heading"><span><small>THE COLLECTION</small><strong>Want a sneak peek?</strong><em>Browse selected previews</em></span><span class="portfolio-arrow" aria-hidden="true"></span></summary><div class="portfolio-inside"><p class="portfolio-intro">A little look at the collection. These are previews chosen for this page.</p><form class="portfolio-filters${projection.schemaVersion === 2 ? " single" : ""}" method="get" action="/${slug}"><label>Category<select name="section">${["All sections", ...sections].map((value) => option(value, selectedSection)).join("")}</select></label>${projection.schemaVersion === 1 ? `<label>Genre<select name="genre">${["All genres", ...genres].map((value) => option(value, selectedGenre)).join("")}</select></label>` : ""}<button type="submit">Show selection</button></form><p class="portfolio-count">${cards.length} ${cards.length === 1 ? "preview" : "previews"}</p>${cards.length ? `<div class="portfolio-grid">${cardHtml}</div>` : `<p class="portfolio-empty">${projection.schemaVersion === 1 ? "No previews match these filters. Try another section or genre." : "No previews match this category."}</p>`}${projection.schemaVersion === 1 ? `<section class="portfolio-request" aria-labelledby="custom-heading"><div><small>MADE FOR YOU</small><h2 id="custom-heading">Have something in mind?</h2><p>Send a private custom request. Availability and price are confirmed separately.</p></div>${requestSent ? '<p role="status" class="portfolio-sent">Request received in this local preview.</p>' : ""}<form method="post" action="/${slug}/portfolio/request"><label>Request type<select name="requestType" required><option value="">Choose one</option><option value="photo">Photo set</option><option value="clip">Video clip</option><option value="other">Something else</option></select></label><label>Your request<textarea name="message" required minlength="10" maxlength="800" placeholder="Tell me what you have in mind"></textarea></label><label>Contact email <span>(optional in this local preview)</span><input name="email" type="email" maxlength="254" autocomplete="email"></label><label class="portfolio-ack"><input type="checkbox" name="acknowledge" value="yes" required><span>This is an enquiry only. Availability and price are not guaranteed.</span></label><button type="submit">Send request ↗</button></form></section>` : ""}</div></details></section>`;
 }

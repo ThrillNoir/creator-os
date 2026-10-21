@@ -27,7 +27,7 @@ async function setup() {
   const previewKey = `adult-portfolio/${slug}/${portfolioVersion}/${cardId}/preview.mp4`;
   const posterKey = `adult-portfolio/${slug}/${portfolioVersion}/${cardId}/poster.jpg`;
   const projection = { schemaVersion: 2, creatorSlug: slug, publishedProfileVersionId: profileVersion, portfolioVersionId: portfolioVersion,
-    contact: { telegramUsername: "TestCreator", email: "creator@example.test" },
+    contact: { telegramUsername: "TestCreator", email: "creator@example.test", message: "Please send me details about this preview." },
     cards: [{ id: cardId, title: "A short preview", description: "A public teaser", section: "Creator clips", genre: "Studio",
       kind: "video", previewPath: `/portfolio-media/${slug}/${cardId}/preview`, posterPath: `/portfolio-media/${slug}/${cardId}/poster`,
       mediaKey: previewKey, checksum: previewChecksum, posterKey, posterChecksum }] };
@@ -58,11 +58,19 @@ async function fetchPage(env, path, cookie, init = {}) {
 test("live projection accepts creator labels and never exposes private source IDs", async () => {
   const { projection, env } = await setup();
   assert.equal(validLivePortfolio(projection, slug, profileVersion), true);
+  assert.equal(validLivePortfolio({ ...projection, contact: { ...projection.contact, message: "<script>" } }, slug, profileVersion), false);
+  assert.equal(validLivePortfolio({ ...projection, contact: { ...projection.contact, email: "o'hara@example.com" } }, slug, profileVersion), true,
+    "an older published address remains readable");
+  const legacyEmail = `${"a".repeat(64)}@${"b".repeat(190)}`;
+  assert.equal(legacyEmail.length, 255);
+  assert.equal(validLivePortfolio({ ...projection, contact: { email: legacyEmail } }, slug, profileVersion), true,
+    "the longest address accepted by the original contract remains readable");
   assert.equal(validLivePortfolio(projection, slug, "old-profile"), false);
   assert.equal((await fetchPage(env, `/${slug}`)).status, 404);
   const response = await fetchPage(env, `/${slug}`, await session());
   const html = await response.text();
   assert.match(html, /Creator clips|Studio|A short preview/);
+  assert.match(html, /Please send me details about this preview/);
   assert.doesNotMatch(html, /adult-portfolio\/adelaide|private-source-asset/);
   assert.doesNotMatch(html, /portfolio\/request|MADE FOR YOU/);
   assert.match((await (await fetchPage(env, `/${slug}?section=Other`, await session())).text()), /A short preview/);
@@ -89,7 +97,7 @@ test("preview bytes require the current session, projection, checksum and exact 
 });
 
 test("full length contact uses only configured destinations and needs a same-origin aged session", async () => {
-  const { env } = await setup();
+  const { env, projection } = await setup();
   const path = `/${slug}/portfolio/full-length/request`;
   const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "telegram", message: "Please send the full clip and payment option." });
   const post = (cookie, origin, requestBody = body) => fetchPage(env, path, cookie, { method: "POST", headers: { origin, "content-type": "application/x-www-form-urlencoded" }, body: requestBody });
@@ -103,6 +111,10 @@ test("full length contact uses only configured destinations and needs a same-ori
   assert.equal((await post(await session(), "https://more.example", wrong)).status, 400);
   const email = new URLSearchParams(body); email.set("contactMethod", "email");
   assert.match((await post(await session(), "https://more.example", email)).headers.get("location"), /^mailto:creator@example\.test\?/);
+  projection.contact.email = "a?cc=other@example.com"; // possible legacy projection; never allow it to add a mailto query
+  const legacyLocation = (await post(await session(), "https://more.example", email)).headers.get("location");
+  assert.match(legacyLocation, /^mailto:a%3Fcc%3Dother@example\.com\?subject=/);
+  assert.equal(new URL(legacyLocation).searchParams.has("cc"), false);
 });
 
 test("preview-only clips have no false full-length request or private asset identifier", async () => {

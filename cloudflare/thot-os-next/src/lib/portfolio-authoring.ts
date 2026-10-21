@@ -13,6 +13,7 @@ export type PortfolioDraftItem = {
   genre_id: string | null;
   preview_asset_id: string | null;
   preview_confirmed: number;
+  is_visible: number;
   full_length_asset_id: string | null;
   full_length_basename: string | null;
   preview_basename: string | null;
@@ -28,7 +29,7 @@ export async function getPortfolioDraft(creatorId: string) {
   const DB = cloudflareEnv().DB;
   const [categories, items, state, fullVideos] = await DB.batch([
     creatorPrepare(DB, creatorId, "SELECT id,name,sort_order FROM creator_portfolio_categories WHERE creator_id=@creator ORDER BY sort_order,name,id").bind(),
-    creatorPrepare(DB, creatorId, `SELECT p.asset_id,a.basename,a.extension,c.safety,p.category_id,p.genre_id,p.preview_asset_id,p.preview_confirmed,p.full_length_asset_id,
+    creatorPrepare(DB, creatorId, `SELECT p.asset_id,a.basename,a.extension,c.safety,p.category_id,p.genre_id,p.preview_asset_id,p.preview_confirmed,p.is_visible,p.full_length_asset_id,
       full_asset.basename AS full_length_basename,
       preview.basename AS preview_basename,preview.preview_r2_key AS preview_poster_r2_key,
       p.title,p.description,p.sort_order,a.source_available,a.preview_r2_key,
@@ -39,7 +40,7 @@ export async function getPortfolioDraft(creatorId: string) {
       LEFT JOIN assets full_asset ON full_asset.id=p.full_length_asset_id AND full_asset.creator_id=p.creator_id
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE p.creator_id=@creator ORDER BY p.sort_order,p.created_at,p.asset_id`).bind(),
-    creatorPrepare(DB, creatorId, "SELECT revision FROM creator_portfolio_draft_state WHERE creator_id=@creator").bind(),
+    creatorPrepare(DB, creatorId, "SELECT revision,contact_telegram,contact_email,contact_message FROM creator_portfolio_draft_state WHERE creator_id=@creator").bind(),
     creatorPrepare(DB, creatorId, `SELECT a.id,a.basename FROM assets a
       JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native'
       WHERE a.creator_id=@creator AND a.source_available=1 AND lower(a.extension)='mp4'
@@ -60,6 +61,11 @@ export async function getPortfolioDraft(creatorId: string) {
     categories: categories.results as PortfolioLabel[],
     items: draftItems,
     revision: (state.results[0] as { revision: number } | undefined)?.revision ?? 0,
+    contact: {
+      telegramUsername: (state.results[0] as { contact_telegram: string } | undefined)?.contact_telegram ?? "",
+      email: (state.results[0] as { contact_email: string } | undefined)?.contact_email ?? "",
+      message: (state.results[0] as { contact_message: string } | undefined)?.contact_message ?? "",
+    },
     fullVideos: choices,
   };
 }

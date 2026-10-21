@@ -9,7 +9,7 @@ type ManifestCard = {
   title: string; description: string; section: string; genre?: string;
   previewKey: string; posterKey: string | null;
 };
-type Manifest = { schemaVersion: 1 | 2; contact: { telegramUsername?: string; email?: string }; cards: ManifestCard[] };
+type Manifest = { schemaVersion: 1 | 2; contact: { telegramUsername?: string; email?: string; message?: string }; cards: ManifestCard[] };
 type Release = { id: string; creator_id: string; adult_profile_version_id: string; status: string; manifest_json: string; approved_by: string; slug: string; profile_status: string; published_version_id: string | null; profile_version_status: string };
 type MediaSource = { key: string; bucket: "PREVIEWS" | "LIBRARY_MEDIA"; checksum?: string; etag?: string; version?: string; size?: number; mime: "image/jpeg" | "video/mp4" };
 
@@ -18,6 +18,8 @@ const ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const SHA = /^[a-f0-9]{64}$/;
 const LABEL = /^[^\u0000-\u001f\u007f<>]{1,50}$/;
 const TELEGRAM = /^[A-Za-z0-9_]{5,32}$/;
+// Existing approved releases may contain addresses accepted by the original contract.
+// New drafts use the tighter web form validator; public mailto links encode the address.
 const EMAIL = /^[^\s@<>]{1,64}@[^\s@<>]{1,190}$/;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
@@ -33,9 +35,11 @@ export function parsePortfolioManifest(value: unknown): Manifest | null {
   const manifest = value as Partial<Manifest>;
   if (!onlyKeys(manifest, ["schemaVersion", "contact", "cards"]) || (manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2) ||
     !manifest.contact || typeof manifest.contact !== "object" || Array.isArray(manifest.contact) ||
-    !onlyKeys(manifest.contact, ["telegramUsername", "email"]) ||
+    !onlyKeys(manifest.contact, ["telegramUsername", "email", "message"]) ||
     (manifest.contact.telegramUsername !== undefined && !TELEGRAM.test(manifest.contact.telegramUsername)) ||
     (manifest.contact.email !== undefined && !EMAIL.test(manifest.contact.email)) ||
+    (manifest.contact.message !== undefined && (typeof manifest.contact.message !== "string" || manifest.contact.message.length < 1 ||
+      manifest.contact.message.length > 500 || /[\u0000-\u0009\u000b-\u001f\u007f<>]/.test(manifest.contact.message))) ||
     !Array.isArray(manifest.cards) || manifest.cards.length < 1 || manifest.cards.length > 24) return null;
   const ids = new Set<string>();
   const assets = new Set<string>();

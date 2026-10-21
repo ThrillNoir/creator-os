@@ -1,0 +1,12 @@
+{
+  "name": "thot-os-three-creator-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "13.0.2",
+    "miniflare": "5.20260820.0-alpha",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "typescript": "5.9.3"
+  }
+}

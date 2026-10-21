@@ -7,11 +7,12 @@ import { isVideoPortfolioItem, suggestedLinkedPreviewAssetId } from "../src/lib/
 import { privatePortfolioImageObjectId } from "../src/lib/portfolio-preview.ts";
 import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
 import { portfolioPublicationReadiness } from "../src/lib/portfolio-publication-readiness.ts";
-import { portfolioLibraryEligible } from "../src/lib/portfolio-library-eligibility.ts";
+import { portfolioLibraryBlockedReason, portfolioLibraryEligible } from "../src/lib/portfolio-library-eligibility.ts";
 import { portfolioAddFields } from "../src/lib/portfolio-add-fields.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 const previewFirstMigration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0068_portfolio_preview_first.sql", import.meta.url)), "utf8");
+const visibilityMigration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0069_portfolio_draft_visibility.sql", import.meta.url)), "utf8");
 
 function fixture() {
   const db = new Database(":memory:");
@@ -53,6 +54,21 @@ test("a portfolio item is only a private draft row", () => {
     });
     db.prepare("DELETE FROM creator_portfolio_items WHERE creator_id='creator-a' AND asset_id='full-a'").run();
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM creator_portfolio_items").get().count, 0);
+  } finally { db.close(); }
+});
+
+test("visibility migration preserves draft cards and keeps contact data private", () => {
+  const db = fixture();
+  try {
+    db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,title,updated_by) VALUES ('image-a','creator-a','Draft','creator@example.invalid')").run();
+    db.exec(previewFirstMigration);
+    db.exec(visibilityMigration);
+    assert.equal(db.prepare("SELECT is_visible FROM creator_portfolio_items WHERE asset_id='image-a'").get().is_visible, 1);
+    db.prepare("UPDATE creator_portfolio_items SET is_visible=0 WHERE asset_id='image-a' AND creator_id='creator-a'").run();
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM creator_portfolio_items WHERE creator_id='creator-a'").get().count, 1);
+    assert.throws(() => db.prepare("UPDATE creator_portfolio_items SET is_visible=2 WHERE asset_id='image-a'").run(), /CHECK/);
+    const state = db.prepare("SELECT contact_telegram,contact_email,contact_message FROM creator_portfolio_draft_state WHERE creator_id='creator-a'").get();
+    assert.deepEqual(state, { contact_telegram: "", contact_email: "", contact_message: "" });
   } finally { db.close(); }
 });
 
@@ -158,9 +174,12 @@ test("publication readiness accepts a preview-only card without a full-length li
 test("Library Add to Portfolio appears only for verified 18+ preview formats", () => {
   const clip = { safety: "nsfw", media_authority_state: "canonical_verified", extension: "mp4", video_codec: "h264" };
   assert.equal(portfolioLibraryEligible(clip), true);
+  assert.equal(portfolioLibraryBlockedReason(clip), null);
   assert.equal(portfolioLibraryEligible({ ...clip, safety: null }), false);
   assert.equal(portfolioLibraryEligible({ ...clip, video_codec: "h265" }), false);
+  assert.match(portfolioLibraryBlockedReason({ ...clip, video_codec: "h265" }), /verified H\.265.*short H\.264/);
   assert.equal(portfolioLibraryEligible({ ...clip, media_authority_state: "ingesting" }), false);
+  assert.match(portfolioLibraryBlockedReason({ ...clip, media_authority_state: "ingesting" }), /finish upload verification/);
 });
 
 test("Library add captures category and optional full video in one submission", () => {
@@ -180,7 +199,7 @@ test("Library add captures category and optional full video in one submission", 
   form.set("fullLengthAssetId", "preview-a");
   assert.throws(() => portfolioAddFields(form, "preview-a"), /separate private/);
   form.delete("confirmAdd");
-  assert.throws(() => portfolioAddFields(form, "preview-a"), /Tick Add/);
+  assert.throws(() => portfolioAddFields(form, "preview-a"), /Add to private Portfolio/);
   form.set("confirmAdd", "yes");
   form.set("categoryChoice", "other-creator-category");
   assert.throws(() => portfolioAddFields(form, "preview-a"), /Choose a category/);
