@@ -2,12 +2,13 @@
 
 import { useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
+import { UploaderBatchReview } from "@/components/uploader-batch-review";
 
 const maxFiles = 20;
 const maxBytes = 64 * 1024 * 1024;
 const mimeByExtension: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic" };
 
-type UploadItem = { id: string; file: File; status: "queued" | "hashing" | "uploading" | "finalizing" | "complete" | "attention" | "failed"; detail: string; progress: number; sessionId?: string; sourceHash?: string };
+type UploadItem = { id: string; file: File; status: "queued" | "hashing" | "uploading" | "finalizing" | "complete" | "attention" | "failed"; detail: string; progress: number; sessionId?: string; assetId?: string; sourceHash?: string };
 type IntentResponse = { ok?: boolean; error?: string; sessionId?: string; assetId?: string; partBytes?: number; replay?: boolean; status?: string; finalizationState?: string };
 type FinalizeResponse = { ok?: boolean; error?: string; preview?: "ready" | "failed" | "not_requested" };
 
@@ -127,7 +128,7 @@ export function NativeMediaUploader() {
       });
       const intent = await payload<IntentResponse>(intentResponse);
       if (!intentResponse.ok || !intent.ok || !intent.sessionId) throw new Error(intent.error ?? "intent_failed");
-      update(item.id, { sessionId: intent.sessionId, sourceHash, status: "uploading", detail: intent.replay ? "Resuming private upload…" : "Uploading directly to private storage…" });
+      update(item.id, { sessionId: intent.sessionId, assetId: intent.assetId, sourceHash, status: "uploading", detail: intent.replay ? "Resuming private upload…" : "Uploading directly to private storage…" });
       await resumeNativeImageIntent(item, intent, sourceHash, finalizeDependencies, async () => {
         if (!intent.partBytes) throw new Error("intent_missing_part_size");
         const partCount = Math.ceil(item.file.size / intent.partBytes);
@@ -176,5 +177,6 @@ export function NativeMediaUploader() {
     </button>
     {items.length > 0 && <div className="native-upload-list">{items.map((item) => <article key={item.id} className={`native-upload-item ${item.status}`}><div><strong>{item.file.name}</strong><small>{Math.round(item.file.size / 1024)} KB · {item.detail}</small></div><progress max="100" value={item.progress}>{item.progress}%</progress>{item.status === "attention" ? <button className="secondary-action" type="button" onClick={() => void retryNativeImagePreview(item, finalizeDependencies)}>Retry preview</button> : null}</article>)}</div>}
     <div className="native-upload-actions"><small>Uploads are resumable while their private session remains valid. Original keys and multipart identifiers never reach the browser.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected images</button></div>
+    <UploaderBatchReview items={items.filter((item): item is UploadItem & { assetId: string } => Boolean(item.assetId) && ["complete", "attention"].includes(item.status)).map((item) => ({ assetId: item.assetId, name: item.file.name }))} />
   </section>;
 }

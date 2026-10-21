@@ -8,6 +8,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { getPortfolioDraft } from "@/lib/portfolio-authoring";
+import { assetDisplayName } from "@/lib/asset-display-name";
 import { portfolioReleaseFailure } from "@/lib/portfolio-blockers";
 import { privatePortfolioImageObjectId } from "@/lib/portfolio-preview";
 import { getPortfolioReleaseFacts } from "@/lib/portfolio-release-facts";
@@ -42,7 +43,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
   const mediaFacts = await getPortfolioReleaseFacts(creatorId, [...draft.items.map((item) => item.asset_id), ...draft.fullVideos.map((video) => video.id)]);
   const cards = draft.items.map((item) => {
     const privateImageId = privatePortfolioImageObjectId(item.preview_r2_key);
-    return { assetId: item.asset_id, basename: item.basename, title: item.title, description: item.description,
+    return { assetId: item.asset_id, basename: assetDisplayName(item), title: item.title, description: item.description,
       categoryId: item.category_id, fullLengthAssetId: item.full_length_asset_id,
       video: isVideoPortfolioItem(item), legacy: item.preview_confirmed !== 1, visible: item.is_visible === 1, sourceAvailable: Boolean(item.source_available),
       mediaReady: Boolean(item.preview_r2_key), previewKey: item.preview_r2_key,

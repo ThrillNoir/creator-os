@@ -25,13 +25,13 @@ test("video review resolves an asset UUID without a photo preview and stays crea
   assert.ok(sql);
   const db = new Database(":memory:");
   try {
-    db.exec(`CREATE TABLE assets (id TEXT, creator_id TEXT, basename TEXT, extension TEXT, bytes INTEGER, modified_at TEXT, creator_notes TEXT, preview_r2_key TEXT, source_available INTEGER);
+    db.exec(`CREATE TABLE assets (id TEXT, creator_id TEXT, basename TEXT, display_stem TEXT, extension TEXT, bytes INTEGER, modified_at TEXT, creator_notes TEXT, preview_r2_key TEXT, source_available INTEGER);
       CREATE TABLE asset_classifications (asset_id TEXT, safety TEXT, is_teaser INTEGER, is_multi INTEGER, notes TEXT);
       CREATE TABLE asset_destinations (asset_id TEXT, destination TEXT);
       CREATE TABLE asset_media_authorities (asset_id TEXT, creator_id TEXT, authority_kind TEXT, state TEXT);
       CREATE TABLE asset_video_playback_states (asset_id TEXT, creator_id TEXT, state TEXT, source_codec TEXT, playback_provider TEXT, failure_code TEXT);`);
     const id = "11111111-1111-4111-8111-111111111111";
-    db.prepare("INSERT INTO assets VALUES (?, 'creator-a', 'sample.mp4', 'mp4', 100, '', '', NULL, 1)").run(id);
+    db.prepare("INSERT INTO assets (id,creator_id,basename,extension,bytes,modified_at,creator_notes,preview_r2_key,source_available) VALUES (?, 'creator-a', 'sample.mp4', 'mp4', 100, '', '', NULL, 1)").run(id);
     db.prepare("INSERT INTO asset_media_authorities VALUES (?, 'creator-a', 'r2_native', 'canonical_verified')").run(id);
     db.prepare("INSERT INTO asset_video_playback_states VALUES (?, 'creator-a', 'processing_queued', 'h265', 'stream', 'stream_submission_uncertain')").run(id);
     const find = (creator, identifier) => { const prefix = `creators/${creator}/assets/${identifier}/previews/`; return db.prepare(sql).get(creator, identifier, prefix.length, prefix); };

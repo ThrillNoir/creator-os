@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode, type FormEvent } from "react";
+import { useState, type ReactNode, type FormEvent, type MouseEvent } from "react";
 import { useFormStatus } from "react-dom";
 
 function selectedCount(form: HTMLFormElement) {
@@ -17,7 +17,19 @@ export function LibraryBatchForm({ action, children }: { action: (data: FormData
       setError(!selected ? "Select at least one asset below before applying attributes." : "Select no more than 50 assets. Your selection and attributes are still here.");
     }
   }
-  return <form className="batch-form" action={action} onSubmit={submit} onChange={(event) => { setCount(selectedCount(event.currentTarget)); setError(null); }}>
+  function selectCard(event: MouseEvent<HTMLFormElement>) {
+    const target = event.target;
+    if (event.detail === 0 || !(target instanceof Element) || !event.currentTarget.querySelector(".batch-panel[open]")) return;
+    const card = target.closest(".asset-card");
+    if (!card || target.closest("label, input, button, summary, details, video")) return;
+    const link = target.closest("a");
+    if (link && link !== card.querySelector("a")) return;
+    const checkbox = card.querySelector<HTMLInputElement>('input[type="checkbox"][name="assetId"]');
+    if (!checkbox) return;
+    event.preventDefault();
+    checkbox.click();
+  }
+  return <form className="batch-form" action={action} onSubmit={submit} onClickCapture={selectCard} onChange={(event) => { setCount(selectedCount(event.currentTarget)); setError(null); }}>
     <p role="status">{count} selected · maximum 50 per batch</p>
     {error && <p role="alert">{error}</p>}
     {children}

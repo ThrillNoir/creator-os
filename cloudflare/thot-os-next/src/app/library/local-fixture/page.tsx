@@ -54,7 +54,7 @@ export default async function LibraryLocalFixture({ searchParams }: { searchPara
   if (categoryId === newCategoryId) portfolioQuery.set("newCategoryName", newCategoryName);
   if (fullLengthAssetId) portfolioQuery.set("fullLengthAssetId", fullLengthAssetId);
   const asset: AssetRow = {
-    id: assetId, creator_id: "synthetic-creator", basename: "Synthetic short clip.mp4", extension: "mp4", bytes: 8 * 1024 * 1024,
+    id: assetId, creator_id: "synthetic-creator", basename: "Synthetic short clip.mp4", display_stem: null, extension: "mp4", bytes: 8 * 1024 * 1024,
     modified_at: "2026-10-20", creator_notes: "", preview_r2_key: "synthetic-only", safety,
     is_teaser: 0, is_multi: 0, notes: "", destinations: "", media_origin: "r2_native", media_authority_state: "canonical_verified",
     media_state: "preview_ready", video_state: "canonical_verified", video_codec: "h264", playback_provider: "none", playback_failure_code: null,

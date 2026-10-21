@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import { roleCan } from "../src/lib/authorization.ts";
+import { numberedDisplayStems, validDisplayStem } from "../src/lib/asset-display-name.ts";
 
 const source = await readFile(new URL("../src/app/actions.ts", import.meta.url), "utf8");
 const start = source.indexOf("export async function saveAssetAttributesAction(");
@@ -13,7 +14,7 @@ function fixture({ role = "creator", foreign = false, released = false } = {}) {
   let reads = 0;
   let batches = 0;
   let writes = [];
-  const action = new Function("requireCreatorContext", "values", "destinations", "cloudflareEnv", "creatorPrepare", "revalidatePath", "redirect", `${code}; return saveAssetAttributesAction;`)(
+  const action = new Function("requireCreatorContext", "values", "destinations", "cloudflareEnv", "creatorPrepare", "revalidatePath", "redirect", "numberedDisplayStems", "validDisplayStem", `${code}; return saveAssetAttributesAction;`)(
     async (permission) => {
       if (!roleCan(role, permission)) throw new Error("denied");
       return { email: "creator@example.test", creator: { creator_id: "own", role } };
@@ -37,6 +38,8 @@ function fixture({ role = "creator", foreign = false, released = false } = {}) {
     },
     () => {},
     (url) => { throw new Error(`redirect:${url}`); },
+    numberedDisplayStems,
+    validDisplayStem,
   );
   return { action, state: () => ({ reads, batches, writes }) };
 }
@@ -78,4 +81,33 @@ test("a released portfolio item cannot have its classification changed before wi
   const { action, state } = fixture({ released: true });
   await assert.rejects(action(selection(1)), /Withdraw the public Portfolio/);
   assert.equal(state().batches, 0);
+});
+
+test("batch renaming preserves classification and uses creator-scoped display stems", async () => {
+  const { action, state } = fixture({ released: true });
+  const form = selection(2);
+  form.set("intent", "rename_batch");
+  form.set("namePrefix", "FILENAME");
+  form.set("startAt", "1");
+  await assert.rejects(action(form), /redirect:\/library\?renamed=2/);
+  assert.equal(state().reads, 1); // Ownership only; display names do not edit a live release's classification.
+  assert.equal(state().batches, 1);
+  assert.deepEqual(state().writes.filter((item) => item.sql.startsWith("UPDATE assets SET display_stem")).map((item) => item.args.slice(0, 2)), [
+    ["FILENAME_1", "asset-0"], ["FILENAME_2", "asset-1"],
+  ]);
+  assert.equal(state().writes.filter((item) => item.sql.includes("asset_classifications")).length, 0);
+  assert.ok(state().writes.every((item) => item.sql.includes("@creator")));
+});
+
+test("invalid rename and foreign selection write nothing", async () => {
+  const invalid = fixture();
+  const form = selection(1);
+  form.set("intent", "rename_one");
+  form.set("displayStem", "../bad");
+  await assert.rejects(invalid.action(form), /file-path/);
+  assert.equal(invalid.state().batches, 0);
+  const foreign = fixture({ foreign: true });
+  form.set("displayStem", "Safe title");
+  await assert.rejects(foreign.action(form), /unavailable/);
+  assert.equal(foreign.state().batches, 0);
 });

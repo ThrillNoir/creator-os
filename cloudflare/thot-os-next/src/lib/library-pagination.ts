@@ -32,16 +32,16 @@ export function buildLibraryAssetsQuery(filters: { safety?: string; destination?
   const query = normalizeLibraryQuery(filters.query);
   if (query) {
     const like = `%${escapeLibraryLikeQuery(query)}%`;
-    conditions.push(`(a.basename LIKE ? ESCAPE '\\' OR a.relative_path LIKE ? ESCAPE '\\'
+    conditions.push(`(a.basename LIKE ? ESCAPE '\\' OR COALESCE(a.display_stem,'') LIKE ? ESCAPE '\\' OR a.relative_path LIKE ? ESCAPE '\\'
       OR COALESCE(c.notes,'') LIKE ? ESCAPE '\\' OR COALESCE(a.creator_notes,'') LIKE ? ESCAPE '\\'
       OR a.id LIKE ? ESCAPE '\\')`);
-    values.push(like, like, like, like, like);
+    values.push(like, like, like, like, like, like);
   }
   const page = parseLibraryPage(filters.page);
   const limit = LIBRARY_PAGE_SIZE + (lookahead ? 1 : 0);
   const offset = (page - 1) * LIBRARY_PAGE_SIZE;
   return { sql: `
-    SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
+    SELECT a.id,a.creator_id,a.basename,a.display_stem,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id AND d.creator_id=a.creator_id),'') AS destinations,
       ma.authority_kind AS media_origin,

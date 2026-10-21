@@ -40,7 +40,7 @@ async function fixture() {
   db.pragma("foreign_keys = ON");
   db.exec(`CREATE TABLE creators (id TEXT PRIMARY KEY,slug TEXT NOT NULL,status TEXT NOT NULL);
     CREATE TABLE users (email TEXT PRIMARY KEY COLLATE NOCASE,status TEXT NOT NULL);
-    CREATE TABLE assets (id TEXT PRIMARY KEY,creator_id TEXT NOT NULL REFERENCES creators(id),basename TEXT NOT NULL,
+    CREATE TABLE assets (id TEXT PRIMARY KEY,creator_id TEXT NOT NULL REFERENCES creators(id),basename TEXT NOT NULL,display_stem TEXT,
       extension TEXT NOT NULL,source_available INTEGER NOT NULL,preview_r2_key TEXT,UNIQUE(id,creator_id));
     CREATE TABLE asset_classifications (asset_id TEXT PRIMARY KEY,creator_id TEXT NOT NULL,safety TEXT,is_teaser INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE asset_media_authorities (asset_id TEXT PRIMARY KEY,creator_id TEXT NOT NULL,authority_kind TEXT NOT NULL,state TEXT NOT NULL);
@@ -54,7 +54,7 @@ async function fixture() {
     db.prepare("INSERT INTO creator_adult_profiles VALUES (?,?,'active')").run(id, `profile-${id}`);
     for (const [kind, codec] of [["preview", "h264"], ["full", "h265"], ["unsupported", "h265"]]) {
       const assetId = `${kind}-${id}`;
-      db.prepare("INSERT INTO assets VALUES (?,?,?,'mp4',1,?)").run(assetId, id, `${kind} synthetic clip.mp4`, `fixture/${id}/${kind}.jpg`);
+      db.prepare("INSERT INTO assets (id,creator_id,basename,extension,source_available,preview_r2_key) VALUES (?,?,?,'mp4',1,?)").run(assetId, id, `${kind} synthetic clip.mp4`, `fixture/${id}/${kind}.jpg`);
       db.prepare("INSERT INTO asset_classifications VALUES (?,?,'nsfw',?)").run(assetId, id, kind === "preview" ? 1 : 0);
       db.prepare("INSERT INTO asset_media_authorities VALUES (?,?,'r2_native','canonical_verified')").run(assetId, id);
       db.prepare("INSERT INTO asset_video_playback_states VALUES (?,?,'canonical_verified',?)").run(assetId, id, codec);
@@ -211,7 +211,7 @@ test("a hidden card remains in the private draft and is absent from the approved
     const add = new FormData(); add.set("assetId", `preview-${creatorId}`); add.set("intent", "add");
     add.set("confirmAdd", "yes"); add.set("categoryChoice", categoryId);
     await redirected(app.actions.togglePortfolioItemAction(add), `/library/preview-${creatorId}`);
-    app.db.prepare("INSERT INTO assets VALUES (?,?,?,'jpg',1,?)").run("hidden-photo", creatorId, "Hidden synthetic photo.jpg", "fixture/hidden-photo.jpg");
+    app.db.prepare("INSERT INTO assets (id,creator_id,basename,extension,source_available,preview_r2_key) VALUES (?,?,?,'jpg',1,?)").run("hidden-photo", creatorId, "Hidden synthetic photo.jpg", "fixture/hidden-photo.jpg");
     app.db.prepare("INSERT INTO asset_classifications VALUES (?,?,'nsfw',0)").run("hidden-photo", creatorId);
     app.db.prepare("INSERT INTO creator_portfolio_items(asset_id,creator_id,title,category_id,preview_confirmed,is_visible,updated_by) VALUES (?,?,?,?,1,0,?)")
       .run("hidden-photo", creatorId, "Hidden synthetic photo", categoryId, `${creatorId}@example.invalid`);

@@ -201,6 +201,24 @@ button, input, textarea, select { font: inherit; }
 .batch-panel[open] .summary-action { font-size: 0; }
 .batch-panel[open] .summary-action::after { content: "Close"; font-size: 12px; }
 .batch-panel a { color: var(--purple2); }
+.batch-form:has(.batch-panel[open]) .asset-card > a:first-of-type { cursor: pointer; }
+.batch-rename { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-top: 22px; padding-top: 17px; border-top: 1px solid var(--line); }
+.batch-rename h3, .batch-rename p { flex-basis: 100%; margin: 0; }
+.batch-rename p { color: var(--muted); font-size: 12px; }
+.batch-rename label { display: grid; gap: 6px; min-width: 130px; color: var(--muted); font-size: 12px; }
+.batch-rename input, .library-name-entry input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: #100c16; color: var(--ink); }
+.batch-rename .secondary-action { margin: 0; }
+.library-name-editor { display: grid; gap: 9px; margin: 12px 0 22px; padding: 13px; border: 1px solid var(--line); }
+.library-name-editor h3, .library-name-editor p { margin: 0; }
+.library-name-editor p, .library-name-editor small { color: var(--muted); }
+.library-name-editor form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.library-name-editor label { display: grid; gap: 6px; flex: 1 1 220px; }
+.library-name-entry { display: flex; align-items: center; gap: 5px; }
+.uploader-batch-review { grid-column: 1 / -1; margin-top: 12px; padding: 14px; border: 1px solid var(--line); }
+.uploader-batch-review summary { cursor: pointer; font-weight: 700; }
+.uploader-batch-review p { color: var(--muted); }
+.uploader-batch-items { display: flex; flex-wrap: wrap; gap: 8px; }
+.uploader-batch-items label { padding: 8px; border: 1px solid var(--line); overflow-wrap: anywhere; }
 .attribute-fields fieldset, .friend-fields fieldset { margin: 19px 0; padding: 0; border: 0; }
 .attribute-fields legend, .friend-fields legend { display: block; margin-bottom: 9px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .choice-row { display: flex; gap: 7px; flex-wrap: wrap; }

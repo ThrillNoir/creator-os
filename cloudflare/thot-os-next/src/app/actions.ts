@@ -7,6 +7,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { creatorPrepare } from "@/lib/creator-db";
 import { requireCreatorContext } from "@/lib/identity";
 import { destinations, type Destination } from "@/lib/library";
+import { numberedDisplayStems, validDisplayStem } from "@/lib/asset-display-name";
 import { issueFanslyBridgePairing } from "@/lib/fansly-pairing";
 import { fetchInternalService } from "@/lib/internal-service";
 import { ensureConnectorServiceGrants } from "@/lib/connector-service-grants";
@@ -477,6 +478,21 @@ export async function saveAssetAttributesAction(formData: FormData) {
   const placeholders = assetIds.map(() => "?").join(",");
   const owned = await creatorPrepare(DB, creatorId, `SELECT id FROM assets WHERE creator_id=@creator AND source_available=1 AND id IN (${placeholders})`).bind(...assetIds).all<{ id: string }>();
   if (owned.results.length !== assetIds.length) throw new Error("One or more selected assets are unavailable.");
+  const nameIntent = String(formData.get("intent") ?? "");
+  if (nameIntent === "rename_one" || nameIntent === "rename_batch") {
+    if (nameIntent === "rename_one" && assetIds.length !== 1) throw new Error("Choose one asset to rename.");
+    const stems = nameIntent === "rename_one"
+      ? [validDisplayStem(String(formData.get("displayStem") ?? ""))]
+      : numberedDisplayStems(String(formData.get("namePrefix") ?? ""), Number(formData.get("startAt")), assetIds.length);
+    await DB.batch(assetIds.flatMap((assetId, index) => [
+      creatorPrepare(DB, creatorId, "UPDATE assets SET display_stem=? WHERE id=? AND creator_id=@creator AND source_available=1").bind(stems[index], assetId),
+      creatorPrepare(DB, creatorId, "INSERT INTO asset_classification_events (id,asset_id,creator_id,actor,actor_role,event_type,snapshot) VALUES (?,?,@creator,?,?,'library_name_saved',?)")
+        .bind(crypto.randomUUID(), assetId, identity.email, identity.creator.role, JSON.stringify({ displayStem: stems[index] })),
+    ]));
+    revalidatePath("/library");
+    const nameReturnTo = String(formData.get("returnTo") ?? "/library");
+    redirect(nameReturnTo.startsWith("/library") && !nameReturnTo.startsWith("//") ? `${nameReturnTo}${nameReturnTo.includes("?") ? "&" : "?"}renamed=${assetIds.length}` : "/library");
+  }
   const livePortfolioUse = await creatorPrepare(DB, creatorId, `SELECT r.id FROM creator_portfolio_release_versions r,
       json_each(r.manifest_json,'$.cards') card
     WHERE r.creator_id=@creator AND r.status IN ('publishing','published','withdrawing')

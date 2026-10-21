@@ -6,7 +6,7 @@ import { buildLibraryAssetsQuery, escapeLibraryLikeQuery, LIBRARY_PAGE_SIZE, nor
 function database() {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE assets (
-      id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, basename TEXT NOT NULL, extension TEXT NOT NULL,
+      id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, basename TEXT NOT NULL, display_stem TEXT, extension TEXT NOT NULL,
       bytes INTEGER NOT NULL, modified_at TEXT NOT NULL, creator_notes TEXT, preview_r2_key TEXT,
       source_available INTEGER NOT NULL, relative_path TEXT NOT NULL
     );
@@ -34,7 +34,7 @@ function query(db, creatorId, filters = {}, lookahead = false) {
 test("library pages reach every stable row once across more than 120 assets", () => {
   const db = database();
   try {
-    const insertAsset = db.prepare(`INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,1,?)`);
+    const insertAsset = db.prepare(`INSERT INTO assets (id,creator_id,basename,extension,bytes,modified_at,creator_notes,preview_r2_key,source_available,relative_path) VALUES (?,?,?,?,?,?,?,?,1,?)`);
     const insertAuthority = db.prepare("INSERT INTO asset_media_authorities VALUES (?,?,'r2_native','canonical_verified')");
     for (let index = 0; index < 250; index += 1) {
       const id = `asset-${String(index).padStart(3, "0")}`;
@@ -57,7 +57,7 @@ test("library pages reach every stable row once across more than 120 assets", ()
 test("library type filters include HEIC photos case-insensitively and keep videos separate", () => {
   const db = database();
   try {
-    const insertAsset = db.prepare("INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,1,?)");
+    const insertAsset = db.prepare("INSERT INTO assets (id,creator_id,basename,extension,bytes,modified_at,creator_notes,preview_r2_key,source_available,relative_path) VALUES (?,?,?,?,?,?,?,?,1,?)");
     const insertAuthority = db.prepare("INSERT INTO asset_media_authorities VALUES (?,?,'r2_native','canonical_verified')");
     for (const [id, extension] of [["photo", "JPG"], ["heic", "HEIC"], ["video", "MP4"], ["movie", "mov"]]) {
       insertAsset.run(id, "creator-a", id, extension, 10, "2026-10-01", "", null, `/${id}`);
@@ -71,7 +71,7 @@ test("library type filters include HEIC photos case-insensitively and keep video
 test("teaser filter describes the asset itself and stays creator scoped", () => {
   const db = database();
   try {
-    const insertAsset = db.prepare("INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,1,?)");
+    const insertAsset = db.prepare("INSERT INTO assets (id,creator_id,basename,extension,bytes,modified_at,creator_notes,preview_r2_key,source_available,relative_path) VALUES (?,?,?,?,?,?,?,?,1,?)");
     const insertAuthority = db.prepare("INSERT INTO asset_media_authorities VALUES (?,?,'r2_native','canonical_verified')");
     const insertClassification = db.prepare("INSERT INTO asset_classifications VALUES (?,?,'nsfw',?,0,'')");
     for (const [id, creator, teaser] of [["teaser-a", "creator-a", 1], ["full-a", "creator-a", 0], ["teaser-b", "creator-b", 1]]) {
@@ -88,7 +88,7 @@ test("teaser filter describes the asset itself and stays creator scoped", () => 
 test("library search covers notes, creator notes and IDs with literal LIKE wildcards", () => {
   const db = database();
   try {
-    const insertAsset = db.prepare("INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,1,?)");
+    const insertAsset = db.prepare("INSERT INTO assets (id,creator_id,basename,extension,bytes,modified_at,creator_notes,preview_r2_key,source_available,relative_path) VALUES (?,?,?,?,?,?,?,?,1,?)");
     const insertAuthority = db.prepare("INSERT INTO asset_media_authorities VALUES (?,?,'r2_native','canonical_verified')");
     const insertClassification = db.prepare("INSERT INTO asset_classifications VALUES (?,?,'sfw',0,0,?)");
     const rows = [
@@ -104,6 +104,9 @@ test("library search covers notes, creator notes and IDs with literal LIKE wildc
     }
     assert.deepEqual(query(db, "creator-a", { query: "%_" }).map((row) => row.id).sort(), ["id-creator", "id-note"]);
     assert.deepEqual(query(db, "creator-a", { query: "stable-id-special" }).map((row) => row.id), ["stable-id-special"]);
+    db.prepare("UPDATE assets SET display_stem='New archive name' WHERE id='stable-id-special'").run();
+    assert.deepEqual(query(db, "creator-a", { query: "New archive name" }).map((row) => row.id), ["stable-id-special"]);
+    assert.deepEqual(query(db, "creator-a", { query: "plain.jpg" }).map((row) => row.id).sort(), ["id-creator", "id-note", "stable-id-special"]);
   } finally { db.close(); }
 });
 

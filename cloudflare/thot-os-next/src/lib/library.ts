@@ -8,6 +8,7 @@ export interface AssetRow {
   id: string;
   creator_id: string;
   basename: string;
+  display_stem: string | null;
   extension: string;
   bytes: number;
   modified_at: string;
@@ -150,7 +151,7 @@ export async function getAssetByObjectId(creatorId: string, objectId: string) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(objectId)) return null;
   const revisionedPrefix = `creators/${creatorId}/assets/${objectId}/previews/`;
   return cloudflareEnv().DB.prepare(`
-    SELECT a.id,a.creator_id,a.basename,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
+    SELECT a.id,a.creator_id,a.basename,a.display_stem,a.extension,a.bytes,a.modified_at,a.creator_notes,a.preview_r2_key,
       c.safety,c.is_teaser,c.is_multi,c.notes,
       COALESCE((SELECT GROUP_CONCAT(d.destination,'|') FROM asset_destinations d WHERE d.asset_id=a.id),'') AS destinations,
       ma.authority_kind AS media_origin,ma.state AS media_authority_state,

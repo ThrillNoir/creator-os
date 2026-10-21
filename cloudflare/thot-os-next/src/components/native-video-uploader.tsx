@@ -4,12 +4,13 @@ import { useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { sha256File } from "@/lib/incremental-sha256";
 import { canonicalR2MultipartPartEtag } from "@/lib/r2-multipart-etag";
+import { UploaderBatchReview } from "@/components/uploader-batch-review";
 
 const maxFiles = 4;
 const maxBytes = 5 * 1024 * 1024 * 1024;
 const mimeByExtension: Record<string, string> = { mp4: "video/mp4", mov: "video/quicktime" };
-type UploadItem = { id: string; file: File; status: "queued" | "hashing" | "uploading" | "finalizing" | "complete" | "failed"; detail: string; progress: number; sourceHash?: string };
-type IntentResponse = { ok?: boolean; error?: string; sessionId?: string; partBytes?: number; replay?: boolean; status?: string; playback?: string; sourceCodec?: string; uploadUrl?: string; expiresAt?: string; partNumber?: number };
+type UploadItem = { id: string; file: File; status: "queued" | "hashing" | "uploading" | "finalizing" | "complete" | "failed"; detail: string; progress: number; assetId?: string; sourceHash?: string };
+type IntentResponse = { ok?: boolean; error?: string; sessionId?: string; assetId?: string; partBytes?: number; replay?: boolean; status?: string; playback?: string; sourceCodec?: string; uploadUrl?: string; expiresAt?: string; partNumber?: number };
 
 function mimeFor(file: File) { const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase() : ""; return mimeByExtension[extension] ?? ""; }
 async function payload<T>(response: Response): Promise<T> { return response.json().catch(() => ({})) as Promise<T>; }
@@ -69,7 +70,7 @@ export function NativeVideoUploader() {
       const intentResponse = await fetch("/api/source-media/videos/intents", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ filename: item.file.name, bytes: item.file.size, sha256: sourceHash, mimeType, clientUploadId }) });
       const intent = await payload<IntentResponse>(intentResponse);
       if (!intentResponse.ok || !intent.ok || !intent.sessionId || !intent.partBytes) throw new Error(intent.error ?? "intent_failed");
-      update(item.id, { sourceHash, status: "uploading", detail: intent.replay ? "Resuming private R2 upload…" : "Uploading directly to private Cloudflare storage…" });
+      update(item.id, { assetId: intent.assetId, sourceHash, status: "uploading", detail: intent.replay ? "Resuming private R2 upload…" : "Uploading directly to private Cloudflare storage…" });
       if (!["finalized", "finalizing"].includes(intent.status ?? "")) {
         const partCount = Math.ceil(item.file.size / intent.partBytes);
         for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
@@ -103,5 +104,6 @@ export function NativeVideoUploader() {
     <button className="native-drop-zone" type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} disabled={running.current}><b>Drop up to {maxFiles} videos here</b><span>or choose MP4 or MOV files · 5 GB each</span></button>
     {items.length > 0 && <div className="native-upload-list">{items.map((item) => <article key={item.id} className={`native-upload-item ${item.status}`}><div><strong>{item.file.name}</strong><small>{Math.round(item.file.size / (1024 * 1024))} MB · {item.detail}</small></div><progress max="100" value={item.progress}>{item.progress}%</progress></article>)}</div>}
     <div className="native-upload-actions"><small>Video checksums are calculated incrementally in this browser. Each part receives a short-lived private upload authorization; canonical keys and multipart identities are never displayed or logged.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected videos</button></div>
+    <UploaderBatchReview items={items.filter((item): item is UploadItem & { assetId: string } => Boolean(item.assetId) && item.status === "complete").map((item) => ({ assetId: item.assetId, name: item.file.name }))} />
   </section>;
 }
