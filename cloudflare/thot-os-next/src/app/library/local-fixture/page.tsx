@@ -29,11 +29,11 @@ async function toggleSyntheticPortfolio(form: FormData) {
   if (form.get("assetId") !== assetId) throw new Error("Unknown synthetic asset.");
   const intent = String(form.get("intent") ?? "");
   if (intent !== "add" && intent !== "remove") throw new Error("Choose a synthetic action.");
-  if (intent === "remove") redirect("/library/local-fixture?safety=nsfw");
+  if (intent === "remove") redirect("/library/local-fixture");
   const fields = portfolioAddFields(form, assetId);
   if (fields.categoryId && fields.categoryId !== clipCategoryId && fields.categoryId !== photoCategoryId) throw new Error("Choose a synthetic category.");
   if (fields.fullLengthAssetId && fields.fullLengthAssetId !== fullVideoId) throw new Error("Choose the synthetic private video.");
-  const query = new URLSearchParams({ safety: "nsfw", added: "1", categoryId: fields.categoryId ?? newCategoryId });
+  const query = new URLSearchParams({ added: "1", categoryId: fields.categoryId ?? newCategoryId });
   if (fields.newCategoryName) query.set("newCategoryName", fields.newCategoryName);
   if (fields.fullLengthAssetId) query.set("fullLengthAssetId", fields.fullLengthAssetId);
   redirect(`/library/local-fixture?${query}`);
@@ -45,7 +45,7 @@ export default async function LibraryLocalFixture({ searchParams }: { searchPara
     process.env.PORTFOLIO_SYNTHETIC_PREVIEW !== "1") notFound();
   const query = await searchParams;
   const safety = query.safety === "nsfw" || query.safety === "sfw" ? query.safety : null;
-  const selected = safety === "nsfw" && query.added === "1";
+  const selected = query.added === "1";
   const categoryId = query.categoryId === clipCategoryId || query.categoryId === photoCategoryId || query.categoryId === newCategoryId ? query.categoryId : clipCategoryId;
   const newCategoryName = categoryId === newCategoryId && query.newCategoryName && query.newCategoryName.length <= 50 && !/[<>]/.test(query.newCategoryName) ? query.newCategoryName : "New category";
   const categoryName = categoryId === clipCategoryId ? "Clips" : categoryId === photoCategoryId ? "Photo sets" : newCategoryName;
@@ -65,9 +65,9 @@ export default async function LibraryLocalFixture({ searchParams }: { searchPara
     <Link className="secondary-action" href="/library/local-fixture">← Start synthetic asset again</Link>
     <div className="asset-detail"><section className="panel detail-preview" style={{ minHeight: 430 }}><img src={syntheticPoster()} alt="Synthetic poster for a sample short clip" style={{ maxHeight: 340 }} />
       <p>This still stands in for a private video. There is no real playback or thumbnail upload in this fixture.</p></section>
-      <section className="panel classification-panel"><h2>Review &amp; tag this asset</h2><p>Choose NSFW if appropriate and save classification before adding this preview.</p>
+      <section className="panel classification-panel"><h2>Review &amp; tag this asset</h2><p>Tags help filter the Library. They do not decide whether this clip can be a Portfolio preview.</p>
         <form action={saveSyntheticClassification}><AttributeFields asset={asset} /><button className="primary wide" type="submit">Save classification</button></form>
-    <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit savedSafety={asset.safety} embedded
+    <PortfolioLibraryControl assetId={asset.id} selected={selected} available={portfolioLibraryEligible(asset)} canEdit embedded
       action={toggleSyntheticPortfolio} portfolioHref={`/portfolio/local-fixture?${portfolioQuery}`}
       categories={[{ id: clipCategoryId, name: "Clips" }, { id: photoCategoryId, name: "Photo sets" }]}
       fullVideos={[{ id: fullVideoId, basename: "Private full video.mp4" }]}

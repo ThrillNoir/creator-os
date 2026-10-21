@@ -77,10 +77,9 @@ export async function togglePortfolioItemAction(form: FormData) {
       if (!full) throw new Error("Choose this creator's verified private full-length video.");
     }
     const asset = await creatorPrepare(DB, creatorId, `SELECT a.basename FROM assets a
-      JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id AND c.safety='nsfw'
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE a.creator_id=@creator AND a.id=? AND a.source_available=1
-      AND (lower(a.extension) IN ('jpg','jpeg','png','webp') OR (lower(a.extension)='mp4' AND vp.source_codec='h264'
+      AND (lower(a.extension) IN ('jpg','jpeg','png','webp') OR (lower(a.extension)='mp4' AND vp.source_codec IN ('h264','h265')
         AND vp.state IN ('canonical_verified','processing_queued','processing','playback_ready','processing_failed')))
       AND EXISTS (SELECT 1 FROM asset_media_authorities ma WHERE ma.creator_id=a.creator_id AND ma.asset_id=a.id
         AND ma.authority_kind='r2_native' AND ma.state IN ('canonical_verified','preview_ready','preview_failed'))`)
@@ -250,7 +249,7 @@ export async function publishPortfolioAction(form: FormData) {
   if (visibleCards.length < 1 || visibleCards.length > 24) throw new Error("Show at least one card before publishing.");
   const cards = visibleCards.map((submitted) => {
     const item = draft.items.find((candidate) => candidate.asset_id === submitted.assetId);
-    if (!item || item.preview_confirmed !== 1 || item.preview_asset_id || item.safety !== "nsfw" || !item.source_available || !submitted.categoryId || !submitted.title.trim()) throw new Error("Use a confirmed short preview card and assign its category before publishing.");
+    if (!item || item.preview_confirmed !== 1 || item.preview_asset_id || !item.source_available || !submitted.categoryId || !submitted.title.trim()) throw new Error("Use a confirmed preview card and assign its category before publishing.");
     const section = draft.categories.find((label) => label.id === submitted.categoryId)?.name;
     if (!section || /[<>]/.test(section)) throw new Error("Rename this category before publishing.");
     const video = item.video_state !== null && item.extension.toLowerCase() === "mp4";

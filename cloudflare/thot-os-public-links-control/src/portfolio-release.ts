@@ -23,6 +23,13 @@ const TELEGRAM = /^[A-Za-z0-9_]{5,32}$/;
 const EMAIL = /^[^\s@<>]{1,64}@[^\s@<>]{1,190}$/;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
+const SAFE_RELEASE_CAUSES = new Set([
+  "portfolio_media_rights_or_consent_missing", "portfolio_full_length_consent_missing", "portfolio_full_length_unavailable",
+  "portfolio_image_preview_changed", "portfolio_image_preview_missing", "portfolio_video_preview_missing",
+  "portfolio_short_preview_changed_or_too_large", "portfolio_short_preview_poster_missing",
+  "portfolio_source_integrity_failed", "portfolio_source_changed_during_copy", "portfolio_source_checksum_failed",
+  "portfolio_video_preview_exceeds_sixty_seconds_or_is_unreadable", "portfolio_public_copy_failed",
+]);
 
 function snapshotKey(slug: string) { return `adult-portfolio:${slug}`; }
 function mediaKey(slug: string, version: string, card: ManifestCard, kind: "preview" | "poster") {
@@ -81,10 +88,8 @@ async function releaseRow(env: Env, params: PortfolioParams, states: string[]) {
 
 async function assertAssetConsent(env: Env, creatorId: string, assetId: string) {
   const row = await env.DB.prepare(`SELECT a.id FROM assets a
-    JOIN asset_classifications c ON c.asset_id=a.id AND c.creator_id=a.creator_id AND c.safety='nsfw'
     JOIN asset_media_authorities ma ON ma.asset_id=a.id AND ma.creator_id=a.creator_id AND ma.authority_kind='r2_native' AND ma.state IN ('canonical_verified','preview_ready','preview_failed')
     WHERE a.creator_id=? AND a.id=? AND a.source_available=1
-      AND (c.is_multi=0 OR EXISTS (SELECT 1 FROM asset_people ap WHERE ap.creator_id=a.creator_id AND ap.asset_id=a.id))
       AND NOT EXISTS (SELECT 1 FROM asset_people ap
         LEFT JOIN people p ON p.id=ap.person_id AND p.creator_id=ap.creator_id
         LEFT JOIN asset_paid_consent_attestations pc ON pc.asset_id=ap.asset_id AND pc.creator_id=ap.creator_id AND pc.person_id=ap.person_id AND pc.revoked_at IS NULL
@@ -96,7 +101,11 @@ async function assertAssetConsent(env: Env, creatorId: string, assetId: string) 
 async function sourceForCard(env: Env, creatorId: string, card: ManifestCard, schemaVersion: 1 | 2, pinned = false) {
   await assertAssetConsent(env, creatorId, card.assetId);
   if (schemaVersion === 2 && card.fullLengthAssetId) {
-    await assertAssetConsent(env, creatorId, card.fullLengthAssetId);
+    try { await assertAssetConsent(env, creatorId, card.fullLengthAssetId); }
+    catch (error) {
+      if (error instanceof Error && error.message === "portfolio_media_rights_or_consent_missing") throw new Error("portfolio_full_length_consent_missing");
+      throw error;
+    }
     const full = await env.DB.prepare("SELECT id FROM assets WHERE id=? AND creator_id=? AND source_available=1 AND lower(extension)='mp4'")
       .bind(card.fullLengthAssetId, creatorId).first<{ id: string }>();
     if (!full) throw new Error("portfolio_full_length_unavailable");
@@ -119,7 +128,7 @@ async function sourceForCard(env: Env, creatorId: string, card: ManifestCard, sc
     WHERE a.id=? AND a.creator_id=? AND a.source_available=1 AND lower(a.extension)='mp4'
       AND o.provider='r2' AND o.storage_role='canonical_original' AND o.bucket_role='library_media' AND o.ingest_status='verified'`)
     .bind(previewAssetId, creatorId).first<{ preview_r2_key: string | null; is_teaser: number; teaser_for_asset_id: string | null; source_codec: string | null; state: string; object_key: string; sha256: string; byte_count: number; verified_mime_type: string; r2_version: string | null; r2_etag: string | null }>();
-  if (!row || (schemaVersion === 1 && !pinned && (row.is_teaser !== 1 || row.teaser_for_asset_id !== card.assetId)) || row.source_codec !== "h264" ||
+  if (!row || (schemaVersion === 1 && !pinned && (row.is_teaser !== 1 || row.teaser_for_asset_id !== card.assetId)) || !["h264", "h265"].includes(row.source_codec ?? "") ||
     !["canonical_verified", "processing_queued", "processing", "playback_ready", "processing_failed"].includes(row.state) ||
     !row.r2_version || !row.r2_etag || row.verified_mime_type !== "video/mp4" || row.byte_count < 1 || row.byte_count > MAX_VIDEO_BYTES ||
     !SHA.test(row.sha256) || (!pinned && row.preview_r2_key !== card.posterKey) || !card.posterKey?.startsWith(`creators/${creatorId}/assets/`) || !card.posterKey.endsWith(".jpg")) throw new Error("portfolio_short_preview_changed_or_too_large");
@@ -190,9 +199,11 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
       const current = await this.env.ADULT_PROFILES?.get(snapshotKey(row.slug), "json");
       return validLivePortfolio(current, row.slug, row.adult_profile_version_id) && current.portfolioVersionId !== row.id ? current : null;
     });
+    let failedCardId: string | null = null;
     try {
       const cards: LivePortfolioCard[] = [];
       for (const card of manifest.cards) {
+        failedCardId = card.id;
         const sources = await step.do(`validate approved source ${card.id}`, () => sourceForCard(this.env, row.creator_id, card, manifest.schemaVersion));
         const preview = await step.do(`copy approved preview ${card.id}`, () => copySource(this.env, row, card, "preview", sources.preview));
         const poster = sources.poster ? await step.do(`copy approved poster ${card.id}`, () => copySource(this.env, row, card, "poster", sources.poster!)) : null;
@@ -201,6 +212,7 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
           ...(manifest.schemaVersion === 2 ? { hasFullLength: Boolean(card.fullLengthAssetId) } : {}),
           ...(poster ? { posterPath: `/portfolio-media/${row.slug}/${card.id}/poster`, posterKey: poster.key, posterChecksum: poster.checksum } : {}) });
       }
+      failedCardId = null;
       const projection: LivePortfolioProjection = { schemaVersion: 2, creatorSlug: row.slug, publishedProfileVersionId: row.adult_profile_version_id,
         portfolioVersionId: row.id, contact: manifest.contact, cards };
       if (!validLivePortfolio(projection, row.slug, row.adult_profile_version_id)) throw new Error("portfolio_projection_invalid");
@@ -208,7 +220,11 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
         if (!this.env.ADULT_PROFILES) throw new Error("portfolio_projection_binding_missing");
         // Re-check every release condition immediately before exposing copies.
         await releaseRow(this.env, event.payload, ["publishing"]);
-        for (const card of manifest.cards) await sourceForCard(this.env, row.creator_id, card, manifest.schemaVersion);
+        for (const card of manifest.cards) {
+          failedCardId = card.id;
+          await sourceForCard(this.env, row.creator_id, card, manifest.schemaVersion);
+        }
+        failedCardId = null;
         const current = await this.env.ADULT_PROFILES.get(snapshotKey(row.slug), "json");
         if (current) {
           if (!validLivePortfolio(current, row.slug, row.adult_profile_version_id) ||
@@ -261,7 +277,8 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
           : [mediaKey(row.slug, row.id, card, "preview")]);
         await this.env.ADULT_MEDIA?.delete(keys);
         await this.env.DB.prepare("UPDATE creator_portfolio_release_versions SET status='failed',failure_code=? WHERE id=? AND creator_id=? AND status='publishing'").bind(code, row.id, row.creator_id).run();
-        await releaseEvent(this.env, row, "publish_failed", { code });
+        const cause = error instanceof Error && SAFE_RELEASE_CAUSES.has(error.message) ? error.message : null;
+        await releaseEvent(this.env, row, "publish_failed", { code, ...(failedCardId ? { cardId: failedCardId } : {}), ...(cause ? { cause } : {}) });
         return false;
       });
       if (committed) return { published: true, slug: row.slug, versionId: row.id, cardCount: manifest.cards.length };

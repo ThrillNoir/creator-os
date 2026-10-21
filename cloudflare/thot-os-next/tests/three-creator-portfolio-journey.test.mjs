@@ -175,7 +175,29 @@ test("three invented creators keep private drafts, publication and withdrawal is
     app.setRole("viewer");
     await assert.rejects(app.actions.togglePortfolioItemAction(foreign), /NOT_FOUND/);
     assert.equal(app.db.prepare("SELECT COUNT(*) FROM creator_portfolio_items").pluck().get(), 3);
-    assert.equal(portfolioLibraryEligible({ safety: "nsfw", media_authority_state: "canonical_verified", extension: "mp4", video_codec: "h265" }), false);
+    assert.equal(portfolioLibraryEligible({ safety: "nsfw", media_authority_state: "canonical_verified", extension: "mp4", video_codec: "h265" }), true);
+  } finally { app.close(); }
+});
+
+test("a verified H.265 clip with an SFW filter tag can become a private draft and approved release", async () => {
+  const app = await fixture();
+  try {
+    const creatorId = creators[0];
+    app.db.prepare("UPDATE asset_classifications SET safety='sfw' WHERE asset_id=?").run(`unsupported-${creatorId}`);
+    const category = new FormData(); category.set("name", "Clips");
+    await redirected(app.actions.createPortfolioCategoryAction(category), "/portfolio");
+    const categoryId = app.db.prepare("SELECT id FROM creator_portfolio_categories WHERE creator_id=?").pluck().get(creatorId);
+    const add = new FormData(); add.set("assetId", `unsupported-${creatorId}`); add.set("intent", "add");
+    add.set("confirmAdd", "yes"); add.set("categoryChoice", categoryId);
+    await redirected(app.actions.togglePortfolioItemAction(add), `/library/unsupported-${creatorId}`);
+    const draft = await app.authoring.getPortfolioDraft(creatorId);
+    const publish = new FormData(); publish.set("publicRightsApproved", "yes");
+    publish.set("composition", JSON.stringify({ revision: draft.revision, contact: draft.contact, cards: draft.items.map((item) => ({
+      assetId: item.asset_id, title: item.title, description: item.description, categoryId: item.category_id,
+      fullLengthAssetId: null, previewKey: item.preview_r2_key, visible: true,
+    })) }));
+    await redirected(app.actions.publishPortfolioAction(publish), "/portfolio?notice=publication_started");
+    assert.equal(app.db.prepare("SELECT COUNT(*) FROM creator_portfolio_release_versions WHERE creator_id=?").pluck().get(creatorId), 1);
   } finally { app.close(); }
 });
 

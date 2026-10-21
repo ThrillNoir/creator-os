@@ -58,6 +58,8 @@ async function fetchPage(env, path, cookie, init = {}) {
 test("live projection accepts creator labels and never exposes private source IDs", async () => {
   const { projection, env } = await setup();
   assert.equal(validLivePortfolio(projection, slug, profileVersion), true);
+  assert.equal(validLivePortfolio({ ...projection, cards: [{ ...projection.cards[0], fullLengthBasename: "private-full-length.mp4" }] }, slug, profileVersion), false,
+    "a private full-video filename cannot enter the public projection");
   assert.equal(validLivePortfolio({ ...projection, contact: { ...projection.contact, message: "<script>" } }, slug, profileVersion), false);
   assert.equal(validLivePortfolio({ ...projection, contact: { ...projection.contact, email: "o'hara@example.com" } }, slug, profileVersion), true,
     "an older published address remains readable");
@@ -72,6 +74,7 @@ test("live projection accepts creator labels and never exposes private source ID
   assert.match(html, /Creator clips|Studio|A short preview/);
   assert.match(html, /Please send me details about this preview/);
   assert.doesNotMatch(html, /adult-portfolio\/adelaide|private-source-asset/);
+  assert.doesNotMatch(html, /private-full-length\.mp4/);
   assert.doesNotMatch(html, /portfolio\/request|MADE FOR YOU/);
   assert.match((await (await fetchPage(env, `/${slug}?section=Other`, await session())).text()), /A short preview/);
   assert.equal((await fetchPage(env, `/${slug}`, await session("old-profile"))).status, 404);

@@ -9,6 +9,7 @@ import { portfolioBulkAssetIds } from "../src/lib/portfolio-bulk.ts";
 import { portfolioPublicationReadiness } from "../src/lib/portfolio-publication-readiness.ts";
 import { portfolioLibraryBlockedReason, portfolioLibraryEligible } from "../src/lib/portfolio-library-eligibility.ts";
 import { portfolioAddFields } from "../src/lib/portfolio-add-fields.ts";
+import { portfolioCardBlockers, portfolioReleaseFailure } from "../src/lib/portfolio-blockers.ts";
 
 const migration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0066_creator_portfolio_drafts.sql", import.meta.url)), "utf8");
 const previewFirstMigration = readFileSync(fileURLToPath(new URL("../../thot-os-app/migrations/0068_portfolio_preview_first.sql", import.meta.url)), "utf8");
@@ -171,15 +172,45 @@ test("publication readiness accepts a preview-only card without a full-length li
   assert.equal(portfolioPublicationReadiness({ ...video, source_available: 0 }).ready, false);
 });
 
-test("Library Add to Portfolio appears only for verified 18+ preview formats", () => {
+test("Library Add to Portfolio accepts verified H.264 and H.265 independent of filtering tags", () => {
   const clip = { safety: "nsfw", media_authority_state: "canonical_verified", extension: "mp4", video_codec: "h264" };
   assert.equal(portfolioLibraryEligible(clip), true);
   assert.equal(portfolioLibraryBlockedReason(clip), null);
-  assert.equal(portfolioLibraryEligible({ ...clip, safety: null }), false);
-  assert.equal(portfolioLibraryEligible({ ...clip, video_codec: "h265" }), false);
-  assert.match(portfolioLibraryBlockedReason({ ...clip, video_codec: "h265" }), /verified H\.265.*short H\.264/);
+  assert.equal(portfolioLibraryEligible({ ...clip, safety: null }), true);
+  assert.equal(portfolioLibraryEligible({ ...clip, safety: "sfw" }), true);
+  assert.equal(portfolioLibraryEligible({ ...clip, video_codec: "h265" }), true);
+  assert.equal(portfolioLibraryEligible({ ...clip, video_codec: null }), false);
   assert.equal(portfolioLibraryEligible({ ...clip, media_authority_state: "ingesting" }), false);
   assert.match(portfolioLibraryBlockedReason({ ...clip, media_authority_state: "ingesting" }), /finish upload verification/);
+});
+
+test("Portfolio blockers separate clip format and consent from filtering tags", () => {
+  const card = { assetId: "clip-a", title: "Short clip", categoryId: "category-a", fullLengthAssetId: null,
+    video: true, legacy: false, sourceAvailable: true, mediaReady: true };
+  const fact = { id: "clip-a", extension: "mp4", source_available: 1, authority_ready: 1, canonical_ready: 1, missing_consent_count: 0,
+    source_codec: "h265", video_state: "canonical_verified", byte_count: 8 * 1024 * 1024 };
+  const categories = [{ id: "category-a", name: "Clips" }];
+  assert.deepEqual(portfolioCardBlockers(card, categories, { "clip-a": fact }), []);
+  assert.match(portfolioCardBlockers(card, categories, { "clip-a": { ...fact, byte_count: 65 * 1024 * 1024 } })[0].message, /under 64 MB/);
+  assert.match(portfolioCardBlockers(card, categories, { "clip-a": { ...fact, missing_consent_count: 1 } })[0].message, /consent/);
+  assert.match(portfolioReleaseFailure("portfolio_video_preview_exceeds_sixty_seconds_or_is_unreadable").message, /60 seconds/);
+  const full = { ...fact, id: "full-a", missing_consent_count: 1 };
+  const linked = portfolioCardBlockers({ ...card, fullLengthAssetId: "full-a" }, categories,
+    { "clip-a": fact, "full-a": full }, [{ id: "full-a", basename: "private-original.mov.mp4" }]);
+  assert.deepEqual(linked[0], { message: "Record consent for the people attached to private-original.mov.mp4", href: "/library/full-a" });
+  assert.deepEqual(portfolioCardBlockers({ ...card, title: "", categoryId: null }, categories, { "clip-a": fact }).slice(0, 2),
+    [{ message: "Add a card title", href: "#portfolio-title-clip-a" }, { message: "Choose a category", href: "#portfolio-category-clip-a" }]);
+});
+
+test("private release failure points to the affected preview or linked full video", () => {
+  const manifest = JSON.stringify({ cards: [{ id: "card-a", title: "My clip", assetId: "preview-a", fullLengthAssetId: "full-a" }] });
+  const base = { manifest, detail: JSON.stringify({ cardId: "card-a", cause: "portfolio_video_preview_exceeds_sixty_seconds_or_is_unreadable" }) };
+  assert.deepEqual(portfolioReleaseFailure("preview_duration_failed", base), {
+    message: "My clip: the video is over 60 seconds or its MP4 length could not be read. Choose a short clip", href: "/library/preview-a",
+  });
+  assert.deepEqual(portfolioReleaseFailure("projection_failed", { ...base, detail: JSON.stringify({ cardId: "card-a", cause: "portfolio_full_length_consent_missing" }) }), {
+    message: "My clip: the linked private full video needs source verification or recorded consent for attached people", href: "/library/full-a",
+  });
 });
 
 test("Library add captures category and optional full video in one submission", () => {

@@ -24,15 +24,15 @@ export default async function PortfolioLocalFixture({ searchParams }: { searchPa
   }
   const selectedCategoryId = categories.some((category) => category.id === query.categoryId) ? query.categoryId! : categories[0].id;
   const selectedFullLengthId = query.fullLengthAssetId === "synthetic-private-full" ? query.fullLengthAssetId : null;
-  const libraryQuery = new URLSearchParams({ safety: "nsfw", added: "1", categoryId: selectedCategoryId });
+  const libraryQuery = new URLSearchParams({ added: "1", categoryId: selectedCategoryId });
   if (selectedCategoryId === newCategoryId) libraryQuery.set("newCategoryName", categories[2].name);
   if (selectedFullLengthId) libraryQuery.set("fullLengthAssetId", selectedFullLengthId);
   const cards = [
     { assetId: "synthetic-preview-1", basename: "Synthetic short clip.mp4", title: "A short clip", description: "A quick look at the collection.",
-      categoryId: fromLibrary ? selectedCategoryId : categories[0].id, fullLengthAssetId: fromLibrary ? selectedFullLengthId : null, video: true, legacy: false, safety: "nsfw" as const,
+      categoryId: fromLibrary ? selectedCategoryId : categories[0].id, fullLengthAssetId: fromLibrary ? selectedFullLengthId : null, video: true, legacy: false,
       sourceAvailable: true, visible: true, mediaReady: true, previewKey: "synthetic-poster-1", imageUrl: swatch("#ffb0cc", "SYNTHETIC CLIP") },
     { assetId: "synthetic-photo-2", basename: "Synthetic portrait.jpg", title: "Portrait preview", description: "A sample photo card.",
-      categoryId: categories[1].id, fullLengthAssetId: "synthetic-private-full", video: false, legacy: false, safety: "nsfw" as const,
+      categoryId: categories[1].id, fullLengthAssetId: "synthetic-private-full", video: false, legacy: false,
       sourceAvailable: true, visible: true, mediaReady: true, previewKey: "synthetic-preview-2", imageUrl: swatch("#b3e9cc", "SYNTHETIC PHOTO") },
   ];
   return <div className="os-cloud-shell"><main className="workspace" style={{ marginLeft: 0, maxWidth: 1440 }}>
@@ -41,6 +41,10 @@ export default async function PortfolioLocalFixture({ searchParams }: { searchPa
     {fromLibrary && <Link className="secondary-action" href={`/library/local-fixture?${libraryQuery}`}>← Back to synthetic Library asset</Link>}
     <PortfolioEditor creatorName="Example Creator" revision={0} cards={fromLibrary ? cards.slice(0, 1) : cards} initialContact={{ telegramUsername: "", email: "", message: "" }} categories={categories}
       fullVideos={[{ id: "synthetic-private-full", basename: "Private full video.mp4" }]} canEdit publishingEnabled profileReady
+      mediaFacts={Object.fromEntries(["synthetic-preview-1", "synthetic-photo-2", "synthetic-private-full"].map((id) => [id, {
+        id, extension: id === "synthetic-photo-2" ? "jpg" : "mp4", source_available: 1, authority_ready: 1, canonical_ready: 1, missing_consent_count: 0,
+        source_codec: "h265", video_state: "canonical_verified", byte_count: 8 * 1024 * 1024,
+      }]))}
       saveAction={fixtureAction} publishAction={fixtureAction} createCategoryAction={fixtureAction} renameCategoryAction={fixtureAction} synthetic />
   </main></div>;
 }

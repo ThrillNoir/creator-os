@@ -11,7 +11,7 @@ const code = stripTypeScriptTypes(source.slice(start, end).replace("export class
 function fixture(mode) {
   const old = { creatorSlug: "adelaide", publishedProfileVersionId: "profile-a", portfolioVersionId: "old-release" };
   const third = { ...old, portfolioVersionId: "third-release" };
-  const state = { projection: old, release: "publishing", deletedMedia: 0, calls: [] };
+  const state = { projection: old, release: "publishing", deletedMedia: 0, calls: [], events: [] };
   const manifest = { schemaVersion: 2, contact: {}, cards: [{ id: "card-a", assetId: "preview-a", fullLengthAssetId: null,
     kind: "image", title: "Preview", description: "", section: "Clips", previewKey: "private.jpg", posterKey: null }] };
   const row = { id: "new-release", creator_id: "adelaide", slug: "adelaide", adult_profile_version_id: "profile-a" };
@@ -39,13 +39,17 @@ function fixture(mode) {
   };
   class Base { constructor(environment) { this.env = environment; } }
   const Workflow = new Function("WorkflowEntrypoint", "releaseRow", "sourceForCard", "copySource", "validLivePortfolio",
-    "snapshotKey", "releaseEvent", "mediaKey", `${code};return PortfolioPublishWorkflow;`)(
+    "snapshotKey", "releaseEvent", "mediaKey", "SAFE_RELEASE_CAUSES", `${code};return PortfolioPublishWorkflow;`)(
     Base,
     async (_env, params) => params.versionId === "old-release" ? { row: { ...row, id: "old-release" }, manifest } : { row, manifest },
-    async () => ({ preview: { key: "private.jpg" }, poster: null }),
+    async () => {
+      if (mode === "invalid-card") throw new Error("portfolio_short_preview_changed_or_too_large");
+      return { preview: { key: "private.jpg" }, poster: null };
+    },
     async () => ({ key: "adult-portfolio/adelaide/new-release/card-a/preview.jpg", checksum: "a".repeat(64) }),
     (value, slug, profile) => value?.creatorSlug === slug && value?.publishedProfileVersionId === profile,
-    (slug) => `adult-portfolio:${slug}`, async () => {}, () => "new-media",
+    (slug) => `adult-portfolio:${slug}`, async (_env, _row, type, detail) => { state.events.push({ type, detail }); }, () => "new-media",
+    new Set(["portfolio_short_preview_changed_or_too_large"]),
   );
   return { state, old, third, run: () => new Workflow(env).run({ payload: { creatorId: "adelaide", versionId: "new-release" } },
     { do: async (_name, callback) => callback() }) };
@@ -56,6 +60,14 @@ test("a failed write leaves the earlier public projection in place", async () =>
   await assert.rejects(run(), /synthetic_put_failure/);
   assert.deepEqual(state.projection, old);
   assert.equal(state.deletedMedia, 1);
+});
+
+test("a failed card validation records only its private card ID and known cause", async () => {
+  const { state, run } = fixture("invalid-card");
+  await assert.rejects(run(), /portfolio_short_preview_changed_or_too_large/);
+  assert.deepEqual(state.events.find((event) => event.type === "publish_failed")?.detail,
+    { code: "projection_failed", cardId: "card-a", cause: "portfolio_short_preview_changed_or_too_large" });
+  assert.equal(state.projection.portfolioVersionId, "old-release");
 });
 
 test("a failed delivery restores the still-published earlier release", async () => {

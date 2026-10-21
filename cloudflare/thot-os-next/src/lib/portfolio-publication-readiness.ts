@@ -1,7 +1,7 @@
 import type { PortfolioDraftItem } from "./portfolio-authoring.ts";
 import { isVideoPortfolioItem } from "./portfolio-video.ts";
 
-type Item = Pick<PortfolioDraftItem, "asset_id" | "title" | "safety" | "source_available" | "category_id" | "preview_r2_key" | "extension" | "video_state">;
+type Item = Pick<PortfolioDraftItem, "asset_id" | "title" | "source_available" | "category_id" | "preview_r2_key" | "extension" | "video_state">;
 
 export type PortfolioPublicationReadiness = {
   ready: boolean;
@@ -14,7 +14,6 @@ export function portfolioPublicationReadiness(item: Item): PortfolioPublicationR
   const editorHref = `#portfolio-item-${encodeURIComponent(item.asset_id)}`;
   if (!item.source_available) return { ready: false, message: "Preview unavailable", issues: [{ message: "Preview unavailable", href: libraryHref }] };
   const issues: PortfolioPublicationReadiness["issues"] = [];
-  if (item.safety !== "nsfw") issues.push({ message: "Mark this item 18+ in the Library", href: libraryHref });
   if (!item.title.trim()) issues.push({ message: "Add a card title", href: editorHref });
   if (!item.category_id) issues.push({ message: "Choose a category", href: editorHref });
   if (isVideoPortfolioItem(item)) {
