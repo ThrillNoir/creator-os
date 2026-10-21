@@ -33,6 +33,11 @@ const SAFE_RELEASE_CAUSES = new Set([
 ]);
 
 function snapshotKey(slug: string) { return `adult-portfolio:${slug}`; }
+function validStoredPortfolio(value: unknown, slug: string): value is LivePortfolioProjection {
+  const version = value && typeof value === "object" && "publishedProfileVersionId" in value
+    ? value.publishedProfileVersionId : null;
+  return typeof version === "string" && validLivePortfolio(value, slug, version);
+}
 function mediaKey(slug: string, version: string, card: ManifestCard, kind: "preview" | "poster") {
   return `adult-portfolio/${slug}/${version}/${card.id}/${kind}.${kind === "poster" || card.kind === "image" ? "jpg" : "mp4"}`;
 }
@@ -197,8 +202,12 @@ export async function beginPortfolioWithdrawal(env: Env, params: PortfolioParams
   if (current && (!validLivePortfolio(current, row.slug, row.adult_profile_version_id) || current.portfolioVersionId !== row.id)) {
     throw new Error("portfolio_projection_version_mismatch");
   }
-  const transition = await env.DB.prepare("UPDATE creator_portfolio_release_versions SET status='withdrawing' WHERE id=? AND creator_id=? AND status IN ('published','withdrawing')")
-    .bind(row.id, row.creator_id).run();
+  // A publication and withdrawal must not operate on the shared projection at once.
+  const transition = await env.DB.prepare(`UPDATE creator_portfolio_release_versions SET status='withdrawing'
+    WHERE id=? AND creator_id=? AND status IN ('published','withdrawing')
+      AND NOT EXISTS (SELECT 1 FROM creator_portfolio_release_versions
+        WHERE creator_id=? AND id<>? AND status='publishing')`)
+    .bind(row.id, row.creator_id, row.creator_id, row.id).run();
   if (transition.meta?.changes !== 1) throw new Error("portfolio_release_changed_during_withdrawal");
   await env.ADULT_PROFILES.delete(key);
   await releaseEvent(env, row, "withdraw_requested");
@@ -208,15 +217,26 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
   async run(event: { payload: PortfolioParams }, step: WorkflowStep) {
     const { row, manifest } = await step.do("load approved portfolio release", () => releaseRow(this.env, event.payload, ["approved", "publishing"]));
     await step.do("record portfolio publication intent", async () => {
-      await this.env.DB.prepare("UPDATE creator_portfolio_release_versions SET status='publishing' WHERE id=? AND creator_id=? AND status IN ('approved','publishing')").bind(row.id, row.creator_id).run();
+      const transition = await this.env.DB.prepare(`UPDATE creator_portfolio_release_versions SET status='publishing'
+        WHERE id=? AND creator_id=? AND status IN ('approved','publishing')
+          AND NOT EXISTS (SELECT 1 FROM creator_portfolio_release_versions
+            WHERE creator_id=? AND id<>? AND status='withdrawing')`)
+        .bind(row.id, row.creator_id, row.creator_id, row.id).run();
+      if (transition.meta?.changes !== 1) throw new Error("portfolio_withdrawal_in_progress");
       await releaseEvent(this.env, row, "publish_requested");
     });
-    const previous = await step.do("snapshot prior public portfolio", async () => {
-      const current = await this.env.ADULT_PROFILES?.get(snapshotKey(row.slug), "json");
-      return validLivePortfolio(current, row.slug, row.adult_profile_version_id) && current.portfolioVersionId !== row.id ? current : null;
-    });
+    let previous: LivePortfolioProjection | null = null;
     let failedCardId: string | null = null;
     try {
+      previous = await step.do("snapshot prior public portfolio", async () => {
+        const current = await this.env.ADULT_PROFILES?.get(snapshotKey(row.slug), "json");
+        if (!current) return null;
+        if (!validStoredPortfolio(current, row.slug)) throw new Error("portfolio_projection_version_mismatch");
+        if (current.portfolioVersionId === row.id) return null;
+        const prior = await releaseRow(this.env, { creatorId: row.creator_id, versionId: current.portfolioVersionId }, ["published"]);
+        if (prior.row.adult_profile_version_id !== current.publishedProfileVersionId) throw new Error("portfolio_projection_version_mismatch");
+        return current;
+      });
       const cards: LivePortfolioCard[] = [];
       for (const card of manifest.cards) {
         failedCardId = card.id;
@@ -247,7 +267,7 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
         failedCardId = null;
         const current = await this.env.ADULT_PROFILES.get(snapshotKey(row.slug), "json");
         if (current) {
-          if (!validLivePortfolio(current, row.slug, row.adult_profile_version_id) ||
+          if (!validStoredPortfolio(current, row.slug) ||
             (current.portfolioVersionId !== previous?.portfolioVersionId && current.portfolioVersionId !== row.id))
             throw new Error("portfolio_projection_changed_during_publish");
         }
@@ -286,7 +306,7 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
               const latest = await this.env.ADULT_PROFILES?.get(key, "json");
               if (validLivePortfolio(latest, row.slug, row.adult_profile_version_id) && latest.portfolioVersionId === row.id) {
                 await this.env.ADULT_PROFILES?.put(key, JSON.stringify(previous), { metadata: { creatorId: row.creator_id,
-                  portfolioVersionId: previous.portfolioVersionId, profileVersionId: row.adult_profile_version_id } });
+                  portfolioVersionId: previous.portfolioVersionId, profileVersionId: previous.publishedProfileVersionId } });
                 restored = true;
               }
             } catch { /* Revoked or stale prior releases must not be restored. */ }
@@ -366,7 +386,9 @@ export async function reconcilePublishedPortfolios(env: Env) {
       if (!needsWithdrawal) {
         try {
           const { row, manifest } = await releaseRow(env, params, ["published"]);
-          if (row.profile_status !== "active" || row.published_version_id !== row.adult_profile_version_id || row.profile_version_status !== "published") throw new Error("portfolio_adult_profile_no_longer_current");
+          // A profile update keeps an independently approved Portfolio live.
+          // Withdrawing the profile still hides it at the age gateway.
+          if (row.profile_status !== "active" || !row.published_version_id) throw new Error("portfolio_adult_profile_no_longer_current");
           for (const card of manifest.cards) await sourceForCard(env, item.creator_id, card, manifest.schemaVersion, true);
         } catch { needsWithdrawal = true; }
       }

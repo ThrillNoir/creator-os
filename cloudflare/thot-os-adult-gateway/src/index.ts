@@ -222,7 +222,7 @@ function validPortfolioObject(object: R2Object, profile: AdultProfile, portfolio
   const expectedChecksum = kind === "poster" ? card.posterChecksum : card.checksum;
   const metadata = object.customMetadata;
   return object.httpMetadata?.contentType === expectedType && metadata?.surface === "adult_portfolio"
-    && metadata.creatorSlug === profile.creator.slug && metadata.profileVersionId === profile.publishedVersionId
+    && metadata.creatorSlug === profile.creator.slug && metadata.profileVersionId === portfolio.publishedProfileVersionId
     && metadata.portfolioVersionId === portfolio.portfolioVersionId && metadata.cardId === card.id
     && metadata.kind === kind && metadata.checksum === expectedChecksum
     && hexChecksum(object.checksums.sha256) === expectedChecksum;
@@ -238,9 +238,13 @@ function portfolioRange(header: string | null, size: number) {
   return { offset: start, length: end - start + 1 };
 }
 
-async function currentPortfolio(env: Env, slug: string, profileVersionId: string) {
+async function currentPortfolio(env: Env, slug: string) {
   const value = await env.ADULT_PROFILES.get(portfolioKey(slug), "json");
-  return validLivePortfolio(value, slug, profileVersionId) ? value : null;
+  const version = value && typeof value === "object" && "publishedProfileVersionId" in value
+    ? value.publishedProfileVersionId : null;
+  // The age session is bound to the current profile. The independently approved
+  // Portfolio keeps its own immutable publication/media version across profile edits.
+  return typeof version === "string" && validLivePortfolio(value, slug, version) ? value : null;
 }
 
 function gate(profile: AdultProfile, siteKey: string) {
@@ -297,8 +301,11 @@ return {
         try {
           const candidate = loadPortfolio
             ? await loadPortfolio(profile.creator.slug, profile.publishedVersionId)
-            : await currentPortfolio(env, profile.creator.slug, profile.publishedVersionId);
-          if (validPortfolio(candidate, profile.creator.slug, profile.publishedVersionId)) portfolio = candidate;
+            : await currentPortfolio(env, profile.creator.slug);
+          const candidateVersion = candidate && typeof candidate === "object" && "schemaVersion" in candidate &&
+            candidate.schemaVersion === 2 && "publishedProfileVersionId" in candidate &&
+            typeof candidate.publishedProfileVersionId === "string" ? candidate.publishedProfileVersionId : profile.publishedVersionId;
+          if (validPortfolio(candidate, profile.creator.slug, candidateVersion)) portfolio = candidate;
         } catch { /* A portfolio outage cannot bypass the age gate or break the profile. */ }
       }
       return page(adultPage(profile, portfolio, url));
@@ -306,7 +313,7 @@ return {
     if (request.method === "GET" && parts.length === 4 && parts[0] === "portfolio-media" && SLUG.test(parts[1]) && ITEM_ID.test(parts[2]) && (parts[3] === "preview" || parts[3] === "poster")) {
       const profile = await loadProfile(env, parts[1]);
       if (!profile || !await validSession(request, profile, env)) return page("Not found", 404);
-      const portfolio = await currentPortfolio(env, parts[1], profile.publishedVersionId);
+      const portfolio = await currentPortfolio(env, parts[1]);
       const card = portfolio?.cards.find((item) => item.id === parts[2]);
       const kind = parts[3] as "preview" | "poster";
       if (!portfolio || !card || (kind === "poster" && card.kind !== "video")) return page("Not found", 404);
@@ -328,7 +335,7 @@ return {
     if (request.method === "POST" && parts.length === 4 && SLUG.test(parts[0]) && parts[1] === "portfolio" && parts[2] === "full-length" && parts[3] === "request") {
       const profile = await loadProfile(env, parts[0]);
       if (!profile || !await validSession(request, profile, env) || !sameOriginBrowserForm(request)) return page("Not found", 404);
-      const portfolio = await currentPortfolio(env, parts[0], profile.publishedVersionId);
+      const portfolio = await currentPortfolio(env, parts[0]);
       if (!portfolio) return page("Not found", 404);
       const form = await request.formData().catch(() => null);
       const card = portfolio.cards.find((item) => item.id === form?.get("previewId") &&
@@ -343,7 +350,7 @@ return {
         catch { /* The creator can still identify the public preview title. */ }
       }
       const creatorFile = portfolio.schemaVersion === 2
-        ? portfolioContactName(privateReferences, parts[0], profile.publishedVersionId, portfolio.portfolioVersionId, card.id) : null;
+        ? portfolioContactName(privateReferences, parts[0], portfolio.publishedProfileVersionId, portfolio.portfolioVersionId, card.id) : null;
       const message = `${edited}\n\n${creatorFile ? `Creator file: ${creatorFile}\n` : ""}From: ${name}`;
       let destination: string | null = null;
       if (channel === "telegram" && portfolio.contact.telegramUsername) destination = `https://t.me/${portfolio.contact.telegramUsername}?text=${encodeURIComponent(message)}`;

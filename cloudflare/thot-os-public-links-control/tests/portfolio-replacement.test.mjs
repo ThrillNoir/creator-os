@@ -11,16 +11,16 @@ const code = stripTypeScriptTypes(source.slice(start, end).replace("export class
 function fixture(mode) {
   const old = { creatorSlug: "adelaide", publishedProfileVersionId: "profile-a", portfolioVersionId: "old-release" };
   const third = { ...old, portfolioVersionId: "third-release" };
-  const state = { projection: old, release: "publishing", deletedMedia: 0, calls: [], events: [] };
+  const state = { projection: old, release: "approved", deletedMedia: 0, calls: [], events: [] };
   const manifest = { schemaVersion: 2, contact: {}, cards: [{ id: "card-a", assetId: "preview-a", fullLengthAssetId: null,
     kind: "image", title: "Preview", description: "", section: "Clips", previewKey: "private.jpg", posterKey: null }] };
-  const row = { id: "new-release", creator_id: "adelaide", slug: "adelaide", adult_profile_version_id: "profile-a" };
+  const row = { id: "new-release", creator_id: "adelaide", slug: "adelaide", adult_profile_version_id: mode.startsWith("profile-updated") ? "profile-b" : "profile-a" };
   const env = {
     ADULT_PROFILES: {
       async get() { return state.projection; },
-      async put(_key, value) {
+      async put(_key, value, options) {
         if (mode === "before-put") throw new Error("synthetic_put_failure");
-        state.projection = JSON.parse(value); state.calls.push("put");
+        state.projection = JSON.parse(value); state.calls.push({ put: options?.metadata });
       },
       async delete(key) { if (key === "adult-portfolio:adelaide") state.projection = null; state.calls.push(`delete:${key}`); },
     },
@@ -28,27 +28,33 @@ function fixture(mode) {
     DB: {
       prepare(sql) { return { bind() { return {
         async first() { return sql.includes("SELECT status") ? { status: state.release } : null; },
-        async run() { if (sql.includes("status='failed'")) state.release = "failed"; return { meta: { changes: 1 } }; },
+        async run() {
+          if (sql.includes("SET status='publishing'") && mode === "withdraw-in-progress") return { meta: { changes: 0 } };
+          if (sql.includes("SET status='publishing'")) state.release = "publishing";
+          if (sql.includes("status='failed'")) state.release = "failed";
+          return { meta: { changes: 1 } };
+        },
       }; } }; },
       async batch() {
         if (mode === "committed") { state.release = "published"; throw new Error("synthetic_commit_reply_lost"); }
-        if (mode === "reference-fail") { state.release = "published"; return []; }
+        if (mode === "reference-fail" || mode === "profile-updated") { state.release = "published"; return []; }
         if (mode === "concurrent") state.projection = third;
         throw new Error("synthetic_batch_failure");
       },
     },
   };
   class Base { constructor(environment) { this.env = environment; } }
-  const Workflow = new Function("WorkflowEntrypoint", "releaseRow", "sourceForCard", "copySource", "validLivePortfolio",
+  const Workflow = new Function("WorkflowEntrypoint", "releaseRow", "sourceForCard", "copySource", "validLivePortfolio", "validStoredPortfolio",
     "snapshotKey", "releaseEvent", "mediaKey", "SAFE_RELEASE_CAUSES", "writePortfolioContactReferences", "portfolioContactReferenceKey", `${code};return PortfolioPublishWorkflow;`)(
     Base,
-    async (_env, params) => params.versionId === "old-release" ? { row: { ...row, id: "old-release" }, manifest } : { row, manifest },
+    async (_env, params) => params.versionId === "old-release" ? { row: { ...row, id: "old-release", adult_profile_version_id: "profile-a" }, manifest } : { row, manifest },
     async () => {
       if (mode === "invalid-card") throw new Error("portfolio_short_preview_changed_or_too_large");
       return { preview: { key: "private.jpg" }, poster: null };
     },
     async () => ({ key: "adult-portfolio/adelaide/new-release/card-a/preview.jpg", checksum: "a".repeat(64) }),
     (value, slug, profile) => value?.creatorSlug === slug && value?.publishedProfileVersionId === profile,
+    (value, slug) => value?.creatorSlug === slug && typeof value?.publishedProfileVersionId === "string",
     (slug) => `adult-portfolio:${slug}`, async (_env, _row, type, detail) => { state.events.push({ type, detail }); }, () => "new-media",
     new Set(["portfolio_short_preview_changed_or_too_large"]), async () => { if (mode === "reference-fail") throw new Error("synthetic_private_reference_write_failure"); },
     (slug, version) => `adult-portfolio-contact:${slug}:${version}`,
@@ -84,6 +90,30 @@ test("a committed delivery keeps its public copy when the D1 response is lost", 
   const { state, run } = fixture("committed");
   assert.equal((await run()).published, true);
   assert.equal(state.projection.portfolioVersionId, "new-release");
+  assert.equal(state.deletedMedia, 0);
+});
+
+test("a new approved Portfolio replaces a projection from the prior 18+ profile version", async () => {
+  const { state, run } = fixture("profile-updated");
+  assert.equal((await run()).published, true);
+  assert.equal(state.projection.publishedProfileVersionId, "profile-b");
+  assert.equal(state.projection.portfolioVersionId, "new-release");
+  assert.ok(state.calls.includes("delete:adult-portfolio-contact:adelaide:old-release"));
+});
+
+test("failed replacement restores the old projection with its own profile version metadata", async () => {
+  const { state, old, run } = fixture("profile-updated-batch-fail");
+  await assert.rejects(run(), /synthetic_batch_failure/);
+  assert.deepEqual(state.projection, old);
+  assert.deepEqual(state.calls.find((call) => call.put?.portfolioVersionId === "old-release")?.put,
+    { creatorId: "adelaide", portfolioVersionId: "old-release", profileVersionId: "profile-a" });
+});
+
+test("publish waits while an older Portfolio is being withdrawn", async () => {
+  const { state, run } = fixture("withdraw-in-progress");
+  await assert.rejects(run(), /portfolio_withdrawal_in_progress/);
+  assert.equal(state.release, "approved");
+  assert.equal(state.projection.portfolioVersionId, "old-release");
   assert.equal(state.deletedMedia, 0);
 });
 

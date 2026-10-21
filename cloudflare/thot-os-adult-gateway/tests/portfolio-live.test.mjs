@@ -22,6 +22,7 @@ async function session(versionId = profileVersion, sessionSlug = slug) {
   return `__Host-thot-age=${payload}.${base64url(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)))}`;
 }
 async function setup() {
+  const activeProfile = structuredClone(profile);
   const previewChecksum = await checksum(previewBytes);
   const posterChecksum = await checksum(posterBytes);
   const previewKey = `adult-portfolio/${slug}/${portfolioVersion}/${cardId}/preview.mp4`;
@@ -49,10 +50,10 @@ async function setup() {
       body: new Response(bodyBytes).body };
   };
   const env = { AGE_SESSION_SECRET: "local-secret", ADULT_EVENTS: { writeDataPoint() {} },
-    ADULT_PROFILES: { async get(key) { return key === `adult-profile:${slug}` ? profile : key === `adult-portfolio:${slug}` ? projection
+    ADULT_PROFILES: { async get(key) { return key === `adult-profile:${slug}` ? activeProfile : key === `adult-portfolio:${slug}` ? projection
       : key === `adult-portfolio-contact:${slug}:${portfolioVersion}` ? privateReferences : null; } },
     ADULT_MEDIA: { async head(key) { return r2Object(key); }, async get(key, options) { return r2Object(key, options?.range); } } };
-  return { projection, privateReferences, objects, env };
+  return { projection, privateReferences, objects, env, activeProfile };
 }
 async function fetchPage(env, path, cookie, init = {}) {
   return worker.fetch(new Request(`https://more.example${path}`, { ...init, headers: { ...(cookie ? { cookie } : {}), ...init.headers } }), env);
@@ -88,6 +89,24 @@ test("live projection accepts creator labels and never exposes private source ID
   assert.doesNotMatch(html, /portfolio\/request|MADE FOR YOU/);
   assert.match((await (await fetchPage(env, `/${slug}?section=Other`, await session())).text()), /A short preview/);
   assert.equal((await fetchPage(env, `/${slug}`, await session("old-profile"))).status, 404);
+});
+
+test("updating the protected profile keeps the approved Portfolio behind the new age session", async () => {
+  const { env, activeProfile } = await setup();
+  activeProfile.publishedVersionId = "adult-profile-v2";
+  assert.equal((await fetchPage(env, `/${slug}`, await session())).status, 404,
+    "the old profile session must stop working");
+  const cookie = await session("adult-profile-v2");
+  const page = await fetchPage(env, `/${slug}`, cookie);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /A short preview/);
+  assert.equal((await fetchPage(env, `/portfolio-media/${slug}/${cardId}/preview`, cookie)).status, 200);
+  const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "email", message: "Please send the full clip and payment option." });
+  const contact = await fetchPage(env, `/${slug}/portfolio/full-length/request`, cookie, {
+    method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body,
+  });
+  assert.equal(contact.status, 200);
+  assert.match(await contact.text(), /Creator file: Renamed full video\.mp4/);
 });
 
 test("preview bytes require the current session, projection, checksum and exact media metadata", async () => {
