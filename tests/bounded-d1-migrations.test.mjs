@@ -45,13 +45,13 @@ function planForPreState(inventory, count) {
   return buildBoundedPlan({ environment: "staging", releaseId: `future-baseline-${next}`, from: next, through: next, inventory, remoteApplied: inventory.slice(0, count).map((entry) => entry.name), registry, policy, git });
 }
 
-test("reviewed staging ledger records applied Portfolio migrations through draft visibility", () => {
+test("reviewed staging ledger records applied Portfolio and Library name migrations", () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 71);
-  assert.deepEqual(ledger.migrations.slice(-8).map(({ remoteId, name }) => ({ remoteId, name })), [
+  assert.equal(ledger.migrations.length, 72);
+  assert.deepEqual(ledger.migrations.slice(-9).map(({ remoteId, name }) => ({ remoteId, name })), [
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
     { remoteId: 65, name: "0063_content_download_links.sql" },
     { remoteId: 66, name: "0064_content_download_message.sql" },
@@ -60,8 +60,9 @@ test("reviewed staging ledger records applied Portfolio migrations through draft
     { remoteId: 69, name: "0067_creator_portfolio_releases.sql" },
     { remoteId: 70, name: "0068_portfolio_preview_first.sql" },
     { remoteId: 71, name: "0069_portfolio_draft_visibility.sql" },
+    { remoteId: 72, name: "0070_asset_display_names.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0070_asset_display_names.sql"]);
+  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), []);
   assert.equal(inventory.at(-3).name, "0068_portfolio_preview_first.sql");
   assert.equal(inventory.at(-3).sha256, "8a9068b10454d3ef3823cfe45734477f37dd72f98b554f8fb1ff598c22077764");
   assert.equal(inventory.at(-2).name, "0069_portfolio_draft_visibility.sql");

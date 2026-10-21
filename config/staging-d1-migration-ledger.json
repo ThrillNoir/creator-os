@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-10-20T02:33:45.000Z",
+  "observedAt": "2026-10-21T03:56:23Z",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
   "migrations": [
     {
@@ -407,13 +407,13 @@
       "sha256": "75959e6de1a1e68429e3b737c70ddd2d679141a5a5338fed065e35188412abfb",
       "purpose": "Applied approved bounded staging migration: private Portfolio card visibility and creator contact draft fields.",
       "remoteId": 71
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0070_asset_display_names.sql",
       "sha256": "732cc5f26f6a7cd290c0c1452b303d538bfa622e1bb0900843a1e15b2148869b",
-      "purpose": "Pending approved staging migration: optional creator-facing Library names without changing original filenames, asset IDs, or R2 object keys."
+      "purpose": "Applied approved bounded staging migration: optional creator-facing Library names without changing original filenames, asset IDs, or R2 object keys.",
+      "remoteId": 72
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
