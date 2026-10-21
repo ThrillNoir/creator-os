@@ -403,5 +403,11 @@
       "remoteId": 70
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0069_portfolio_draft_visibility.sql",
+      "sha256": "75959e6de1a1e68429e3b737c70ddd2d679141a5a5338fed065e35188412abfb",
+      "purpose": "Pending bounded staging migration: private Portfolio card visibility and creator contact draft fields."
+    }
+  ]
 }
