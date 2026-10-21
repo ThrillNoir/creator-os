@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import ts from "typescript";
 import { portfolioAddFields } from "../src/lib/portfolio-add-fields.ts";
 import { portfolioLibraryEligible } from "../src/lib/portfolio-library-eligibility.ts";
+import { portfolioInitialTitle } from "../src/lib/asset-display-name.ts";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const creators = ["synthetic-amber", "synthetic-birch", "synthetic-coral"];
@@ -87,6 +88,7 @@ async function fixture() {
       return { status: controlStatus };
     } },
     "@/lib/portfolio-add-fields": { portfolioAddFields },
+    "@/lib/asset-display-name": { portfolioInitialTitle },
   });
   return { db, actions, authoring, controlCalls,
     setCreator(value) { activeCreator = value; }, setRole(value) { role = value; }, setControlStatus(value) { controlStatus = value; },
@@ -100,6 +102,7 @@ test("three invented creators keep private drafts, publication and withdrawal is
   try {
     for (const id of creators) {
       app.setCreator(id);
+      if (id === creators[0]) app.db.prepare("UPDATE assets SET display_stem='Renamed synthetic preview' WHERE id=? AND creator_id=?").run(`preview-${id}`, id);
       const category = new FormData(); category.set("name", "Synthetic clips");
       await redirected(app.actions.createPortfolioCategoryAction(category), "/portfolio");
       const categoryId = app.db.prepare("SELECT id FROM creator_portfolio_categories WHERE creator_id=?").pluck().get(id);
@@ -107,6 +110,7 @@ test("three invented creators keep private drafts, publication and withdrawal is
       add.set("assetId", `preview-${id}`); add.set("intent", "add"); add.set("confirmAdd", "yes");
       add.set("categoryChoice", categoryId); add.set("fullLengthAssetId", `full-${id}`);
       await redirected(app.actions.togglePortfolioItemAction(add), `/library/preview-${id}`);
+      if (id === creators[0]) assert.equal((await app.authoring.getPortfolioDraft(id)).items[0].title, "Renamed synthetic preview");
       assert.equal((await app.authoring.getPortfolioDraft(id)).items[0].full_length_asset_id, `full-${id}`);
       assert.equal(app.db.prepare("SELECT COUNT(*) FROM creator_portfolio_release_versions WHERE creator_id=?").pluck().get(id), 0,
         "adding to draft never publishes");

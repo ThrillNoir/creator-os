@@ -7,7 +7,7 @@ import { VerifiedVideoPreview } from "./verified-video-preview";
 import { VideoPosterEditor } from "./video-poster-editor";
 import { portfolioCardBlockers, type Blocker, type PortfolioMediaFact } from "@/lib/portfolio-blockers";
 
-type Card = { assetId: string; basename: string; title: string; description: string; categoryId: string | null;
+type Card = { assetId: string; basename: string; libraryDisplayStem?: string | null; title: string; description: string; categoryId: string | null;
   fullLengthAssetId: string | null; video: boolean; legacy: boolean; sourceAvailable: boolean;
   visible: boolean; mediaReady: boolean; previewKey: string | null; imageUrl: string | null };
 type Category = { id: string; name: string; sort_order: number };
@@ -24,7 +24,7 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, in
   const [cards, setCards] = useState(initialCards);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [contact, setContact] = useState(initialContact);
-  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+  const [rightsApproval, setRightsApproval] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
   const bypassLeave = useRef(false);
@@ -33,6 +33,7 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, in
   const composition = useMemo(() => JSON.stringify({ revision, cards: shape(cards), contact }), [cards, contact, revision]);
   const original = useMemo(() => JSON.stringify({ revision, cards: shape(initialCards), contact: initialContact }), [initialCards, initialContact, revision]);
   const dirty = composition !== original;
+  const rightsConfirmed = rightsApproval === composition;
   const cardBlockers = cards.map((card) => portfolioCardBlockers(card, categories, mediaFacts, fullVideos));
   const issues = cardBlockers.map((blockers) => blockers[0]?.message ?? "Ready for final media checks");
   const shown = cards.filter((card) => card.visible);
@@ -44,7 +45,6 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, in
     ...(!profileReady && publishingEnabled ? [{ message: "Publish your 18+ profile first", href: "/adult-profile" }] : []),
     ...cards.flatMap((card, index) => card.visible ? cardBlockers[index].map((blocker) => ({ ...blocker, message: `${card.title || card.basename}: ${blocker.message}` })) : []),
     ...(!contactReady ? [{ message: "Add a Telegram username or email for full-length requests", href: "#portfolio-contact-title" }] : []),
-    ...(ready && canEdit && publishingEnabled && !rightsConfirmed ? [{ message: "Confirm rights and consent for every shown card", href: "#portfolio-rights-confirmation" }] : []),
   ];
   const filteredCards = cards.map((card, index) => ({ card, index })).filter(({ card }) => !categoryFilter || card.categoryId === categoryFilter);
 
@@ -67,10 +67,11 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, in
     return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", click, true); };
   }, [dirty]);
 
-  function update(id: string, patch: Partial<Card>) { setCards((current) => current.map((card) => card.assetId === id ? { ...card, ...patch } : card)); }
+  function update(id: string, patch: Partial<Card>) { setRightsApproval(null); setCards((current) => current.map((card) => card.assetId === id ? { ...card, ...patch } : card)); }
   function move(index: number, offset: number) {
     const target = index + offset;
     if (target < 0 || target >= cards.length) return;
+    setRightsApproval(null);
     setCards((current) => { const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next; });
   }
   function send(action: Action, data: FormData) {
@@ -103,18 +104,19 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, in
                 : <VerifiedVideoPreview assetId={card.assetId} basename={card.basename} className="portfolio-preview-media" poster={card.imageUrl ?? undefined} />
               : card.imageUrl ? <img src={card.imageUrl} alt={`Private draft preview for ${card.title}`} loading="lazy" /> : <span>Preview preparing</span>}</div>
             <div className="portfolio-preview-card-body"><span className={card.visible ? "portfolio-readiness is-ready" : "portfolio-readiness"}>{card.visible ? "Shown on next publish" : "Hidden from next publish"}</span><span className={cardBlockers[index].length === 0 ? "portfolio-readiness is-ready" : "portfolio-readiness"}>{issues[index]}{cardBlockers[index].length > 1 ? ` (+${cardBlockers[index].length - 1} more)` : ""}</span>
-              <h3>{card.title}</h3><small>{categories.find((category) => category.id === card.categoryId)?.name ?? "Category needed"}</small>
+              <h3>{card.title}</h3><small>Title on More · {categories.find((category) => category.id === card.categoryId)?.name ?? "Category needed"}</small>
               <dl className="portfolio-private-media-map"><div><dt>Preview file for More</dt><dd>{card.basename}</dd></div>
                 <div><dt>Private full video · creator reference</dt><dd>{card.fullLengthAssetId ? fullVideos.find((video) => video.id === card.fullLengthAssetId)?.basename ?? "Linked video unavailable" : "None linked"}</dd></div></dl>
+              {canEdit && card.libraryDisplayStem && card.title !== card.libraryDisplayStem.slice(0, 100) && <button className="secondary-action" type="button" onClick={() => update(card.assetId, { title: card.libraryDisplayStem!.slice(0, 100) })}>Use Library name as title</button>}
               {canEdit && <div className="portfolio-card-controls"><button type="button" aria-pressed={card.visible} onClick={() => update(card.assetId, { visible: !card.visible })}>{card.visible ? "Hide on next publish" : "Show on next publish"}</button><button type="button" onClick={() => move(index, -1)} disabled={Boolean(categoryFilter) || index === 0} title={categoryFilter ? "Clear the category filter to reorder cards" : undefined} aria-label={`Move ${card.title} earlier`}>↑ Earlier</button>
                 <button type="button" onClick={() => move(index, 1)} disabled={Boolean(categoryFilter) || index === cards.length - 1} title={categoryFilter ? "Clear the category filter to reorder cards" : undefined} aria-label={`Move ${card.title} later`}>↓ Later</button></div>}
-              {canEdit && <details id={`portfolio-thumbnail-${card.assetId}`} tabIndex={-1} className="portfolio-card-edit-details"><summary>Edit card details</summary><div className="portfolio-card-fields"><label>Card title<input id={`portfolio-title-${card.assetId}`} value={card.title} maxLength={100} onChange={(event) => update(card.assetId, { title: event.target.value })} /></label>
+              {canEdit && <details id={`portfolio-thumbnail-${card.assetId}`} tabIndex={-1} className="portfolio-card-edit-details"><summary>Edit card details</summary><div className="portfolio-card-fields"><label>Title shown on More<input id={`portfolio-title-${card.assetId}`} value={card.title} maxLength={100} onChange={(event) => update(card.assetId, { title: event.target.value })} /></label>
                 <label>Category<select id={`portfolio-category-${card.assetId}`} value={card.categoryId ?? ""} onChange={(event) => update(card.assetId, { categoryId: event.target.value || null })}><option value="">Choose category</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label>
                 <label>Description <span>(optional)</span><textarea value={card.description} maxLength={280} onChange={(event) => update(card.assetId, { description: event.target.value })} /></label>
                 <label>Private full-length video <span>(optional)</span><select id={`portfolio-full-video-${card.assetId}`} value={card.fullLengthAssetId ?? ""} onChange={(event) => update(card.assetId, { fullLengthAssetId: event.target.value || null })}><option value="">Preview only · no full-length request</option>
                   {fullVideos.filter((video) => video.id !== card.assetId).map((video) => <option value={video.id} key={video.id}>{video.basename}</option>)}</select></label>
                 <p className="portfolio-field-note">A linked full video stays private. Visitors can only request it using your contact method.</p>
-                <button type="button" className="danger-action" onClick={() => setCards((current) => current.filter((item) => item.assetId !== card.assetId))}>Remove from draft</button>
+                <button type="button" className="danger-action" onClick={() => { setRightsApproval(null); setCards((current) => current.filter((item) => item.assetId !== card.assetId)); }}>Remove from draft</button>
                 <Link href={synthetic ? "/library/local-fixture?safety=nsfw&added=1" : `/library/${encodeURIComponent(card.assetId)}`}>Review Library item →</Link></div>
                 {card.video && !synthetic && (!dirty ? <div className="portfolio-poster-step"><VideoPosterEditor assetId={card.assetId} label="Clip thumbnail" posterUrl={card.imageUrl} /><small>Thumbnail saves privately in the Library. Publish again to change the live thumbnail.</small></div>
                   : <small>Save this draft before changing a clip thumbnail.</small>)}
@@ -125,20 +127,22 @@ export function PortfolioEditor({ creatorName, revision, cards: initialCards, in
     </section>
     <section className="panel portfolio-publish" aria-labelledby="portfolio-contact-title"><div className="section-heading"><div><h2 id="portfolio-contact-title">How visitors contact you</h2><p>Enter the contact details and message visitors can use for full-length requests. They stay private in the draft until you publish.</p></div></div>
       {canEdit ? <div className="portfolio-release-contact">
-        <label>Telegram username<input value={contact.telegramUsername} onChange={(event) => setContact((current) => ({ ...current, telegramUsername: event.target.value }))} maxLength={33} placeholder="@creatorname" /></label>
-        <label>Contact email<input type="email" value={contact.email} onChange={(event) => setContact((current) => ({ ...current, email: event.target.value }))} maxLength={254} placeholder="creator@example.com" /></label>
-        <label className="portfolio-contact-message">Custom request message <span>(optional)</span><textarea value={contact.message} onChange={(event) => setContact((current) => ({ ...current, message: event.target.value }))} maxLength={500} rows={4} placeholder={`Hello ${creatorName}, I would love to see the full length. Could you send me a payment option and download link?`} /></label>
+        <label>Telegram username<input value={contact.telegramUsername} onChange={(event) => { setRightsApproval(null); setContact((current) => ({ ...current, telegramUsername: event.target.value })); }} maxLength={33} placeholder="@creatorname" /></label>
+        <label>Contact email<input type="email" value={contact.email} onChange={(event) => { setRightsApproval(null); setContact((current) => ({ ...current, email: event.target.value })); }} maxLength={254} placeholder="creator@example.com" /></label>
+        <label className="portfolio-contact-message">Custom request message <span>(optional)</span><textarea value={contact.message} onChange={(event) => { setRightsApproval(null); setContact((current) => ({ ...current, message: event.target.value })); }} maxLength={500} rows={4} placeholder={`Hello ${creatorName}, I would love to see the full length. Could you send me a payment option and download link?`} /></label>
         <div className="portfolio-contact-sample"><strong>Visitor message preview</strong><p>{contact.message.trim() || `Hello ${creatorName}, I would love to see the full length. Could you send me a payment option and download link?`}</p><small>The selected preview title and reference are appended when a visitor prepares a message. Visitors review it in Telegram or their email app before sending.</small></div>
       </div> : <p>Only an editor can change the creator contact details.</p>}
     </section>
     <section className="panel portfolio-publish" aria-labelledby="portfolio-publish-title"><div className="section-heading"><div><h2 id="portfolio-publish-title">Publish this layout</h2><p>Publishing uses all cards marked Show across every category, in their saved order. The category filter only changes your view. Unsaved edits are included. Each selected preview is copied to More; linked full videos stay private.</p></div><span className="portfolio-public-state">Final approval</span></div>
       {!profileReady && publishingEnabled && <p className="portfolio-publish-attention">Publish your <Link href="/adult-profile">18+ profile</Link> first.</p>}
       {!ready && <p className="portfolio-publish-attention">{blockers.length} item{blockers.length === 1 ? "" : "s"} need attention before publishing. Open Show blockers for the exact steps. Hidden cards can remain in your private draft.</p>}
-      {canEdit && <div className="portfolio-editor-save"><button className="secondary-action" type="button" onClick={() => send(saveAction, new FormData())} disabled={!dirty || pending}>Save Draft</button><span>{dirty ? "Your changes are only on this screen." : "Saved privately. Your live More page is unchanged."}</span></div>}
+      {canEdit && <div className="portfolio-editor-save">{dirty ? <><button className="secondary-action" type="button" onClick={() => send(saveAction, new FormData())} disabled={pending}>Save Draft</button><span>Your changes are only on this screen.</span></> : <span>Draft saved. No changes to save; your live More page is unchanged.</span>}</div>}
       {canEdit && publishingEnabled ? <form onSubmit={(event) => { event.preventDefault(); send(publishAction, new FormData(event.currentTarget, (event.nativeEvent as SubmitEvent).submitter)); }} className="portfolio-release-form">
         {linked && !contactReady && <p className="portfolio-publish-attention">Add a Telegram username or email above for full-length requests.</p>}
-        <label id="portfolio-rights-confirmation" className="portfolio-release-approval"><input type="checkbox" name="publicRightsApproved" value="yes" checked={rightsConfirmed} onChange={(event) => setRightsConfirmed(event.target.checked)} />
+        <label id="portfolio-rights-confirmation" className="portfolio-release-approval"><input type="checkbox" name="publicRightsApproved" value="yes" checked={rightsConfirmed} onChange={(event) => setRightsApproval(event.target.checked ? composition : null)} />
           I confirm I have the rights and consent to publish every shown preview and thumbnail. If other people appear, I have linked them to the Library item and recorded their consent.</label>
+        <small>This confirmation applies to the current layout only. Changing a card or contact detail clears it; confirm again for a later publication.</small>
+        {ready && profileReady && contactReady && !rightsConfirmed && <p>Check the confirmation above to enable Publish.</p>}
         <p className="portfolio-public-use-note">Publishing shows the {shown.length} shown previews and thumbnails on your age-gated More page. Hidden cards stay in the draft. Full videos stay private.</p>
         <button className="primary" type="submit" disabled={!ready || !profileReady || !contactReady || !rightsConfirmed || pending}>{pending ? "Checking publication…" : `Publish ${shown.length} ${shown.length === 1 ? "card" : "cards"} to More`}</button>
         <small>Final media, rights and consent checks run before anything goes live.</small>

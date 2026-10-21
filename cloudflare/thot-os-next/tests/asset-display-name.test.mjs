@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import test from "node:test";
-import { assetDisplayName, numberedDisplayStems, originalAssetStem, validDisplayStem } from "../src/lib/asset-display-name.ts";
+import { assetDisplayName, numberedDisplayStems, originalAssetStem, portfolioInitialTitle, validDisplayStem } from "../src/lib/asset-display-name.ts";
+
+test("a new Portfolio card starts with the current Library name", () => {
+  const asset = { basename: "62A811B5.mp4", display_stem: "Adelaide teaser" };
+  assert.equal(portfolioInitialTitle(asset), "Adelaide teaser");
+  assert.equal(portfolioInitialTitle({ ...asset, display_stem: null }), "62A811B5");
+  assert.equal(portfolioInitialTitle({ ...asset, display_stem: "a".repeat(120) }).length, 100);
+});
 
 test("numbered Library names keep each original extension and stable asset identity", () => {
   const assets = [

@@ -8,6 +8,7 @@ import { requireCreatorContext } from "@/lib/identity";
 import { getPortfolioDraft } from "@/lib/portfolio-authoring";
 import { fetchInternalService } from "@/lib/internal-service";
 import { portfolioAddFields } from "@/lib/portfolio-add-fields";
+import { portfolioInitialTitle } from "@/lib/asset-display-name";
 
 const ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const LABEL_ID = /^[0-9a-f-]{36}$/i;
@@ -76,16 +77,16 @@ export async function togglePortfolioItemAction(form: FormData) {
         .bind(fields.fullLengthAssetId).first<{ id: string }>();
       if (!full) throw new Error("Choose this creator's verified private full-length video.");
     }
-    const asset = await creatorPrepare(DB, creatorId, `SELECT a.basename FROM assets a
+    const asset = await creatorPrepare(DB, creatorId, `SELECT a.basename,a.display_stem FROM assets a
       LEFT JOIN asset_video_playback_states vp ON vp.asset_id=a.id AND vp.creator_id=a.creator_id
       WHERE a.creator_id=@creator AND a.id=? AND a.source_available=1
       AND (lower(a.extension) IN ('jpg','jpeg','png','webp') OR (lower(a.extension)='mp4' AND vp.source_codec IN ('h264','h265')
         AND vp.state IN ('canonical_verified','processing_queued','processing','playback_ready','processing_failed')))
       AND EXISTS (SELECT 1 FROM asset_media_authorities ma WHERE ma.creator_id=a.creator_id AND ma.asset_id=a.id
         AND ma.authority_kind='r2_native' AND ma.state IN ('canonical_verified','preview_ready','preview_failed'))`)
-      .bind(assetId).first<{ basename: string }>();
+      .bind(assetId).first<{ basename: string; display_stem: string | null }>();
     if (!asset) throw new Error("This creator's verified Library item is unavailable.");
-    const title = asset.basename.replace(/\.[^.]+$/, "").trim().slice(0, 100) || "Untitled preview";
+    const title = portfolioInitialTitle(asset);
     await DB.batch([
       ...(fields.newCategoryName ? [creatorPrepare(DB, creatorId, `INSERT INTO creator_portfolio_categories
         (id,creator_id,name,sort_order) VALUES (?,@creator,?,

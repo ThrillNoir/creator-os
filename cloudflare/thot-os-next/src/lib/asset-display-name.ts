@@ -7,6 +7,11 @@ export function assetDisplayName(asset: { basename: string; extension: string; d
   return asset.display_stem ? `${asset.display_stem}.${asset.extension}` : asset.basename;
 }
 
+export function portfolioInitialTitle(asset: { basename: string; display_stem?: string | null }) {
+  const originalDefault = asset.basename.replace(/\.[^.]+$/, "").trim().slice(0, 100) || "Untitled preview";
+  return asset.display_stem ? asset.display_stem.slice(0, 100) : originalDefault;
+}
+
 export function validDisplayStem(value: string) {
   const stem = value.trim();
   if (!stem || stem.length > 120 || stem === "." || stem === ".." || /[\\/\x00-\x1f\x7f<>:"|?*]/u.test(stem) || /[. ]$/u.test(stem)) {

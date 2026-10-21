@@ -43,7 +43,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
   const mediaFacts = await getPortfolioReleaseFacts(creatorId, [...draft.items.map((item) => item.asset_id), ...draft.fullVideos.map((video) => video.id)]);
   const cards = draft.items.map((item) => {
     const privateImageId = privatePortfolioImageObjectId(item.preview_r2_key);
-    return { assetId: item.asset_id, basename: assetDisplayName(item), title: item.title, description: item.description,
+    return { assetId: item.asset_id, basename: assetDisplayName(item), libraryDisplayStem: item.display_stem, title: item.title, description: item.description,
       categoryId: item.category_id, fullLengthAssetId: item.full_length_asset_id,
       video: isVideoPortfolioItem(item), legacy: item.preview_confirmed !== 1, visible: item.is_visible === 1, sourceAvailable: Boolean(item.source_available),
       mediaReady: Boolean(item.preview_r2_key), previewKey: item.preview_r2_key,
@@ -53,12 +53,13 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
     <PageHeader title="Portfolio" eyebrow="18+ WORKSPACE" subtitle="Arrange the previews for your age-gated More page. Editing this draft never changes the live page." />
     <AdultWorkspaceTabs current="portfolio" />
     {query.notice === "draft_saved" && <p className="success" role="status">Private draft saved. Your More page is unchanged.</p>}
-    {query.notice === "publication_started" && <p className="success" role="status">Publication started. The current layout is being checked before it goes live.</p>}
+    {query.notice === "publication_started" && latest?.status === "published" && <p className="success" role="status">Your latest Portfolio release is live on More.</p>}
+    {query.notice === "publication_started" && latest?.status !== "published" && latest?.status !== "failed" && <p className="success" role="status">Publication requested. The current layout is being checked before it goes live.</p>}
     {query.notice === "withdrawal_started" && <p className="success" role="status">Withdrawal started. Refresh to confirm removal from your More page.</p>}
     <div className="panel portfolio-workspace-intro"><h2>Build your More page</h2>
       <p>Open a photo or short clip in the Content Library, choose <strong>Add to Portfolio</strong>, set its category and optionally link a private full-length video, then save once. Return here to arrange cards or approve publication. The full video is never shown on More.</p>
       <Link className="secondary-action" href="/library">Open Content Library →</Link></div>
-    <PortfolioEditor key={JSON.stringify([draft.revision, ...draft.items.map((item) => item.preview_r2_key)])} creatorName={context.creator.creator_name} revision={draft.revision} cards={cards} initialContact={draft.contact}
+    <PortfolioEditor key={JSON.stringify([draft.revision, ...draft.items.map((item) => [item.asset_id, item.display_stem, item.preview_r2_key])])} creatorName={context.creator.creator_name} revision={draft.revision} cards={cards} initialContact={draft.contact}
       categories={draft.categories} fullVideos={draft.fullVideos} canEdit={roleCan(context.creator.role, "mutate")}
       publishingEnabled={publishingEnabled} profileReady={Boolean(profile)} mediaFacts={mediaFacts}
       latestFailure={latestFailure}

@@ -490,6 +490,7 @@ export async function saveAssetAttributesAction(formData: FormData) {
         .bind(crypto.randomUUID(), assetId, identity.email, identity.creator.role, JSON.stringify({ displayStem: stems[index] })),
     ]));
     revalidatePath("/library");
+    revalidatePath("/portfolio");
     const nameReturnTo = String(formData.get("returnTo") ?? "/library");
     redirect(nameReturnTo.startsWith("/library") && !nameReturnTo.startsWith("//") ? `${nameReturnTo}${nameReturnTo.includes("?") ? "&" : "?"}renamed=${assetIds.length}` : "/library");
   }
