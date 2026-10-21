@@ -1,5 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowStep } from "cloudflare:workers";
 import { validLivePortfolio, type LivePortfolioCard, type LivePortfolioProjection } from "../../thot-os-adult-gateway/src/portfolio.ts";
+import { portfolioContactReferenceKey, validPortfolioContactName, type PortfolioContactReferences } from "../../shared/portfolio-contact-reference.ts";
 import { isShortMp4Preview } from "./mp4-preview-duration.ts";
 
 export type PortfolioParams = { creatorId: string; versionId: string };
@@ -172,6 +173,21 @@ async function releaseEvent(env: Env, release: Release, type: string, detail: ob
     .bind(crypto.randomUUID(), release.creator_id, release.id, "portfolio-publication-control", type, JSON.stringify(detail)).run();
 }
 
+async function writePortfolioContactReferences(env: Env, release: Release, manifest: Manifest) {
+  if (!env.ADULT_PROFILES) throw new Error("portfolio_projection_binding_missing");
+  const names: Record<string, string> = {};
+  if (manifest.schemaVersion === 2) for (const card of manifest.cards) {
+    if (!card.fullLengthAssetId) continue;
+    const asset = await env.DB.prepare(`SELECT display_stem||'.'||extension AS display_name
+      FROM assets WHERE creator_id=? AND id=? AND source_available=1`)
+      .bind(release.creator_id, card.fullLengthAssetId).first<{ display_name: string }>();
+    if (validPortfolioContactName(asset?.display_name)) names[card.id] = asset.display_name;
+  }
+  const reference: PortfolioContactReferences = { schemaVersion: 1, creatorSlug: release.slug,
+    publishedProfileVersionId: release.adult_profile_version_id, portfolioVersionId: release.id, names };
+  await env.ADULT_PROFILES.put(portfolioContactReferenceKey(release.slug, release.id), JSON.stringify(reference));
+}
+
 /** Make a creator-initiated withdrawal unavailable to new visitors immediately. */
 export async function beginPortfolioWithdrawal(env: Env, params: PortfolioParams) {
   const { row } = await releaseRow(env, params, ["published", "withdrawing"]);
@@ -213,6 +229,10 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
           ...(poster ? { posterPath: `/portfolio-media/${row.slug}/${card.id}/poster`, posterKey: poster.key, posterChecksum: poster.checksum } : {}) });
       }
       failedCardId = null;
+      await step.do("store private full-video contact references", async () => {
+        try { await writePortfolioContactReferences(this.env, row, manifest); }
+        catch { console.warn("portfolio_contact_reference_unavailable"); /* A contact convenience cannot block an approved media release. */ }
+      });
       const projection: LivePortfolioProjection = { schemaVersion: 2, creatorSlug: row.slug, publishedProfileVersionId: row.adult_profile_version_id,
         portfolioVersionId: row.id, contact: manifest.contact, cards };
       if (!validLivePortfolio(projection, row.slug, row.adult_profile_version_id)) throw new Error("portfolio_projection_invalid");
@@ -242,6 +262,10 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
             .bind(crypto.randomUUID(), row.creator_id, row.id, "portfolio-publication-control", "published", JSON.stringify({ cardCount: cards.length })),
         ]);
       });
+      if (previous) {
+        try { await this.env.ADULT_PROFILES?.delete(portfolioContactReferenceKey(row.slug, previous.portfolioVersionId)); }
+        catch { /* The version-bound old reference cannot be used by the current projection. */ }
+      }
       return { published: true, slug: row.slug, versionId: row.id, cardCount: cards.length };
     } catch (error) {
       const committed = await step.do("reconcile portfolio publication outcome", async () => {
@@ -276,6 +300,8 @@ export class PortfolioPublishWorkflow extends WorkflowEntrypoint<Env, PortfolioP
           ? [mediaKey(row.slug, row.id, card, "preview"), mediaKey(row.slug, row.id, card, "poster")]
           : [mediaKey(row.slug, row.id, card, "preview")]);
         await this.env.ADULT_MEDIA?.delete(keys);
+        try { await this.env.ADULT_PROFILES?.delete(portfolioContactReferenceKey(row.slug, row.id)); }
+        catch { /* An orphaned version-bound reference cannot be used without its projection. */ }
         await this.env.DB.prepare("UPDATE creator_portfolio_release_versions SET status='failed',failure_code=? WHERE id=? AND creator_id=? AND status='publishing'").bind(code, row.id, row.creator_id).run();
         const cause = error instanceof Error && SAFE_RELEASE_CAUSES.has(error.message) ? error.message : null;
         await releaseEvent(this.env, row, "publish_failed", { code, ...(failedCardId ? { cardId: failedCardId } : {}), ...(cause ? { cause } : {}) });
@@ -303,6 +329,10 @@ export class PortfolioWithdrawWorkflow extends WorkflowEntrypoint<Env, Portfolio
       if (value && (!validLivePortfolio(value, row.slug, row.adult_profile_version_id) || value.portfolioVersionId !== row.id)) throw new Error("portfolio_projection_version_mismatch");
     });
     await step.do("remove isolated portfolio projection", () => profiles.delete(key));
+    await step.do("remove private contact references", async () => {
+      try { await profiles.delete(portfolioContactReferenceKey(row.slug, row.id)); }
+      catch { /* The removed projection makes this version-bound reference inert. */ }
+    });
     await step.do("remove isolated preview media", async () => {
       const keys = manifest.cards.flatMap((card) => card.kind === "video"
         ? [mediaKey(row.slug, row.id, card, "preview"), mediaKey(row.slug, row.id, card, "poster")]

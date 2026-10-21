@@ -22,7 +22,7 @@ function fixture(mode) {
         if (mode === "before-put") throw new Error("synthetic_put_failure");
         state.projection = JSON.parse(value); state.calls.push("put");
       },
-      async delete() { state.projection = null; state.calls.push("delete"); },
+      async delete(key) { if (key === "adult-portfolio:adelaide") state.projection = null; state.calls.push(`delete:${key}`); },
     },
     ADULT_MEDIA: { async delete() { state.deletedMedia++; } },
     DB: {
@@ -32,6 +32,7 @@ function fixture(mode) {
       }; } }; },
       async batch() {
         if (mode === "committed") { state.release = "published"; throw new Error("synthetic_commit_reply_lost"); }
+        if (mode === "reference-fail") { state.release = "published"; return []; }
         if (mode === "concurrent") state.projection = third;
         throw new Error("synthetic_batch_failure");
       },
@@ -39,7 +40,7 @@ function fixture(mode) {
   };
   class Base { constructor(environment) { this.env = environment; } }
   const Workflow = new Function("WorkflowEntrypoint", "releaseRow", "sourceForCard", "copySource", "validLivePortfolio",
-    "snapshotKey", "releaseEvent", "mediaKey", "SAFE_RELEASE_CAUSES", `${code};return PortfolioPublishWorkflow;`)(
+    "snapshotKey", "releaseEvent", "mediaKey", "SAFE_RELEASE_CAUSES", "writePortfolioContactReferences", "portfolioContactReferenceKey", `${code};return PortfolioPublishWorkflow;`)(
     Base,
     async (_env, params) => params.versionId === "old-release" ? { row: { ...row, id: "old-release" }, manifest } : { row, manifest },
     async () => {
@@ -49,7 +50,8 @@ function fixture(mode) {
     async () => ({ key: "adult-portfolio/adelaide/new-release/card-a/preview.jpg", checksum: "a".repeat(64) }),
     (value, slug, profile) => value?.creatorSlug === slug && value?.publishedProfileVersionId === profile,
     (slug) => `adult-portfolio:${slug}`, async (_env, _row, type, detail) => { state.events.push({ type, detail }); }, () => "new-media",
-    new Set(["portfolio_short_preview_changed_or_too_large"]),
+    new Set(["portfolio_short_preview_changed_or_too_large"]), async () => { if (mode === "reference-fail") throw new Error("synthetic_private_reference_write_failure"); },
+    (slug, version) => `adult-portfolio-contact:${slug}:${version}`,
   );
   return { state, old, third, run: () => new Workflow(env).run({ payload: { creatorId: "adelaide", versionId: "new-release" } },
     { do: async (_name, callback) => callback() }) };
@@ -85,9 +87,16 @@ test("a committed delivery keeps its public copy when the D1 response is lost", 
   assert.equal(state.deletedMedia, 0);
 });
 
+test("private contact-reference failure cannot block an approved public media release", async () => {
+  const { state, run } = fixture("reference-fail");
+  assert.equal((await run()).published, true);
+  assert.equal(state.projection.portfolioVersionId, "new-release");
+  assert.equal(state.release, "published");
+});
+
 test("failed cleanup never overwrites a concurrently changed public projection", async () => {
   const { state, third, run } = fixture("concurrent");
   await assert.rejects(run(), /synthetic_batch_failure/);
   assert.deepEqual(state.projection, third);
-  assert.equal(state.calls.includes("delete"), false);
+  assert.equal(state.calls.includes("delete:adult-portfolio:adelaide"), false);
 });

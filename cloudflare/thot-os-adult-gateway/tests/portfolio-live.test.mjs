@@ -31,6 +31,8 @@ async function setup() {
     cards: [{ id: cardId, title: "A short preview", description: "A public teaser", section: "Creator clips", genre: "Studio",
       kind: "video", previewPath: `/portfolio-media/${slug}/${cardId}/preview`, posterPath: `/portfolio-media/${slug}/${cardId}/poster`,
       mediaKey: previewKey, checksum: previewChecksum, posterKey, posterChecksum }] };
+  const privateReferences = { schemaVersion: 1, creatorSlug: slug, publishedProfileVersionId: profileVersion,
+    portfolioVersionId: portfolioVersion, names: { [cardId]: "Renamed full video.mp4" } };
   const objects = new Map([
     [previewKey, { bytes: previewBytes, checksum: previewChecksum, contentType: "video/mp4", kind: "preview" }],
     [posterKey, { bytes: posterBytes, checksum: posterChecksum, contentType: "image/jpeg", kind: "poster" }],
@@ -47,9 +49,10 @@ async function setup() {
       body: new Response(bodyBytes).body };
   };
   const env = { AGE_SESSION_SECRET: "local-secret", ADULT_EVENTS: { writeDataPoint() {} },
-    ADULT_PROFILES: { async get(key) { return key === `adult-profile:${slug}` ? profile : key === `adult-portfolio:${slug}` ? projection : null; } },
+    ADULT_PROFILES: { async get(key) { return key === `adult-profile:${slug}` ? profile : key === `adult-portfolio:${slug}` ? projection
+      : key === `adult-portfolio-contact:${slug}:${portfolioVersion}` ? privateReferences : null; } },
     ADULT_MEDIA: { async head(key) { return r2Object(key); }, async get(key, options) { return r2Object(key, options?.range); } } };
-  return { projection, objects, env };
+  return { projection, privateReferences, objects, env };
 }
 async function fetchPage(env, path, cookie, init = {}) {
   return worker.fetch(new Request(`https://more.example${path}`, { ...init, headers: { ...(cookie ? { cookie } : {}), ...init.headers } }), env);
@@ -75,6 +78,7 @@ test("live projection accepts creator labels and never exposes private source ID
   assert.match(html, /Please send me details about this preview/);
   assert.doesNotMatch(html, /adult-portfolio\/adelaide|private-source-asset/);
   assert.doesNotMatch(html, /private-full-length\.mp4/);
+  assert.doesNotMatch(html, /Renamed full video\.mp4/);
   assert.doesNotMatch(html, /portfolio\/request|MADE FOR YOU/);
   assert.match((await (await fetchPage(env, `/${slug}?section=Other`, await session())).text()), /A short preview/);
   assert.equal((await fetchPage(env, `/${slug}`, await session("old-profile"))).status, 404);
@@ -110,10 +114,13 @@ test("full length contact uses only configured destinations and needs a same-ori
   assert.equal(response.status, 303);
   assert.match(response.headers.get("location"), /^https:\/\/t\.me\/TestCreator\?text=/);
   assert.match(decodeURIComponent(response.headers.get("location")), /From: Viewer/);
+  assert.match(decodeURIComponent(response.headers.get("location")), /Creator file: Renamed full video\.mp4/);
   const wrong = new URLSearchParams(body); wrong.set("previewId", "private-source-asset");
   assert.equal((await post(await session(), "https://more.example", wrong)).status, 400);
   const email = new URLSearchParams(body); email.set("contactMethod", "email");
-  assert.match((await post(await session(), "https://more.example", email)).headers.get("location"), /^mailto:creator@example\.test\?/);
+  const emailLocation = (await post(await session(), "https://more.example", email)).headers.get("location");
+  assert.match(emailLocation, /^mailto:creator@example\.test\?/);
+  assert.match(decodeURIComponent(emailLocation), /Creator file: Renamed full video\.mp4/);
   projection.contact.email = "a?cc=other@example.com"; // possible legacy projection; never allow it to add a mailto query
   const legacyLocation = (await post(await session(), "https://more.example", email)).headers.get("location");
   assert.match(legacyLocation, /^mailto:a%3Fcc%3Dother@example\.com\?subject=/);
@@ -133,6 +140,30 @@ test("preview-only clips have no false full-length request or private asset iden
   projection.cards[0].hasFullLength = true;
   const linkedHtml = await (await fetchPage(env, `/${slug}`, await session())).text();
   assert.match(linkedHtml, /Message creator for full length/);
-  assert.match(linkedHtml, /Preview reference: preview-card-1/);
-  assert.match(linkedHtml, /Preview title: A short preview/);
+  assert.match(linkedHtml, /Preview: A short preview/);
+  assert.doesNotMatch(linkedHtml, /Preview reference: preview-card-1|Renamed full video\.mp4/);
+});
+
+test("a mismatched private reference is ignored without exposing another release's name", async () => {
+  const { env, privateReferences } = await setup();
+  privateReferences.portfolioVersionId = "other-release";
+  const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "email", message: "Please send the full clip." });
+  const response = await fetchPage(env, `/${slug}/portfolio/full-length/request`, await session(),
+    { method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body });
+  assert.equal(response.status, 303);
+  assert.doesNotMatch(decodeURIComponent(response.headers.get("location")), /Renamed full video\.mp4|Creator file:/);
+});
+
+test("a private-reference lookup outage does not block the visitor's contact choice", async () => {
+  const { env } = await setup();
+  const read = env.ADULT_PROFILES.get;
+  env.ADULT_PROFILES.get = async (key) => {
+    if (key.startsWith("adult-portfolio-contact:")) throw new Error("synthetic KV outage");
+    return read(key);
+  };
+  const body = new URLSearchParams({ previewId: cardId, name: "Viewer", contactMethod: "telegram", message: "Please send the full clip." });
+  const response = await fetchPage(env, `/${slug}/portfolio/full-length/request`, await session(),
+    { method: "POST", headers: { origin: "https://more.example", "content-type": "application/x-www-form-urlencoded" }, body });
+  assert.equal(response.status, 303);
+  assert.doesNotMatch(decodeURIComponent(response.headers.get("location")), /Creator file:/);
 });

@@ -1,5 +1,6 @@
 import { livePublicHostGuard } from "../../shared/live-public-host.ts";
 import { portfolioCss, renderPortfolio, validPortfolio, validLivePortfolio, type LivePortfolioCard, type PortfolioProjection } from "./portfolio.ts";
+import { portfolioContactName, portfolioContactReferenceKey } from "../../shared/portfolio-contact-reference.ts";
 
 type AdultProfile = {
   schemaVersion: 1 | 2 | 3 | 4;
@@ -332,7 +333,14 @@ return {
       const edited = String(form?.get("message") ?? "").trim();
       const channel = String(form?.get("contactMethod") ?? "");
       if (!card || !name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name) || edited.length < 10 || edited.length > 800) return page("Invalid request", 400);
-      const message = `${edited}\n\nFrom: ${name}`;
+      let privateReferences: unknown = null;
+      if (portfolio.schemaVersion === 2) {
+        try { privateReferences = await env.ADULT_PROFILES.get(portfolioContactReferenceKey(parts[0], portfolio.portfolioVersionId), "json"); }
+        catch { /* The creator can still identify the public preview title. */ }
+      }
+      const creatorFile = portfolio.schemaVersion === 2
+        ? portfolioContactName(privateReferences, parts[0], profile.publishedVersionId, portfolio.portfolioVersionId, card.id) : null;
+      const message = `${edited}\n\n${creatorFile ? `Creator file: ${creatorFile}\n` : ""}From: ${name}`;
       let destination: string | null = null;
       if (channel === "telegram" && portfolio.contact.telegramUsername) destination = `https://t.me/${portfolio.contact.telegramUsername}?text=${encodeURIComponent(message)}`;
       if (channel === "email" && portfolio.contact.email) destination = `mailto:${encodeURIComponent(portfolio.contact.email).replace(/%40/gi, "@")}?subject=${encodeURIComponent(`Full-length request: ${card.title}`)}&body=${encodeURIComponent(message)}`;

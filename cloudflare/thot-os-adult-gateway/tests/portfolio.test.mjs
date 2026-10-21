@@ -120,8 +120,8 @@ test("a published clip offers a prepared direct-contact message without exposing
   assert.match(body, /<textarea name="message" required minlength="10" maxlength="800"/);
   assert.doesNotMatch(body, /<textarea name="message" readonly/);
   assert.match(body, /Hello Adelaide,/);
-  assert.match(body, /Asset ID: after-hours/);
-  assert.match(body, /Full-length clip: After hours/);
+  assert.match(body, /Preview: After hours/);
+  assert.doesNotMatch(body, /Asset ID: after-hours/);
   assert.doesNotMatch(body, /fixture-full-after-hours|private.*\.mp4|Download full video/);
   const photo = await (await view(worker, "/adelaide?section=Photos", await sessionCookie())).text();
   assert.doesNotMatch(photo, /Message creator for full length/);
@@ -129,7 +129,7 @@ test("a published clip offers a prepared direct-contact message without exposing
 
 test("direct contact resolves the published preview without saving an inbox request", () => {
   const fixture = new PortfolioFixture("adelaide", "local-adelaide-v1", { telegram: "fixturecreator", email: "creator@example.invalid" });
-  const message = fullLengthMessage("Adelaide Suede", "after-hours", "After hours");
+  const message = fullLengthMessage("Adelaide Suede", "After hours");
   const request = { previewId: "after-hours", name: "Alex", contactMethod: "telegram", message };
   assert.equal(fixture.prepareFullLengthContact("adelaide", request), null);
   fixture.update("adelaide", "after-hours", { selected: true, section: "Clips", genre: "Performance", order: 1 });
