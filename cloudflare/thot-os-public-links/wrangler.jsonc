@@ -33,6 +33,12 @@
     "binding": "ASSETS",
     "not_found_handling": "404-page"
   },
+  "durable_objects": {
+    "bindings": [{ "name": "GAME_LEADERBOARD", "class_name": "GameLeaderboard" }]
+  },
+  "exports": {
+    "GameLeaderboard": { "type": "durable-object", "storage": "sqlite" }
+  },
   "kv_namespaces": [
     {
       "binding": "PUBLIC_LINKS",

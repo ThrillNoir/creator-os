@@ -51,6 +51,7 @@
         "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1", "960ce926cd234170aa789a8eb0ca223a", "57d716b2562b4bb989e62482df6f6b19"],
         "analytics": ["thot-os-public-link-events-staging", "thot-os-adult-events-staging", "thot-os-booking-events-staging"],
         "rateLimits": ["6201"],
+        "durableObjects": ["GameLeaderboard"],
         "workers": {
           "web": "thot-os-staging",
           "instagram": "thot-os-instagram-scheduler-staging",
@@ -159,12 +160,14 @@
           "directory": "cloudflare/thot-os-public-links",
           "worker": "thot-os-public-links-staging",
           "deployable": true,
-          "stagingBoundary": "SFW public-profile delivery on www.thathuboverthere.com, its bare-domain alias, and the transitional staging hostname, using the existing staging projection. It may publish only the configured live creator allowlist and must never bind operational D1, adult KV, or private R2. Its only adult capability is a no-store redirect from /{slug}/more to the configured protected gateway.",
+          "stagingBoundary": "SFW public-profile delivery on www.thathuboverthere.com and the transitional staging hostname, using the existing staging projection, plus the standalone game and isolated leaderboard on thathuboverthere.com. It may publish only the configured live creator allowlist and must never bind operational D1, adult KV, or private R2. Its only adult capability is a no-store redirect from /{slug}/more to the configured protected gateway.",
           "requiredSecrets": [],
+          "bindings": { "durableObjects": ["GAME_LEADERBOARD"] },
           "resources": {
             "d1": [],
             "r2": [],
             "queues": [],
+            "durableObjects": ["GameLeaderboard"],
             "kv": ["34a4601e8bbb4d3bb05656bf1f59c2c1"],
             "analytics": ["thot-os-public-link-events-staging"],
             "services": {}

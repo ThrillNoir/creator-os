@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#151410">
+    <meta name="description" content="Choose your player and help them get over there. A small alley run from THOT OS 95.">
+    <link rel="canonical" href="https://thathuboverthere.com/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="OVER THERE — THOT OS 95">
+    <meta property="og:description" content="Choose your player. Make it through the alley. Get over there.">
+    <meta property="og:url" content="https://thathuboverthere.com/">
+    <meta property="og:image" content="https://thathuboverthere.com/assets/game/og-over-there.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <title>OVER THERE — THOT OS 95</title>
+    <link rel="stylesheet" href="/assets/game/styles.css">
+    <script type="module" src="/assets/game/src/main.js"></script>
+  </head>
+  <body>
+    <main class="stage" id="game" data-state="power">
+      <div class="desk" aria-hidden="true">
+        <span class="desk-label">THOT OS 95</span>
+        <span class="desk-status"><i></i> SYSTEM READY</span>
+      </div>
+
+      <section class="crt" aria-label="Over There arcade game">
+        <div class="crt-screen" id="game-screen">
+          <div class="screen-glass" aria-hidden="true"></div>
+
+          <section class="view power-view" id="power-screen" data-screen="power" aria-labelledby="power-title">
+            <div class="power-wall power-wall-left" aria-hidden="true"></div>
+            <div class="power-wall power-wall-right" aria-hidden="true"></div>
+            <div class="power-glow" aria-hidden="true"></div>
+            <div class="power-topline"><span>OVER THERE</span><span>NO. 95—06</span></div>
+            <div class="power-brand-group">
+              <h1 class="power-brand" id="power-title"><span>THOT</span><span>OS</span><span>95</span></h1>
+              <button class="power-sound" id="boot-sound-button" type="button" aria-pressed="false" aria-label="Enable sound">ENABLE SOUND</button>
+            </div>
+            <div class="power-loading">
+              <p id="boot-status">THOT LOADING</p>
+              <div class="power-track" role="progressbar" aria-label="THOT loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="boot-progress"><span></span></div>
+              <span class="power-percent" id="boot-percent">0%</span>
+            </div>
+            <button class="power-enter" id="power-button" type="button" aria-label="Enter THOT OS" disabled>ENTER ↗</button>
+          </section>
+
+          <section class="view select-view" id="select-screen" data-screen="select" aria-labelledby="select-title">
+            <header class="screen-heading">
+              <p class="eyebrow">PLAYER DIRECTORY · 6 FOUND</p>
+              <h2 id="select-title">CHOOSE YOUR PLAYER</h2>
+            </header>
+            <div class="carousel" id="player-carousel" aria-roledescription="carousel" aria-label="Choose a player">
+              <button class="carousel-arrow" id="player-prev" type="button" aria-label="Previous player">‹</button>
+              <ul class="roster" id="player-list" aria-label="Available players">
+                <li class="player-card" data-player="adelaide" aria-current="true">
+                  <article class="player-card-inner">
+                    <button class="player-choice" type="button" data-select-player="adelaide" aria-label="Play as Adelaide" disabled>
+                      <span class="portrait portrait-adelaide" aria-hidden="true"><span class="portrait-head">A</span><span class="portrait-body"></span><span class="portrait-bow">◆</span><img src="/assets/game/portraits/adelaide.webp" alt="" loading="lazy" decoding="async"></span>
+                      <span class="player-name">Adelaide</span>
+                      <span class="player-tagline">Help the Dirty Girl Next Door get over there</span>
+                    </button>
+                    <a class="profile-link" href="https://thathuboverthere.com/adelaide">Visit Adelaide's profile <span aria-hidden="true">↗</span></a>
+                  </article>
+                </li>
+                <li class="player-card" data-player="sophia">
+                  <article class="player-card-inner">
+                    <button class="player-choice" type="button" data-select-player="sophia" aria-label="Play as Sophia" disabled>
+                      <span class="portrait portrait-sophia" aria-hidden="true"><span class="portrait-head">S</span><span class="portrait-body"></span><img src="/assets/game/portraits/sophia.webp" alt="" loading="lazy" decoding="async"></span>
+                      <span class="player-name">Sophia</span>
+                      <span class="player-tagline">can she make it through these streets</span>
+                    </button>
+                    <a class="profile-link" href="https://thathuboverthere.com/sophia">Visit Sophia's profile <span aria-hidden="true">↗</span></a>
+                  </article>
+                </li>
+                <li class="player-card" data-player="sass">
+                  <article class="player-card-inner">
+                    <button class="player-choice" type="button" data-select-player="sass" aria-label="Play as Sass" disabled>
+                      <span class="portrait portrait-sass" aria-hidden="true"><span class="portrait-head">S</span><span class="portrait-body"></span><img src="/assets/game/portraits/sass.webp" alt="" loading="lazy" decoding="async"></span>
+                      <span class="player-name">Sass</span>
+                      <span class="player-tagline">can she get to the party on time</span>
+                    </button>
+                    <a class="profile-link" href="https://thathuboverthere.com/sass">Visit Sass's profile <span aria-hidden="true">↗</span></a>
+                  </article>
+                </li>
+                <li class="player-card" data-player="bambi">
+                  <article class="player-card-inner">
+                    <button class="player-choice" type="button" data-select-player="bambi" aria-label="Play as Bambi" disabled>
+                      <span class="portrait portrait-bambi" aria-hidden="true"><span class="portrait-head">B</span><span class="portrait-body"></span><span class="portrait-cap"></span><img src="/assets/game/portraits/bambi.webp" alt="" loading="lazy" decoding="async"></span>
+                      <span class="player-name">Bambi</span>
+                      <span class="player-tagline">running towards your dad</span>
+                    </button>
+                    <a class="profile-link" href="https://thathuboverthere.com/bambi">Visit Bambi's profile <span aria-hidden="true">↗</span></a>
+                  </article>
+                </li>
+                <li class="player-card" data-player="mrbryshanagy">
+                  <article class="player-card-inner">
+                    <button class="player-choice" type="button" data-select-player="mrbryshanagy" aria-label="Play as Mr Bryshanagy" disabled>
+                      <span class="portrait portrait-mr" aria-hidden="true"><span class="portrait-head">M</span><span class="portrait-body"></span><img src="/assets/game/portraits/mrbryshanagy.webp" alt="" loading="lazy" decoding="async"></span>
+                      <span class="player-name">Mr Bryshanagy</span>
+                      <span class="player-tagline">let my wife win</span>
+                    </button>
+                    <a class="profile-link" href="https://thathuboverthere.com/byrshanagy">Visit Mr Bryshanagy's profile <span aria-hidden="true">↗</span></a>
+                  </article>
+                </li>
+                <li class="player-card" data-player="mrsbryshanagy">
+                  <article class="player-card-inner">
+                    <button class="player-choice" type="button" data-select-player="mrsbryshanagy" aria-label="Play as Mrs Bryshanagy" disabled>
+                      <span class="portrait portrait-mrs" aria-hidden="true"><span class="portrait-head">M</span><span class="portrait-body"></span><img src="/assets/game/portraits/mrsbryshanagy.webp" alt="" loading="lazy" decoding="async"></span>
+                      <span class="player-name">Mrs Bryshanagy</span>
+                      <span class="player-tagline">don't let my husband win</span>
+                    </button>
+                    <a class="profile-link" href="https://thathuboverthere.com/byrshanagy">Visit Mrs Bryshanagy's profile <span aria-hidden="true">↗</span></a>
+                  </article>
+                </li>
+              </ul>
+              <button class="carousel-arrow" id="player-next" type="button" aria-label="Next player">›</button>
+            </div>
+            <div class="carousel-footer">
+              <p class="carousel-help"><kbd>←</kbd> <span id="player-position" aria-live="polite">01 / 06</span> <kbd>→</kbd></p>
+              <p class="select-prompt">TAP THE CENTRE PLAYER TO RUN</p>
+              <button class="board-link" id="select-board-button" type="button">LEADERBOARD ↗</button>
+              <a class="music-credits-link" href="/assets/game/music-credits.html" target="_blank" rel="noopener">MUSIC CREDITS ↗</a>
+            </div>
+          </section>
+
+          <section class="view run-view" id="run-screen" data-screen="run" aria-label="Alley run" hidden>
+            <header class="hud" id="game-hud">
+              <div class="hud-top"><span class="hud-player" id="hud-player">ADELAIDE</span><span class="hud-distance" id="hud-distance">0.0 S</span></div>
+              <div class="gap-row"><span class="gap-label">BOULDER GAP</span><span class="gap-value" id="gap-value">100%</span></div>
+              <div class="gap-track" id="gap-track" role="meter" aria-label="Boulder gap remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><span id="gap-fill"></span></div>
+            </header>
+            <canvas id="game-canvas" width="360" height="640" aria-label="Three-lane alley. Tap left or right to move one lane. Collect Red Bull for 15 gap points or the rare white powder bag to restore the gap to 100 percent.">Your browser does not support canvas. Use the player directory to visit a creator profile.</canvas>
+            <p class="run-prompt" id="run-prompt" aria-live="polite">TAP LEFT OR RIGHT</p>
+            <p class="stumble-callout" id="stumble-callout" aria-live="assertive" hidden><span id="callout-line">IT'S FINE.</span><span class="callout-effect" id="callout-effect" hidden></span></p>
+            <button class="mute-button" id="mute-button" type="button" aria-pressed="true" aria-label="Turn sound on">SOUND OFF</button>
+          </section>
+
+          <section class="view result-view caught-view" id="caught-screen" data-screen="caught" aria-labelledby="caught-title" hidden>
+            <div class="result-stamp">RUN INTERRUPTED</div>
+            <p class="result-kicker">THE ALLEY HAS REACHED A DECISION</p>
+            <h2 id="caught-title">CAUGHT.<br><span>STILL OVER THERE.</span></h2>
+            <div class="result-player" id="caught-player" aria-hidden="true">●</div>
+            <p class="result-time" id="caught-time">0.0 SECONDS</p>
+            <p class="result-distance" id="caught-distance">DISTANCE: 0 M</p>
+            <form class="score-form" id="score-form">
+              <label for="score-name">YOUR NAME FOR THE RECORD</label>
+              <div class="score-form-row"><input id="score-name" name="name" inputmode="text" autocomplete="nickname" maxlength="20" minlength="2" placeholder="Your name" required><button type="submit">RECORD TIME ↗</button></div>
+              <p id="score-status" role="status" aria-live="polite"></p>
+            </form>
+            <div class="result-actions">
+              <button class="primary-button" id="retry-button" type="button">RETRY <span aria-hidden="true">↻</span></button>
+              <a class="secondary-button" id="visit-link" href="https://thathuboverthere.com/adelaide">VISIT ADELAIDE ↗</a>
+              <button class="secondary-button" id="caught-change-button" type="button">CHANGE CHARACTER</button>
+              <button class="board-link" id="caught-board-button" type="button">LEADERBOARD ↗</button>
+              <a class="music-credits-link" href="/assets/game/music-credits.html" target="_blank" rel="noopener">MUSIC CREDITS ↗</a>
+            </div>
+          </section>
+
+          <section class="view board-view" id="board-screen" data-screen="board" aria-labelledby="board-title" hidden>
+            <p class="board-eyebrow">THOT OS 95 · PUBLIC RECORDS</p>
+            <h2 id="board-title">LEADERBOARD</h2>
+            <p class="board-intro">STAY AHEAD OF THE BOULDER. LONGEST TIME RANKS FIRST.</p>
+            <p class="board-scope" id="board-scope" role="status">LOADING RECORDS...</p>
+            <ol class="board-list" id="board-list" aria-live="polite"></ol>
+            <div class="board-empty" id="board-empty" hidden>
+              <div class="board-empty-stamp" aria-hidden="true">FILE 000</div>
+              <strong>NO TIMES ON RECORD</strong>
+              <p>A TECHNICALITY. THE DEPARTMENT IS WAITING.</p>
+              <div class="board-empty-slots" aria-hidden="true"><span>01 <i></i> --.- S</span><span>02 <i></i> --.- S</span><span>03 <i></i> --.- S</span></div>
+            </div>
+            <button class="secondary-button board-back" id="board-back-button" type="button">BACK</button>
+          </section>
+
+          <noscript>
+            <style>
+              .power-view { display: none !important; }
+              .select-view { display: flex !important; position: relative; inset: auto; min-height: 100dvh; overflow: visible; }
+              .crt, .crt-screen { width: 100%; height: auto; min-height: 100dvh; aspect-ratio: auto; padding-top: 0; border-radius: 0; }
+              .crt { padding: 0; border: 0; }
+              .crt-chin { display: none; }
+            </style>
+            <div class="noscript-note">JavaScript is needed to play. Browse the player directory below.</div>
+          </noscript>
+        </div>
+        <div class="crt-chin" aria-hidden="true"><span>OVER THERE™</span><span class="chin-led"></span><span>COLOR DISPLAY</span></div>
+      </section>
+      <footer class="desk-footer"><span>NO. 95-06</span><span>LOCAL ALLEY DIRECTORY</span><span>EST. 1995</span></footer>
+    </main>
+  </body>
+</html>

@@ -65,6 +65,7 @@ function configResources(config) {
   const queueProducers = config.queues?.producers ?? [];
   const services = config.services ?? [];
   const rateLimits = config.ratelimits ?? [];
+  const durableObjects = config.durable_objects?.bindings ?? [];
   const email = config.send_email ?? [];
   return {
     d1: d1.map((binding) => ({ name: binding.database_name, id: binding.database_id, migrationsDir: binding.migrations_dir })),
@@ -78,6 +79,7 @@ function configResources(config) {
       ...(config.queues?.consumers ?? []).map((binding) => binding.dead_letter_queue).filter(Boolean),
     ],
     rateLimits: rateLimits.map((binding) => binding.namespace_id),
+    durableObjects: durableObjects.map((binding) => binding.class_name),
     services: Object.fromEntries(services.map((binding) => [binding.binding, binding.service])),
     secrets: config.secrets?.required ?? [],
     bindingNames: {
@@ -90,6 +92,7 @@ function configResources(config) {
       kv: kv.map((binding) => binding.binding),
       queues: queueProducers.map((binding) => binding.binding),
       rateLimits: rateLimits.map((binding) => binding.name),
+      durableObjects: durableObjects.map((binding) => binding.name),
       email: email.map((binding) => binding.name),
       services: services.map((binding) => binding.binding),
     },
@@ -104,6 +107,7 @@ function resourceNames(environment) {
     kv: new Set(environment.resources?.kv ?? []),
     queues: new Set(environment.resources?.queues ?? []),
     rateLimits: new Set(environment.resources?.rateLimits ?? []),
+    durableObjects: new Set(environment.resources?.durableObjects ?? []),
     workers: new Set(Object.values(environment.resources?.workers ?? {})),
   };
 }
@@ -368,6 +372,14 @@ export function validateDeployment({ registry, environmentName, componentName, c
     addExactListError(errors, "Images bindings", resources.images, component.resources?.images ?? []);
     addExactListError(errors, "Queue bindings", [...new Set(resources.queues)], component.resources?.queues ?? []);
     addExactListError(errors, "Rate limit bindings", resources.rateLimits, component.resources?.rateLimits ?? []);
+    addExactListError(errors, "Durable Object bindings", resources.durableObjects, component.resources?.durableObjects ?? []);
+    if (resources.durableObjects.length) {
+      addExactListError(errors, "Durable Object exports", Object.keys(config.exports ?? {}), resources.durableObjects);
+      for (const className of resources.durableObjects) {
+        if (config.exports?.[className]?.type !== "durable-object" || config.exports?.[className]?.storage !== "sqlite") errors.push(`Durable Object ${className} must use an explicit SQLite class export.`);
+      }
+      if (config.migrations?.length) errors.push("Durable Object class exports cannot be combined with legacy migrations.");
+    }
     addExactListError(errors, "KV namespace bindings", resources.kv, component.resources?.kv ?? []);
     const expectedServices = component.resources?.services ?? {};
     if (JSON.stringify(resources.services) !== JSON.stringify(expectedServices)) errors.push(`Service bindings mismatch for ${environmentName}/${componentName}.`);
@@ -410,13 +422,14 @@ export function validateDeployment({ registry, environmentName, componentName, c
       ["KV namespace", resources.kv, currentResources.kv],
       ["Queue", resources.queues, currentResources.queues],
       ["rate limit", resources.rateLimits, currentResources.rateLimits],
+      ["Durable Object", resources.durableObjects, currentResources.durableObjects],
       ["service Worker", Object.values(resources.services), currentResources.workers],
     ];
     for (const [label, values, ownedValues] of checks) {
       for (const value of values) {
         if (!ownedValues.has(value)) errors.push(`${label} ${value} is not owned by ${environmentName}.`);
         for (const otherResources of allOtherResources) {
-          if (otherResources.d1.has(value) || otherResources.r2.has(value) || otherResources.kv.has(value) || otherResources.queues.has(value) || otherResources.workers.has(value)) {
+          if (otherResources.d1.has(value) || otherResources.r2.has(value) || otherResources.kv.has(value) || otherResources.queues.has(value) || otherResources.durableObjects.has(value) || otherResources.workers.has(value)) {
             errors.push(`Cross-environment binding: ${environmentName}/${componentName} references ${value}.`);
           }
         }

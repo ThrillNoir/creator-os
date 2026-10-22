@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import worker from "../src/index.ts";
+import worker from "../src/handler.ts";
 
 const profile = {
   schemaVersion: 1,

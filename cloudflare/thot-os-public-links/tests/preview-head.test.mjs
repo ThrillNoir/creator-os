@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import worker from "../src/index.ts";
+import worker from "../src/handler.ts";
 import { clampPreviewText, defaultPreviewMetadata, renderHead, validatePreviewMetadata } from "../../shared/public-preview.ts";
 
 const creator = { slug: "adelaide", displayName: 'Adelaide <"&>', headline: "Creator", bio: "A safe public bio about this creator." };

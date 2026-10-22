@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import worker from "../src/index.ts";
+import worker from "../src/handler.ts";
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
 
 test("reserved creator slugs cannot render or redirect even with a stored snapshot", async () => {
