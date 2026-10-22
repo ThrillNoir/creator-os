@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-10-21T03:56:23Z",
+  "observedAt": "2026-10-22T06:07:55Z",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
   "migrations": [
     {
@@ -413,13 +413,13 @@
       "sha256": "732cc5f26f6a7cd290c0c1452b303d538bfa622e1bb0900843a1e15b2148869b",
       "purpose": "Applied approved bounded staging migration: optional creator-facing Library names without changing original filenames, asset IDs, or R2 object keys.",
       "remoteId": 72
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0071_profile_library_photos.sql",
       "sha256": "027273965f73bb27afc447c13f7f0d71cb8fe676df5ebb9d66c9471f9206d134",
-      "purpose": "Pending approved staging migration: creator-scoped Library profile photo selections, derivatives, and surface-specific use grants."
+      "purpose": "Applied approved bounded staging migration: creator-scoped Library profile photo selections, derivatives, and surface-specific use grants.",
+      "remoteId": 73
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
