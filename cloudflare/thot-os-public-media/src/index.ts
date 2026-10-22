@@ -1,5 +1,6 @@
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
 import { livePublicHostGuard } from "../../shared/live-public-host.ts";
+import { validatePreviewMetadata } from "../../shared/public-preview.ts";
 
 type PublicMediaItem = {
   id: string;
@@ -15,6 +16,7 @@ type PublicSnapshot = {
   publishedVersionId: string;
   creator: { slug: string; displayName: string; headline: string; bio: string };
   media: PublicMediaItem[];
+  og?: { title: string; description: string; image: string; alt: string };
 };
 
 const ID = /^[A-Za-z0-9_-]{1,160}$/;
@@ -66,7 +68,7 @@ function validCreator(value: unknown, slug: string) {
 function validSnapshot(value: unknown, requestOrigin: string, slug: string, versionId: string, attachmentId: string): value is PublicSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Partial<PublicSnapshot>;
-  if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media"])
+  if (!hasOnlyKeys(snapshot, ["schemaVersion", "publishedVersionId", "creator", "links", "actions", "appearance", "media", "og"])
     || (snapshot.schemaVersion !== 4 && snapshot.schemaVersion !== 5) || snapshot.publishedVersionId !== versionId || !validCreator(snapshot.creator, slug) || !Array.isArray(snapshot.media)) return false;
   if (snapshot.schemaVersion === 5 && (snapshot.media.length < 1 || snapshot.media.length > 6
     || new Set(snapshot.media.map((item) => item?.id)).size !== snapshot.media.length
@@ -103,13 +105,45 @@ function validObject(object: R2ObjectBody, snapshot: PublicSnapshot, attachmentI
     && checksumHex(object.checksums.sha256) === media.checksum);
 }
 
+const PREVIEW_CACHE = "public, s-maxage=300, stale-while-revalidate=86400";
+
+async function previewImage(request: Request, env: Env, slug: string, siteFallback = false): Promise<Response> {
+  const snapshot = siteFallback ? null : await env.PUBLIC_LINKS.get(snapshotKey(slug), "json") as Partial<PublicSnapshot> | null;
+  if (!siteFallback && (!snapshot || !snapshot.creator || snapshot.creator.slug !== slug || !isPublicCreatorSlug(slug)
+    || typeof snapshot.publishedVersionId !== "string" || !ID.test(snapshot.publishedVersionId)
+    || (snapshot.og !== undefined && validatePreviewMetadata(snapshot.og, slug).length > 0))) return notFound();
+  if (!siteFallback && snapshot?.og) {
+    const object = await env.PUBLIC_MEDIA.get(`preview/${slug}.png`);
+    const metadata = object?.customMetadata;
+    if (object && object.httpMetadata?.contentType === "image/png"
+      && metadata?.creatorSlug === slug && metadata.versionId === snapshot.publishedVersionId
+      && metadata.surface === "public_sfw" && /^[a-f0-9]{64}$/i.test(metadata.checksum ?? "")
+      && checksumHex(object.checksums.sha256) === metadata.checksum) {
+      const headers = { ...headersForPreview(), etag: `"${metadata.checksum}"` };
+      return new Response(request.method === "HEAD" ? null : object.body, { headers });
+    }
+  }
+  // No published custom card: the bundled image is public and contains no creator data.
+  const fallback = await env.ASSETS.fetch(new Request(new URL("/fallback.png", request.url)));
+  if (!fallback.ok) return notFound();
+  return new Response(request.method === "HEAD" ? null : fallback.body, { headers: headersForPreview() });
+}
+
+function headersForPreview() {
+  return { ...headers(PREVIEW_CACHE), "content-type": "image/png" };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { ...headers("no-store"), allow: "GET, HEAD" } });
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
-    const guarded = livePublicHostGuard(request, env, "media", parts[0] === "media" ? parts[1] : undefined);
+    const previewSlug = parts.length === 2 && parts[0] === "preview" && parts[1].endsWith(".png") ? parts[1].slice(0, -4) : null;
+    const guarded = livePublicHostGuard(request, env, "media", parts[0] === "media" ? parts[1] : previewSlug === "site" ? undefined : previewSlug ?? undefined);
     if (guarded) return guarded;
+    if (previewSlug && !url.search && !url.hash && (previewSlug === "site" || isPublicCreatorSlug(previewSlug))) {
+      return previewImage(request, env, previewSlug, previewSlug === "site");
+    }
     if (parts.length !== 4 || parts[0] !== "media" || !isPublicCreatorSlug(parts[1]) || !ID.test(parts[2]) || !ID.test(parts[3]) || url.search || url.hash) return notFound();
     const [_, slug, versionId, attachmentId] = parts;
     const snapshot = await env.PUBLIC_LINKS.get(snapshotKey(slug), "json");

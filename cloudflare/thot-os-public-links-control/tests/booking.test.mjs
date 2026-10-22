@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { handleBooking, purgeBookingReceipts } from "../src/booking.ts";
 import contactWorker from "../../thot-os-public-contact/src/index.ts";
 import { validateBookingConfig, validateBookingEnquiry, bookingLinks, bookingFieldNames } from "../../shared/booking-contract.ts";
+import { defaultPreviewMetadata } from "../../shared/public-preview.ts";
 
 const now = Date.parse("2026-09-28T02:00:00Z");
 const token = "local-test-only-".repeat(4);
@@ -236,11 +237,11 @@ test("public projection contains only CTA; private projection is version-bound a
   const source = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
   const extract = (start, end) => stripTypeScriptTypes(source.slice(source.indexOf(start), source.indexOf(end)));
   const actions = new Function("configuredActionHref", "configuredFriendlyMoreHref", "adultProjectionIsEligible", `return (${extract("async function publicActions(", "async function copyPublicDisplayMedia(")})`)(() => "https://contact.example/book/creator-a", () => null, async () => false);
-  const snapshot = new Function("publicDisplayMediaProjection", "publicActions", `return (${extract("async function toPublicSnapshot(", "async function writeContactProjection(")})`)(() => [], actions);
+  const snapshot = new Function("publicDisplayMediaProjection", "publicActions", "defaultPreviewMetadata", `return (${extract("async function toPublicSnapshot(", "async function writeContactProjection(")})`)(() => [], actions, defaultPreviewMetadata);
   const project = new Function("contactSnapshotKey", "configuredActionHref", `return (${extract("async function writeContactProjection(", "async function refreshCurrentPublicSnapshot(")})`)((slug) => `public-contact:${slug}`, () => "https://contact.example/book/creator-a");
   const writes = new Map();
   const env = { BOOKING_ENQUIRIES_ENABLED: "true", CONTACT_PROFILES: { async put(key, value) { writes.set(key, value); }, async delete(key) { writes.delete(key); } } };
-  const profile = { creator_id: "creator-a", slug: "creator-a", version_id: "version-a", display_name: "Creator A", booking: config };
+  const profile = { creator_id: "creator-a", slug: "creator-a", version_id: "version-a", display_name: "Creator A", bio: "Public bio", headline: "", booking: config };
   const contacts = [{ channel: "sms", contact_value: "+61400000000" }, { channel: "email", contact_value: "creator@example.test" }];
   const safe = await snapshot(env, profile, [], contacts, []);
   assert.deepEqual(safe.actions, [{ id: "book", label: config.label, href: "https://contact.example/book/creator-a" }]);

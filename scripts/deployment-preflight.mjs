@@ -185,6 +185,8 @@ function validateLivePublicRoutes(errors, componentName, config) {
     publicMedia: [
       { pattern: "www.thathuboverthere.com/media/*", zone_name: "thathuboverthere.com" },
       { pattern: "public-profile-staging.thathuboverthere.com/media/*", zone_name: "thathuboverthere.com" },
+      { pattern: "www.thathuboverthere.com/preview/*", zone_name: "thathuboverthere.com" },
+      { pattern: "public-profile-staging.thathuboverthere.com/preview/*", zone_name: "thathuboverthere.com" },
     ],
     adultGateway: [
       { pattern: "more.thathuboverthere.com", custom_domain: true },

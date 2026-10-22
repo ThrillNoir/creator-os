@@ -15,8 +15,17 @@
     {
       "pattern": "public-profile-staging.thathuboverthere.com/media/*",
       "zone_name": "thathuboverthere.com"
+    },
+    {
+      "pattern": "www.thathuboverthere.com/preview/*",
+      "zone_name": "thathuboverthere.com"
+    },
+    {
+      "pattern": "public-profile-staging.thathuboverthere.com/preview/*",
+      "zone_name": "thathuboverthere.com"
     }
   ],
+  "assets": { "directory": "./assets", "binding": "ASSETS", "run_worker_first": true },
   "vars": {
     "LIVE_PUBLIC_CREATOR_SLUGS": "adelaide"
   },

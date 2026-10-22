@@ -176,7 +176,7 @@
           "directory": "cloudflare/thot-os-public-media",
           "worker": "thot-os-public-media-staging",
           "deployable": true,
-          "stagingBoundary": "SFW derivative delivery only for www.thathuboverthere.com/media/* and the transitional staging media route. It may bind only the public-link projection KV and the dedicated public derivative bucket; it must never bind private authoring R2, D1, contact, or adult resources.",
+          "stagingBoundary": "SFW derivative and social-preview PNG delivery only for www.thathuboverthere.com/media/* and /preview/*, plus their transitional staging routes. It may bind only the public-link projection KV and the dedicated public derivative bucket; it must never bind private authoring R2, D1, contact, or adult resources.",
           "requiredSecrets": [],
           "resources": {
             "d1": [],

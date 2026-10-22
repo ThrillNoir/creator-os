@@ -100,3 +100,23 @@ test("public media rejects reserved creator slugs before reading the projected o
   assert.equal(response.status, 404);
   assert.deepEqual(keys, []);
 });
+
+test("preview route serves only the matching published PNG, otherwise a bundled 1200x630 fallback", async () => {
+  const image = new Uint8Array([137, 80, 78, 71]);
+  const projected = structuredClone(snapshot);
+  projected.og = { title: "Adelaide", description: "Creator", image: "/preview/adelaide.png", alt: "Adelaide preview" };
+  const { env } = environment(projected);
+  env.LIVE_PUBLIC_CREATOR_SLUGS = "adelaide";
+  env.ASSETS = { fetch: async () => new Response(image, { headers: { "content-type": "image/png" } }) };
+  env.PUBLIC_MEDIA.get = async () => ({ body: new Blob([image]), httpMetadata: { contentType: "image/png" }, customMetadata: { creatorSlug: "adelaide", versionId: "version-1", surface: "public_sfw", checksum }, checksums: { sha256: Uint8Array.from(checksum.match(/../g), (part) => Number.parseInt(part, 16)).buffer } });
+  const route = "https://www.thathuboverthere.com/preview/adelaide.png";
+  const custom = await worker.fetch(new Request(route), env);
+  assert.equal(custom.status, 200);
+  assert.equal(custom.headers.get("content-type"), "image/png");
+  assert.equal(custom.headers.get("cache-control"), "public, s-maxage=300, stale-while-revalidate=86400");
+  env.PUBLIC_MEDIA.get = async () => null;
+  const fallback = await worker.fetch(new Request(route), env);
+  assert.equal(fallback.status, 200);
+  assert.equal(fallback.headers.get("content-type"), "image/png");
+  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/preview/unknown.png"), env)).status, 404);
+});

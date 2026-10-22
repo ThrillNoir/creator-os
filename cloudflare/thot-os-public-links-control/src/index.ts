@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowStep } from "cloudflare:workers";
 import { validateBookingConfig, type BookingConfig } from "../../shared/booking-contract.ts";
 import { handleBooking, purgeBookingReceipts } from "./booking.ts";
 import { isPublicCreatorSlug } from "../../shared/public-profile-slug.ts";
+import { defaultPreviewMetadata, validatePreviewMetadata, type PreviewMetadata } from "../../shared/public-preview.ts";
 import { internalServiceAuditStatement, requireInternalServiceForCreator } from "../../shared/service-auth.ts";
 import { publicationIsAllowed, publicationPolicy } from "./publication-policy.ts";
 import { markProjectionDeliveredFailClosed, writeProjectionFailClosed } from "./projection-delivery.ts";
@@ -86,6 +87,7 @@ type PublicProfileSnapshot = {
   actions: Array<{ id: "book" | "more"; label: string; href: string }>;
   appearance: { themeKey: string; buttonStyle: string; backgroundMode: string; backgroundColor: string; primaryColor: string; textColor: string; cardColor: string; radiusScale: string };
   media?: Array<{ id: string; href: string; altText: string; contentType: "image/webp"; imageRole: ProfileImageRole; checksum: string; position?: number }>;
+  og: PreviewMetadata;
 };
 
 type ContactProfileSnapshot = {
@@ -377,6 +379,38 @@ async function copyPublicDisplayMedia(env: Env, profile: ProfileRow, media: SfwM
   }
 }
 
+function previewSourceKey(profile: Pick<ProfileRow, "creator_id" | "version_id">) {
+  return `profile-private/${profile.creator_id}/public_sfw/${profile.version_id}/social-preview.png`;
+}
+
+function isPreviewPng(bytes: Uint8Array) {
+  if (bytes.length < 33 || ![137,80,78,71,13,10,26,10].every((value, index) => bytes[index] === value)) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return view.getUint32(12) === 0x49484452 && view.getUint32(16) === 1200 && view.getUint32(20) === 630;
+}
+
+async function copyPublicPreview(env: Env, profile: ProfileRow) {
+  if (!env.MEDIA || !env.PUBLIC_MEDIA) throw new Error("Public preview storage is not configured.");
+  const original = await env.MEDIA.get(previewSourceKey(profile));
+  if (!original) return; // The bundled branded card is used for this creator.
+  const bytes = new Uint8Array(await original.arrayBuffer());
+  if (original.httpMetadata?.contentType !== "image/png" || !isPreviewPng(bytes)
+    || original.customMetadata?.creatorId !== profile.creator_id || original.customMetadata.versionId !== profile.version_id
+    || original.customMetadata.surface !== "public_sfw") throw new Error("The approved social preview image is unavailable or invalid.");
+  const checksum = await sha256Hex(bytes);
+  const stored = await env.PUBLIC_MEDIA.put(`preview/${profile.slug}.png`, bytes, {
+    httpMetadata: { contentType: "image/png" },
+    customMetadata: { creatorSlug: profile.slug, versionId: profile.version_id, surface: "public_sfw", checksum },
+    sha256: checksum,
+  });
+  if (!stored) throw new Error("The approved social preview image could not be copied.");
+}
+
+function validatePublicSnapshot(snapshot: PublicProfileSnapshot) {
+  const errors = validatePreviewMetadata(snapshot.og, snapshot.creator.slug);
+  if (errors.length) throw new Error(`Public preview metadata invalid: ${errors.join(" ")}`);
+}
+
 function publicDisplayMediaProjection(env: Env, profile: ProfileRow, media: SfwMediaRow[]) {
   if (!media.length) return [];
   if (!publicMediaDeliveryConfigured(env)) throw new Error("Public image delivery is not configured for this environment.");
@@ -399,6 +433,7 @@ async function toPublicSnapshot(env: Env, profile: ProfileRow, links: LinkRow[],
     links: links.map((link) => ({ id: link.id, label: link.label, destinationUrl: link.destination_url, destinationHost: link.destination_host })),
     actions: await publicActions(env, profile, contacts, includeAdultAction),
     appearance: { themeKey: profile.theme_key, buttonStyle: profile.button_style, backgroundMode: profile.background_mode, backgroundColor: profile.background_color, primaryColor: profile.primary_color, textColor: profile.text_color, cardColor: profile.card_color, radiusScale: profile.radius_scale },
+    og: defaultPreviewMetadata({ slug: profile.slug, displayName: profile.display_name, bio: profile.bio, headline: profile.headline }),
     ...(publicMedia.length ? { media: publicMedia } : {}),
   };
 }
@@ -421,6 +456,7 @@ async function refreshCurrentPublicSnapshot(env: Env, creatorId: string, include
   const current = await loadCurrentPublicProfile(env, creatorId);
   if (!current) return { refreshed: false };
   const snapshot = await toPublicSnapshot(env, current.profile, current.links, current.contacts, current.media, includeAdultAction);
+  validatePublicSnapshot(snapshot);
   const key = publicSnapshotKey(snapshot.creator.slug);
   await env.PUBLIC_LINKS.put(key, JSON.stringify(snapshot), { metadata: { creatorId, versionId: snapshot.publishedVersionId, contentChecksum: current.profile.content_checksum } });
   return { refreshed: true, key };
@@ -470,16 +506,17 @@ export class PublicProfilePublishWorkflow extends WorkflowEntrypoint<Env, Publis
   async run(event: { payload: PublishParams }, step: WorkflowStep) {
     const loaded = await step.do("load approved profile", () => loadApprovedProfile(this.env, event.payload));
     const snapshot = await toPublicSnapshot(this.env, loaded.profile, loaded.links, loaded.contacts, loaded.media);
+    validatePublicSnapshot(snapshot);
     const key = publicSnapshotKey(snapshot.creator.slug);
     const operation = await step.do("record authoritative public publication intent", () => recordPublicPublicationIntent(this.env, loaded, key));
     await step.do("copy approved public display derivatives", () => writeProjectionFailClosed({
-      write: async () => { await copyPublicDisplayMedia(this.env, loaded.profile, loaded.media); },
+      write: async () => { await copyPublicDisplayMedia(this.env, loaded.profile, loaded.media); await copyPublicPreview(this.env, loaded.profile); },
       recordFailure: (reason) => recordProjectionFailure(this.env, operation.operationId, operation.deliveryId, reason),
     }));
     // The sensitive booking projection is created before its safe-page action can appear.
     await step.do("write protected booking contact snapshot", () => writeContactProjection(this.env, loaded.profile, loaded.contacts));
     await step.do("write approved public snapshot", () => writeProjectionFailClosed({
-      write: () => this.env.PUBLIC_LINKS.put(key, JSON.stringify(snapshot), { metadata: { creatorId: loaded.profile.creator_id, versionId: loaded.profile.version_id, contentChecksum: loaded.profile.content_checksum } }),
+      write: () => { validatePublicSnapshot(snapshot); return this.env.PUBLIC_LINKS.put(key, JSON.stringify(snapshot), { metadata: { creatorId: loaded.profile.creator_id, versionId: loaded.profile.version_id, contentChecksum: loaded.profile.content_checksum } }); },
       recordFailure: (reason) => recordProjectionFailure(this.env, operation.operationId, operation.deliveryId, reason),
     }));
     await step.do("record public projection delivery", () => markProjectionDeliveredFailClosed({

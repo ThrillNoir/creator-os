@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { publishPublicProfileAction, savePublicProfileDraftAction, type PublicProfileDraftState, type PublicProfileDraftValues } from "@/app/actions";
 import { ProfileAppearanceEditor, type ProfileImageAttachment } from "@/components/profile-appearance-editor";
+import { ProfileSocialPreviewEditor } from "@/components/profile-social-preview-editor";
 import type { ProfileAppearance } from "@/lib/profile-appearance-contract";
 import { bookingFieldNames, effectiveBookingFields, type BookingConfig, type BookingField, type BookingOption } from "../../../shared/booking-contract.ts";
 import { BOOKING_REPLY_ATTACHMENT_MAX_BYTES, BOOKING_REPLY_ATTACHMENT_MAX_COUNT, validateReplyAttachments, type BookingReplyAttachment } from "../../../shared/booking-reply-attachments.ts";
@@ -167,6 +168,7 @@ export function PublicProfileEditor(props: Props) {
       </div>)}
       <div aria-invalid={Boolean(error("appearance")) || undefined} aria-describedby={error("appearance") ? errorId("appearance") : undefined}>
         <ProfileAppearanceEditor surface="sfw" initialAppearance={props.appearance} displayName={values.displayName} sampleLinks={values.linkLabels} previewActions={previewActions} versionId={props.draftVersionId} viewVersionId={props.viewVersionId} draftFormId={formId} initialImages={props.images} imageUploadsEnabled={props.imageUploadsEnabled} liveBackgroundPresent={props.liveBackgroundPresent} />
+        <ProfileSocialPreviewEditor key={props.viewVersionId} versionId={props.viewVersionId} editableVersionId={props.draftVersionId} enabled={props.imageUploadsEnabled} />
       </div>
       {error("appearance") && <span className="field-error wide" id={errorId("appearance")}>{error("appearance")}</span>}
       </div>
