@@ -415,5 +415,11 @@
       "remoteId": 72
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0071_profile_library_photos.sql",
+      "sha256": "027273965f73bb27afc447c13f7f0d71cb8fe676df5ebb9d66c9471f9206d134",
+      "purpose": "Pending approved staging migration: creator-scoped Library profile photo selections, derivatives, and surface-specific use grants."
+    }
+  ]
 }
