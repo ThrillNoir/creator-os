@@ -26,6 +26,8 @@ export default async function GrowthPage({ searchParams }: { searchParams: Promi
   const insights = await getGrowthInsights(context.creator.creator_id, query.accountId);
   return <AppShell active="Growth insights">
     <PageHeader eyebrow="OFFICIAL METRICS" title="Growth insights" subtitle="Creator-scoped Instagram evidence, metric coverage and recommendations that stay in human control." />
+    <nav className="view-links growth-tabs" aria-label="Analytics sections"><Link className="active" href="/growth">Overview</Link><Link href="/growth/where-used">Where used</Link></nav>
+    <section className="panel growth-where-intro"><div><h2>Where has my content been used?</h2><p>See a plain-English summary for each Library asset, then open its recorded placements and available results.</p></div><Link className="secondary-action" href="/growth/where-used">Explore content use →</Link></section>
     <section className="growth-summary" aria-label="Growth evidence summary">
       <article><span>Official media</span><strong>{insights.summary.officialMedia}</strong><small>Latest item per Instagram media ID</small></article>
       <article><span>Complete metric sets</span><strong>{insights.summary.completeMetricMedia}</strong><small>Views plus likes, comments, saves and shares</small></article>
