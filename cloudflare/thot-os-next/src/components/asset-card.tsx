@@ -5,7 +5,7 @@ import { VerifiedVideoPreview } from "@/components/verified-video-preview";
 import { canPreviewVerifiedVideo } from "@/lib/verified-video-preview";
 import { assetDisplayName } from "@/lib/asset-display-name";
 
-export function AssetCard({ asset, selectable = false, templateHref, canPreparePlayback = false, canViewPlayback = false }: { asset: AssetRow; selectable?: boolean; templateHref?: string; canPreparePlayback?: boolean; canViewPlayback?: boolean }) {
+export function AssetCard({ asset, selectable = false, templateHref, canPreparePlayback = false, canViewPlayback = false, canEdit = false }: { asset: AssetRow; selectable?: boolean; templateHref?: string; canPreparePlayback?: boolean; canViewPlayback?: boolean; canEdit?: boolean }) {
   const objectId = objectIdFor(asset);
   const video = asset.video_state !== null;
   const unavailablePreview = asset.media_state === "preview_failed" ? "Private preview needs a retry" : asset.media_state === "ingesting" ? "Private original is uploading" : "Creating private preview";
@@ -13,11 +13,13 @@ export function AssetCard({ asset, selectable = false, templateHref, canPrepareP
   const tags = [ video ? "video" : "", asset.video_codec ?? "", asset.safety ?? "needs review", asset.is_teaser ? "teaser" : "", asset.is_multi ? "multi" : "", ...asset.destinations.split("|")].filter(Boolean);
   const posterUrl = video && objectId ? `/api/preview/${objectId}` : null;
   const displayName = assetDisplayName(asset);
+  const readyForReview = video ? !["uploading", "archived"].includes(asset.video_state ?? "") : asset.media_state !== "ingesting";
+  const reviewAction = readyForReview ? <Link className="copy-attributes" href={`/library/${video ? asset.id : objectId ?? asset.id}`}>{canEdit ? asset.safety ? "Review & tag" : "Next: review & tag" : "View classification"}</Link> : null;
   const card = <><div className="asset-preview">{posterUrl ? <img src={posterUrl} alt="" loading="lazy" /> : video ? <span>{videoStatus}</span> : objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
     <div className="asset-info"><strong title={displayName}>{displayName}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div></>;
   return <article className={`asset-card${video ? " video-card" : ""}`}>
     {selectable && <label className="asset-select"><input type="checkbox" name="assetId" value={asset.id} /><span>Select</span></label>}
-    {video ? <><Link href={`/library/${asset.id}`}>{card}</Link><Link className="copy-attributes" href={`/library/${asset.id}`}>Review &amp; tag</Link>{canPreviewVerifiedVideo(asset.video_state) && <details className="card-video-preview"><summary>Preview original in browser</summary><VerifiedVideoPreview assetId={asset.id} basename={displayName} poster={posterUrl} /></details>}{((canPreparePlayback && ["canonical_verified", "processing", "playback_ready"].includes(asset.video_state ?? "")) || (canViewPlayback && asset.video_state === "playback_ready")) && <PrivateStreamPlayer assetId={asset.id} canPrepare={canPreparePlayback} />}<a className="copy-attributes" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a></> : <Link href={`/library/${objectId ?? asset.id}`}>{card}</Link>}
+    {video ? <><Link href={`/library/${asset.id}`}>{card}</Link>{reviewAction}{canPreviewVerifiedVideo(asset.video_state) && <details className="card-video-preview"><summary>Preview original in browser</summary><VerifiedVideoPreview assetId={asset.id} basename={displayName} poster={posterUrl} /></details>}{((canPreparePlayback && ["canonical_verified", "processing", "playback_ready"].includes(asset.video_state ?? "")) || (canViewPlayback && asset.video_state === "playback_ready")) && <PrivateStreamPlayer assetId={asset.id} canPrepare={canPreparePlayback} />}<a className="copy-attributes" href={`/api/source-media/videos/${asset.id}/download`}>Download verified original</a></> : <><Link href={`/library/${objectId ?? asset.id}`}>{card}</Link>{reviewAction}</>}
     {selectable && templateHref && objectId && <Link className="copy-attributes" href={`${templateHref}${templateHref.includes("?") ? "&" : "?"}template=${objectId}`}>Copy attributes for batch edit</Link>}
   </article>;
 }

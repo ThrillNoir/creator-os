@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, type ReactNode, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type FormEvent, type MouseEvent } from "react";
 import { useFormStatus } from "react-dom";
 
 function selectedCount(form: HTMLFormElement) {
   return new Set(new FormData(form).getAll("assetId").map(String).map((value) => value.trim()).filter(Boolean)).size;
 }
 
-export function LibraryBatchForm({ action, children }: { action: (data: FormData) => Promise<void>; children: ReactNode }) {
-  const [count, setCount] = useState(0);
+export function LibraryBatchForm({ action, children, initialSelectedCount = 0, selectionVersion }: { action: (data: FormData) => Promise<void>; children: ReactNode; initialSelectedCount?: number; selectionVersion?: string }) {
+  const form = useRef<HTMLFormElement>(null);
+  const [count, setCount] = useState(initialSelectedCount);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (form.current) setCount(selectedCount(form.current)); }, [selectionVersion]);
   function submit(event: FormEvent<HTMLFormElement>) {
     const selected = selectedCount(event.currentTarget);
     if (!selected || selected > 50) {
@@ -29,7 +31,7 @@ export function LibraryBatchForm({ action, children }: { action: (data: FormData
     event.preventDefault();
     checkbox.click();
   }
-  return <form className="batch-form" action={action} onSubmit={submit} onClickCapture={selectCard} onChange={(event) => { setCount(selectedCount(event.currentTarget)); setError(null); }}>
+  return <form ref={form} className="batch-form" action={action} onSubmit={submit} onClickCapture={selectCard} onChange={(event) => { setCount(selectedCount(event.currentTarget)); setError(null); }}>
     <p role="status">{count} selected · maximum 50 per batch</p>
     {error && <p role="alert">{error}</p>}
     {children}

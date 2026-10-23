@@ -99,11 +99,11 @@ export function NativeVideoUploader() {
   const onDrop = (event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); addFiles([...event.dataTransfer.files]); };
 
   return <section className="native-media-uploader panel" aria-label="Upload private source videos">
-    <div className="native-media-uploader-copy"><span className="eyebrow">CLOUDFLARE-NATIVE VIDEO</span><h2>Upload source videos</h2><p>MP4 and MOV originals upload in resumable parts to private R2. H.264 and H.265 originals are preserved; browser playback is enabled only after the separate Stream provider approval.</p></div>
+    <div className="native-media-uploader-copy"><span className="eyebrow">VIDEOS</span><h2>Add videos</h2><p>MP4 and MOV originals stay private. H.264 and H.265 files are kept as uploaded; browser playback may need separate preparation.</p></div>
     <input ref={input} className="sr-only" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" multiple onChange={(event) => { addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
     <button className="native-drop-zone" type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} disabled={running.current}><b>Drop up to {maxFiles} videos here</b><span>or choose MP4 or MOV files · 5 GB each</span></button>
     {items.length > 0 && <div className="native-upload-list">{items.map((item) => <article key={item.id} className={`native-upload-item ${item.status}`}><div><strong>{item.file.name}</strong><small>{Math.round(item.file.size / (1024 * 1024))} MB · {item.detail}</small></div><progress max="100" value={item.progress}>{item.progress}%</progress></article>)}</div>}
-    <div className="native-upload-actions"><small>Video checksums are calculated incrementally in this browser. Each part receives a short-lived private upload authorization; canonical keys and multipart identities are never displayed or logged.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected videos</button></div>
+    <div className="native-upload-actions"><small>An interrupted upload can resume while its private session is valid.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected videos</button></div>
     <UploaderBatchReview items={items.filter((item): item is UploadItem & { assetId: string } => Boolean(item.assetId) && item.status === "complete").map((item) => ({ assetId: item.assetId, name: item.file.name }))} />
   </section>;
 }

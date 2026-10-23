@@ -170,13 +170,13 @@ export function NativeMediaUploader() {
   };
 
   return <section className="native-media-uploader panel" aria-label="Upload private source images">
-    <div className="native-media-uploader-copy"><span className="eyebrow">CLOUDFLARE-NATIVE</span><h2>Upload source images</h2><p>New files go directly to private creator-scoped R2 storage.</p></div>
+    <div className="native-media-uploader-copy"><span className="eyebrow">PHOTOS</span><h2>Add photos</h2><p>Originals stay private. The Library prepares a preview after each upload.</p></div>
     <input ref={input} className="sr-only" type="file" accept=".jpg,.jpeg,.png,.webp,.heic,image/jpeg,image/png,image/webp,image/heic" multiple onChange={(event) => { addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
     <button className="native-drop-zone" type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} disabled={running.current}>
       <b>Drop up to {maxFiles} images here</b><span>or choose JPEG, PNG, WebP, or HEIC files · 64 MB each</span>
     </button>
     {items.length > 0 && <div className="native-upload-list">{items.map((item) => <article key={item.id} className={`native-upload-item ${item.status}`}><div><strong>{item.file.name}</strong><small>{Math.round(item.file.size / 1024)} KB · {item.detail}</small></div><progress max="100" value={item.progress}>{item.progress}%</progress>{item.status === "attention" ? <button className="secondary-action" type="button" onClick={() => void retryNativeImagePreview(item, finalizeDependencies)}>Retry preview</button> : null}</article>)}</div>}
-    <div className="native-upload-actions"><small>Uploads are resumable while their private session remains valid. Original keys and multipart identifiers never reach the browser.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected images</button></div>
+    <div className="native-upload-actions"><small>An interrupted upload can resume while its private session is valid.</small><button className="primary" type="button" disabled={running.current || !items.some((item) => item.status === "queued" || item.status === "failed")} onClick={() => void start()}>Upload selected photos</button></div>
     <UploaderBatchReview items={items.filter((item): item is UploadItem & { assetId: string } => Boolean(item.assetId) && ["complete", "attention"].includes(item.status)).map((item) => ({ assetId: item.assetId, name: item.file.name }))} />
   </section>;
 }
