@@ -17,6 +17,7 @@ const requireFixture = (name) => {
   if (name === "react/jsx-runtime") return jsxRuntime;
   if (name === "next/link") return (props) => React.createElement("a", props);
   if (name === "@/lib/library") return { objectIdFor: (asset) => asset.preview_r2_key?.match(/\/assets\/([a-f0-9]{64})\//)?.[1] ?? null };
+  if (name === "@/lib/asset-display-name") return { assetDisplayName: (asset) => asset.basename };
   if (name === "@/components/private-stream-player") return { PrivateStreamPlayer: () => null };
   if (name === "@/components/verified-video-preview") return { VerifiedVideoPreview: () => null };
   if (name === "@/lib/verified-video-preview") return { canPreviewVerifiedVideo: () => false };
@@ -63,7 +64,8 @@ test("metadata review resolves a bounded legacy asset ID without exposing anothe
       CREATE TABLE asset_video_playback_states(asset_id TEXT,creator_id TEXT,state TEXT,source_codec TEXT,playback_provider TEXT,failure_code TEXT);
       CREATE TABLE asset_destinations(asset_id TEXT,creator_id TEXT,destination TEXT);
       INSERT INTO assets VALUES ('source-a','own','a.heic','heic',10,'2026-10-04','',NULL,1),('source-b','foreign','b.heic','heic',10,'2026-10-04','private',NULL,1);
-      INSERT INTO asset_media_authorities VALUES ('source-a','own','r2_native','preview_failed'),('source-b','foreign','r2_native','preview_failed');`);
+      INSERT INTO asset_media_authorities VALUES ('source-a','own','r2_native','preview_failed'),('source-b','foreign','r2_native','preview_failed');
+      ALTER TABLE assets ADD COLUMN display_stem TEXT;`);
     let reads = 0;
     const lookup = new Function("cloudflareEnv", `${code}; return getAssetByObjectId;`)(() => ({ DB: {
       prepare(sql) { return { bind(...args) { return { async first() { reads++; return db.prepare(sql).get(...args) ?? null; } }; } }; },

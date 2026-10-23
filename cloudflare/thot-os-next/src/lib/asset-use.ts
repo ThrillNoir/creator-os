@@ -4,7 +4,7 @@ import { assetDisplayName } from "./asset-display-name";
 import { cloudflareEnv } from "./cloudflare";
 import { creatorPrepare } from "./creator-db";
 import { escapeLibraryLikeQuery, normalizeLibraryQuery, parseLibraryPage } from "./library-pagination";
-import { safePostUrl, type AssetUseEvent } from "./asset-use-summary";
+import { safePostUrl, summarizeConfirmedPosts, type AssetUseEvent, type PostedAssetRow } from "./asset-use-summary";
 import { latestInstagramResultsSql, useEventsSql } from "./asset-use-query";
 
 const PAGE_SIZE = 24;
@@ -16,10 +16,11 @@ export type UsedAsset = {
   latest_at: string;
   activity_count: number;
   posts_with_receipt: number;
+  posting_profiles: string[];
   verified_vault_uploads: number;
   sent_messages: number;
   current_page_placements: number;
-  latest_result: { views: number | null; likes: number | null; collected_at: string } | null;
+  latest_result: { views: number | null; likes: number | null; collected_at: string; account_label: string | null } | null;
 };
 
 type AssetRecord = { id: string; basename: string; display_stem: string | null; extension: string; source_available: number };
@@ -59,22 +60,20 @@ export async function getUsedAssetsPage(creatorId: string, queryValue?: string, 
   const rows = result.results.slice(0, PAGE_SIZE);
   const ids = rows.map((row) => row.id);
   const postRows = ids.length ? await creatorPrepare(cloudflareEnv().DB, creatorId, `
-    SELECT asset_id,platform,external_post_id,external_url FROM social_posts
-    WHERE creator_id=@creator AND status='published' AND asset_id IN (${ids.map(() => "?").join(",")})
-  `).bind(...ids).all<{ asset_id: string; platform: string; external_post_id: string | null; external_url: string | null }>() : null;
-  const receiptCounts = new Map<string, number>();
-  for (const post of postRows?.results ?? []) {
-    if (!post.external_post_id || !safePostUrl(post.platform, post.external_url)) continue;
-    receiptCounts.set(post.asset_id, (receiptCounts.get(post.asset_id) ?? 0) + 1);
-  }
+    SELECT p.asset_id,p.platform,p.account_id,oa.label AS account_label,p.external_post_id,p.external_url
+    FROM social_posts p LEFT JOIN operational_accounts oa ON oa.id=p.account_id AND oa.creator_id=p.creator_id
+    WHERE p.creator_id=@creator AND p.status='published' AND p.asset_id IN (${ids.map(() => "?").join(",")})
+  `).bind(...ids).all<PostedAssetRow>() : null;
+  const confirmedPosts = summarizeConfirmedPosts(postRows?.results ?? []);
   const latestResults = ids.length ? await creatorPrepare(cloudflareEnv().DB, creatorId, latestInstagramResultsSql(ids.length))
-    .bind(...ids).all<{ asset_id: string; view_count: number | null; like_count: number | null; collected_at: string }>() : null;
-  const resultsByAsset = new Map(latestResults?.results.map((row) => [row.asset_id, { views: row.view_count, likes: row.like_count, collected_at: row.collected_at }]) ?? []);
+    .bind(...ids).all<{ asset_id: string; view_count: number | null; like_count: number | null; collected_at: string; account_label: string | null }>() : null;
+  const resultsByAsset = new Map(latestResults?.results.map((row) => [row.asset_id, { views: row.view_count, likes: row.like_count, collected_at: row.collected_at, account_label: row.account_label }]) ?? []);
   return {
     assets: rows.map((row): UsedAsset => ({
       id: row.id, name: assetDisplayName(row), extension: row.extension,
       latest_at: row.latest_at, activity_count: row.activity_count,
-      posts_with_receipt: receiptCounts.get(row.id) ?? 0, verified_vault_uploads: row.verified_vault_uploads,
+      posts_with_receipt: confirmedPosts.get(row.id)?.count ?? 0, verified_vault_uploads: row.verified_vault_uploads,
+      posting_profiles: [...(confirmedPosts.get(row.id)?.profiles.values() ?? [])].sort((a, b) => a.localeCompare(b)),
       sent_messages: row.sent_messages,
       current_page_placements: row.current_page_placements,
       latest_result: resultsByAsset.get(row.id) ?? null,

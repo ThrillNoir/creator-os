@@ -77,7 +77,8 @@ export async function createLocalD1() {
   for (const name of ["0050_r2_native_source_media.sql", "0053_native_asset_authority.sql", "0054_native_video_intake.sql"]) {
     db.exec(await readFile(new URL(`../thot-os-app/migrations/${name}`, root), "utf8"));
   }
-  db.exec(`ALTER TABLE asset_storage_objects ADD COLUMN r2_version TEXT;
+  db.exec(`ALTER TABLE assets ADD COLUMN display_stem TEXT;
+    ALTER TABLE asset_storage_objects ADD COLUMN r2_version TEXT;
     ALTER TABLE asset_storage_objects ADD COLUMN r2_etag TEXT;
     ALTER TABLE asset_ingest_sessions ADD COLUMN finalization_state TEXT NOT NULL DEFAULT 'incomplete';
     ALTER TABLE asset_ingest_sessions ADD COLUMN completed_r2_version TEXT;

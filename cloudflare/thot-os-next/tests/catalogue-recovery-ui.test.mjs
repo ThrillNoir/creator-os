@@ -22,7 +22,7 @@ function selection(count, duplicate = false) {
 }
 function batchFixture(data) {
   const updates = [];
-  const module = compile(batchSource, { 'react': { useState: (value) => [value, (next) => updates.push(next)] }, 'react/jsx-runtime': jsxRuntime, 'react-dom': { useFormStatus: () => ({ pending: false }) } }, class { constructor(form) { return form.data; } });
+  const module = compile(batchSource, { 'react': { useState: (value) => [value, (next) => updates.push(next)], useRef: () => ({ current: null }), useEffect: () => {} }, 'react/jsx-runtime': jsxRuntime, 'react-dom': { useFormStatus: () => ({ pending: false }) } }, class { constructor(form) { return form.data; } });
   const action = async () => { throw new Error('Server action must not be invoked by validation'); };
   const element = module.LibraryBatchForm({ action, children: 'Existing inputs' });
   let prevented = false;

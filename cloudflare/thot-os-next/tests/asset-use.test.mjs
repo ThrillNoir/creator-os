@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { latestInstagramResultsSql, useEventsSql } from "../src/lib/asset-use-query.ts";
-import { assetUseSummary, safePostUrl, useLabel } from "../src/lib/asset-use-summary.ts";
+import { assetUseSummary, safePostUrl, summarizeConfirmedPosts, useLabel } from "../src/lib/asset-use-summary.ts";
 
 function database() {
   const db = new Database(":memory:");
@@ -80,8 +80,8 @@ test("summary keeps private references and incomplete receipts out of confirmed 
   assert.match(summary.result, /120 views · 7 likes/);
   assert.match(useLabel(events[3]), /private video/);
   assert.equal(safePostUrl("instagram", "https://example.com/p/synthetic/"), null);
-  const newer = event({ id: "newer", occurred_at: "2026-10-22", metrics: { views: 230, likes: null, comments: null, saves: null, shares: null, collected_at: "2026-10-23T02:00:00Z" } });
-  assert.match(assetUseSummary([...events, newer]).result, /230 views/);
+  const newer = event({ id: "newer", account_label: "Amber other", occurred_at: "2026-10-22", metrics: { views: 230, likes: null, comments: null, saves: null, shares: null, collected_at: "2026-10-23T02:00:00Z" } });
+  assert.match(assetUseSummary([...events, newer]).result, /for Amber other: 230 views/);
 });
 
 test("asset results match the exact creator, account and media ID", () => {
@@ -90,12 +90,26 @@ test("asset results match the exact creator, account and media ID", () => {
     db.prepare("INSERT INTO operational_accounts VALUES ('amber-main','amber','Amber main'),('amber-other','amber','Amber other'),('coral-main','coral','Coral main')").run();
     db.prepare(`INSERT INTO social_posts VALUES
       ('amber-post','amber','asset','published','instagram','amber-main',NULL,'2026-10-22',NULL,'2026-10-22','shared-media','https://www.instagram.com/p/synthetic/'),
+      ('amber-second-post','amber','asset','published','instagram','amber-other',NULL,'2026-10-22',NULL,'2026-10-22','second-media','https://www.instagram.com/p/synthetic-second/'),
       ('coral-post','coral','asset','published','instagram','coral-main',NULL,'2026-10-22',NULL,'2026-10-22','shared-media','https://www.instagram.com/p/other/')`).run();
     db.prepare(`INSERT INTO instagram_media_metric_observations VALUES
       ('amber-good','amber','amber-main','shared-media',123,7,'2026-10-23 01:00:00','instagram_api'),
+      ('amber-second-good','amber','amber-other','second-media',50,3,'2026-10-23 00:30:00','instagram_api'),
       ('amber-wrong-account','amber','amber-other','shared-media',9999,999,'2026-10-23 02:00:00','instagram_api'),
       ('coral-wrong-creator','coral','coral-main','shared-media',8888,888,'2026-10-23 03:00:00','instagram_api')`).run();
     const sql = latestInstagramResultsSql(1).replace("@creator", "?");
-    assert.deepEqual(db.prepare(sql).all("amber", "asset"), [{ asset_id: "asset", view_count: 123, like_count: 7, collected_at: "2026-10-23 01:00:00" }]);
+    assert.deepEqual(db.prepare(sql).all("amber", "asset"), [{ asset_id: "asset", account_label: "Amber main", view_count: 123, like_count: 7, collected_at: "2026-10-23 01:00:00" }]);
   } finally { db.close(); }
+});
+
+test("one asset keeps two posting profiles visible without counting incomplete receipts", () => {
+  const posts = [
+    { asset_id: "asset", platform: "instagram", account_id: "main", account_label: "Main IG", external_post_id: "post-1", external_url: "https://www.instagram.com/p/one/" },
+    { asset_id: "asset", platform: "instagram", account_id: "second", account_label: "Second IG", external_post_id: "post-2", external_url: "https://www.instagram.com/p/two/" },
+    { asset_id: "asset", platform: "instagram", account_id: "main", account_label: "Main IG", external_post_id: "post-3", external_url: "https://www.instagram.com/p/three/" },
+    { asset_id: "asset", platform: "reddit", account_id: "reddit", account_label: "Reddit", external_post_id: "post-4", external_url: null },
+  ];
+  const summary = summarizeConfirmedPosts(posts).get("asset");
+  assert.equal(summary?.count, 3);
+  assert.deepEqual([...summary.profiles.values()].sort(), ["Instagram · Main IG", "Instagram · Second IG"]);
 });

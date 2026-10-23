@@ -80,11 +80,12 @@ export function latestInstagramResultsSql(assetCount: number) {
   if (!Number.isInteger(assetCount) || assetCount < 1 || assetCount > 24) throw new Error("Asset result page size is invalid.");
   return `
     WITH ranked AS (
-      SELECT p.asset_id,o.view_count,o.like_count,o.collected_at,
+      SELECT p.asset_id,oa.label AS account_label,o.view_count,o.like_count,o.collected_at,
         ROW_NUMBER() OVER (PARTITION BY p.asset_id ORDER BY o.collected_at DESC,o.id DESC) AS position
       FROM social_posts p JOIN instagram_media_metric_observations o
         ON o.creator_id=p.creator_id AND o.account_id=p.account_id AND o.media_id=p.external_post_id AND o.source='instagram_api'
+      LEFT JOIN operational_accounts oa ON oa.id=p.account_id AND oa.creator_id=p.creator_id
       WHERE p.creator_id=@creator AND p.platform='instagram' AND p.status='published' AND p.asset_id IN (${Array(assetCount).fill("?").join(",")})
-    ) SELECT asset_id,view_count,like_count,collected_at FROM ranked WHERE position=1
+    ) SELECT asset_id,account_label,view_count,like_count,collected_at FROM ranked WHERE position=1
   `;
 }

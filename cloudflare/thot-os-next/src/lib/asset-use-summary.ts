@@ -21,6 +21,28 @@ export type AssetUseEvent = {
   } | null;
 };
 
+export type PostedAssetRow = {
+  asset_id: string;
+  platform: string;
+  account_id: string | null;
+  account_label: string | null;
+  external_post_id: string | null;
+  external_url: string | null;
+};
+
+export function summarizeConfirmedPosts(posts: PostedAssetRow[]) {
+  const byAsset = new Map<string, { count: number; profiles: Map<string, string> }>();
+  for (const post of posts) {
+    if (!post.external_post_id || !safePostUrl(post.platform, post.external_url)) continue;
+    const summary = byAsset.get(post.asset_id) ?? { count: 0, profiles: new Map<string, string>() };
+    summary.count += 1;
+    const platform = post.platform === "instagram" ? "Instagram" : post.platform === "reddit" ? "Reddit" : post.platform;
+    summary.profiles.set(`${post.platform}:${post.account_id ?? "legacy"}`, `${platform} · ${post.account_label || "profile not recorded"}`);
+    byAsset.set(post.asset_id, summary);
+  }
+  return byAsset;
+}
+
 export function verifiedSocialPost(event: AssetUseEvent) {
   return event.kind === "social" && event.status === "published" && Boolean(event.external_id && safePostUrl(event.destination, event.external_url));
 }
@@ -64,7 +86,7 @@ export function assetUseSummary(events: AssetUseEvent[]) {
   return {
     headline: parts.length ? parts.join(" · ") : events.length ? "Activity recorded; no verified placement yet" : "No tracked use yet",
     result: latestMeasured?.metrics
-      ? `Latest matched Instagram observation: ${latestMeasured.metrics.views === null ? "views unavailable" : `${latestMeasured.metrics.views.toLocaleString("en-AU")} views`}${latestMeasured.metrics.likes === null ? "" : ` · ${latestMeasured.metrics.likes.toLocaleString("en-AU")} likes`}. Collected ${formatUseDate(latestMeasured.metrics.collected_at)}${measured > 1 ? `; ${measured} measured posts total` : ""}.`
+      ? `Latest matched Instagram observation${latestMeasured.account_label ? ` for ${latestMeasured.account_label}` : ""}: ${latestMeasured.metrics.views === null ? "views unavailable" : `${latestMeasured.metrics.views.toLocaleString("en-AU")} views`}${latestMeasured.metrics.likes === null ? "" : ` · ${latestMeasured.metrics.likes.toLocaleString("en-AU")} likes`}. Collected ${formatUseDate(latestMeasured.metrics.collected_at)}${measured > 1 ? `; ${measured} measured posts total` : ""}.`
       : "No matched official post results yet.",
     posted,
     vault,
