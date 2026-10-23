@@ -39,6 +39,7 @@ const iconMap: Record<string, IconComponent> = {
   accounts: PlugZap,
   access: BadgeCheck,
   adult: ShieldAlert,
+  clients: UsersRound,
   creators: UsersRound,
   growth: TrendingUp,
   home: House,

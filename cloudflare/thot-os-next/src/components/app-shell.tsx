@@ -18,6 +18,7 @@ const agencyNavigation = [
   ["profile", "Public profile", "/public-profile"],
   ["adult", "18+ profile", "/adult-profile"],
   ["messages", "Messages", "/messages"],
+  ["clients", "Clients & bookings", "/clients"],
   ["money", "Money & health", "/money"],
   ["creators", "Creators", "/creators"],
 ] as const;
@@ -33,6 +34,7 @@ const creatorNavigation = [
   ["profile", "Public profile", "/public-profile"],
   ["adult", "18+ profile", "/adult-profile"],
   ["messages", "Messages", "/messages"],
+  ["clients", "Clients & bookings", "/clients"],
   ["money", "Money & health", "/money"],
 ] as const;
 
