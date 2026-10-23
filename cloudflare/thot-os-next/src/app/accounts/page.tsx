@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, startInstagramReconnectAction } from "@/app/actions";
+import { addFanslyAccountAction, assignFanslyBrowserProfileAction, confirmFanslyIdentityAction, startInstagramReconnectAction, startRedditReconnectAction } from "@/app/actions";
 import { retireOperationalAccountAction } from "@/app/onboarding/actions";
 import { instagramSendingBlocker } from "@/lib/instagram-readiness";
 import { platformLabel, postingStatus } from "@/lib/account-presentation";
@@ -8,6 +8,7 @@ import { cloudflareEnv } from "@/lib/cloudflare";
 import { requireCreatorContext } from "@/lib/identity";
 import { creatorRoleLabel, roleCan } from "@/lib/authorization";
 import { FanslyJourneySummary } from "@/components/fansly-journey-summary";
+import { CreatorSocialProfileAdd } from "./creator-social-profile-add";
 
 type FanslySetup = {
   id: string;
@@ -55,7 +56,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const creatorId = context.creator.creator_id;
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
   const canConnectProviders = roleCan(context.creator.role, "mutate");
-  const [accounts, setup, instagramAccounts] = await Promise.all([
+  const [accounts, setup, instagramAccounts, pin] = await Promise.all([
     cloudflareEnv().DB.prepare("SELECT oa.id,oa.platform,oa.label,oa.handle,oa.connection_status,oa.connection_method,oa.account_kind,oa.is_active,oa.publishing_authority,EXISTS(SELECT 1 FROM vault_credentials vc WHERE vc.creator_id=oa.creator_id AND vc.account_id=oa.id AND vc.status='active') AS has_credential FROM operational_accounts oa WHERE oa.creator_id=? AND account_kind IN ('social','paid') ORDER BY account_kind,platform,label").bind(creatorId).all<PlatformAccount>(),
     cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
     bp.label AS profile_label,bp.status AS profile_status,abp.verified_at AS profile_verified_at,
@@ -74,33 +75,51 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       LEFT JOIN instagram_account_sync_state state ON state.creator_id=oa.creator_id AND state.account_id=oa.id
       LEFT JOIN messaging_connections mc ON mc.creator_id=oa.creator_id AND mc.account_id=oa.id AND mc.platform='instagram'
       WHERE oa.creator_id=? AND oa.platform='instagram' ORDER BY oa.label`).bind(creatorId).all<InstagramSetup>(),
+    context.creator.role === "creator" ? cloudflareEnv().DB.prepare(`SELECT id FROM vault_pin_verifiers WHERE lower(identity_email)=lower(?) AND pin_scope='creator' AND creator_id=? LIMIT 1`).bind(context.email, creatorId).first<{ id: string }>() : Promise.resolve(null),
   ]);
   const hasAssignedProfile = Boolean(setup?.profile_label && setup.profile_status !== "revoked");
   const hasVerifiedBridge = Boolean(setup?.has_live_bridge && setup.profile_status === "paired" && setup.profile_verified_at && setup.bridge_last_seen_at);
 
   return <AppShell active="Accounts & connections"><PageHeader title="Accounts & connections" subtitle={`Set up creator-scoped platform access for ${context.creator.creator_name}. Saved logins stay encrypted in Access. Connecting a platform is a separate step; complete 2FA on that platform.`} />
+    {context.creator.role === "creator" && <CreatorSocialProfileAdd hasPin={Boolean(pin)} />}
     {query.saved === "fansly_added" && <div className="success" role="status" aria-live="polite">Fansly account and Chrome profile recorded. Sign in with that profile, then <a href="#fansly">confirm the visible identity below</a>.</div>}
     {query.saved === "fansly_profile_assigned" && <div className="success" role="status" aria-live="polite">Fansly Chrome profile assigned. Sign in with that profile, then <a href="#fansly">confirm the visible identity below</a>.</div>}
     {query.saved === "fansly_identity_confirmed" && <div className="success" role="status" aria-live="polite">Fansly identity confirmed. <a href="#fansly">Review the recorded pairing step below</a> before opening the vault.</div>}
     {query.saved === "account_retired" && <div className="success">Account retired. History is preserved and publishing is blocked.</div>}
     <section className="panel connection-setup"><div className="section-heading"><div><span className="eyebrow">YOUR ACCOUNTS</span><h2>Your saved accounts</h2><p>Account details and platform connections are separate. Connect only the platforms THOT OS currently supports.</p></div><span>{accounts.results.length} received</span></div>
-      {accounts.results.length ? <div className="identity-list">{accounts.results.map((account) => { const pending = !account.is_active; const supported = account.platform === "instagram" || account.platform === "reddit" || account.platform === "fansly"; const href = account.platform === "instagram" ? `#instagram-${account.id}` : account.platform === "reddit" ? `/operations?platform=reddit&accountId=${encodeURIComponent(account.id)}` : account.platform === "fansly" ? "#fansly" : ""; return <article className="identity-row" key={account.id}><div><strong>{platformLabel(account.platform)} · {account.handle || account.label}</strong><small>{account.handle || "No username"} · {pending ? "Inactive — review in onboarding" : account.connection_status === "connected" ? "Connected" : supported ? "Connection required" : "Account recorded"}</small><span>{account.connection_method === "password" ? account.has_credential ? "Password saved securely" : "Password still needed" : account.connection_method === "google" ? "Google sign-in recorded" : account.connection_method === "apple" ? "Apple sign-in recorded" : "Account details saved"}{!supported ? " · No THOT OS connector available yet" : ""}</span></div>{canConnectProviders && !pending && href ? <Link className="secondary-action" href={href}>{account.platform === "fansly" ? "Manage bridge" : account.connection_status === "connected" ? "Manage connection" : `Connect ${platformLabel(account.platform)}`}</Link> : pending ? <Link className="secondary-action" href="/onboarding">Review account</Link> : null}</article>; })}</div> : <div className="empty"><b>No accounts received</b><span>Add profiles during creator onboarding first.</span></div>}
+      {accounts.results.length ? <div className="identity-list">{accounts.results.map((account) => {
+        const pending = !account.is_active && account.publishing_authority !== "blocked";
+        const retired = !account.is_active && account.publishing_authority === "blocked";
+        const supported = account.platform === "instagram" || account.platform === "reddit" || account.platform === "fansly";
+        const status = retired ? "Retired" : pending ? "Awaiting agency review" : account.connection_status === "connected" ? "Connected" : supported ? "Ready to connect" : "Profile recorded";
+        const login = account.connection_method === "password" ? account.has_credential ? "Password saved securely" : "No password saved"
+          : account.connection_method === "google" ? "Google sign-in recorded" : account.connection_method === "apple" ? "Apple sign-in recorded" : "No login details needed to record this profile";
+        return <article className="identity-row" key={account.id}>
+          <div><strong>{platformLabel(account.platform)} · {account.handle || account.label}</strong><small>{status}</small><span>{login}{!supported ? " · No THOT OS connector available yet" : ""}</span></div>
+          {pending && canManageIdentity ? <Link className="secondary-action" href="/onboarding#admin-social_profiles">Review account</Link>
+            : retired || pending ? null
+            : account.platform === "reddit" && canConnectProviders && account.connection_status !== "connected" ? <form action={startRedditReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">Connect Reddit</button></form>
+            : account.platform === "instagram" ? <Link className="secondary-action" href={`#instagram-${account.id}`}>{account.connection_status === "connected" ? "Manage connection" : "Connect Instagram"}</Link>
+            : account.platform === "reddit" ? <Link className="secondary-action" href={`/operations?platform=reddit&accountId=${encodeURIComponent(account.id)}`}>Manage connection</Link>
+            : account.platform === "fansly" ? <Link className="secondary-action" href="#fansly">Manage bridge</Link> : null}
+        </article>;
+      })}</div> : <div className="empty"><b>No accounts received</b>{context.creator.role === "creator" ? <span>Add your first Instagram, TikTok or Reddit profile above.</span> : <Link href="/onboarding">Add profiles in creator onboarding</Link>}</div>}
     </section>
     <section className="panel connection-setup" id="instagram">
       <div className="section-heading"><div><span className="eyebrow">INSTAGRAM</span><h2>Instagram connections</h2><p>Each account has its own connection, publishing authority and inbox. Connecting does not publish or send anything.</p></div></div>
-      {!instagramAccounts.results.length && <div className="empty"><b>No Instagram accounts added.</b><Link href="/onboarding">Add an account in onboarding</Link></div>}
+      {!instagramAccounts.results.length && <div className="empty"><b>No Instagram accounts added.</b><a href="#add-social-profile">Add an Instagram profile above</a></div>}
       {instagramAccounts.results.map((account) => {
         const connected = instagramStatus(account) === "Connected";
         const messagingBlocker = instagramSendingBlocker(account.messaging_status ? { status: account.messaging_status, mode: account.messaging_mode ?? "observe", write_enabled: account.messaging_write_enabled ?? 0, outbound_validated: account.messaging_outbound_validated ?? 0, last_error: account.messaging_error } : undefined, true, Boolean(account.messaging_paused));
         const inboxHref = `/messages?platform=instagram&accountId=${encodeURIComponent(account.id)}`;
         return <article className="account-connection" id={`instagram-${account.id}`} key={account.id}>
-          <div className="section-heading"><div><h3>Instagram · {account.handle || account.label}</h3><p>{account.is_active ? instagramStatus(account) : "Inactive — agency review required"}</p></div></div>
+          <div className="section-heading"><div><h3>Instagram · {account.handle || account.label}</h3><p>{account.is_active ? instagramStatus(account) : account.publishing_authority === "blocked" ? "Retired" : "Awaiting agency review"}</p></div></div>
           {account.is_active ? <><dl className="account-details"><div><dt>Posting</dt><dd>{connected ? postingStatus({ ...account, platform: "instagram" }) : "Connection required"}</dd></div><div><dt>Messaging</dt><dd>{account.messaging_sync_error ? "Sync needs attention — open inbox" : messagingBlocker || "Replies enabled · availability checked per conversation"}</dd></div></dl>
           {(account.provider_error || account.messaging_sync_error) && <p className="reply-error">This account needs attention. {account.provider_error ? "Review its connection below." : "Open its inbox to review the latest sync."}</p>}
           <div className="connection-row-actions">{connected && <><Link className="primary" href={inboxHref}>Open inbox</Link><Link className="secondary-action" href={`/operations?platform=instagram&section=create&accountId=${encodeURIComponent(account.id)}`}>Create post</Link></>}
           {!connected && canConnectProviders && <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="primary" type="submit">Connect Instagram</button></form>}</div>
           <details className="account-connection-details"><summary>Connection details{connected ? " & reconnect" : ""}</summary><p>Analytics last checked: {formatDate(account.last_analytics_sync_at)}. Passwords and 2FA for this connection are entered on Instagram’s sign-in page.</p>{account.provider_error && <p role="status">{account.provider_error}</p>}
-          <div className="connection-row-actions"><Link className="secondary-action" href={`/operations?platform=instagram&section=analytics&accountId=${encodeURIComponent(account.id)}`}>View analytics</Link>{connected && canConnectProviders && <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">Reconnect Instagram</button></form>}</div></details></> : <Link href="/onboarding">Review account</Link>}
+          <div className="connection-row-actions"><Link className="secondary-action" href={`/operations?platform=instagram&section=analytics&accountId=${encodeURIComponent(account.id)}`}>View analytics</Link>{connected && canConnectProviders && <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">Reconnect Instagram</button></form>}</div></details></> : account.publishing_authority === "blocked" ? null : canManageIdentity ? <Link href="/onboarding#admin-social_profiles">Review account</Link> : <p>Awaiting agency review before connection.</p>}
         </article>;
       })}
     </section>

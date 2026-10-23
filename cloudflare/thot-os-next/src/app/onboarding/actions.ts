@@ -9,6 +9,7 @@ import { INTERVIEW_FIELDS } from "@/lib/onboarding-interview";
 import { missingRequiredOnboardingSections, ONBOARDING_SECTION_KEYS, REQUIRED_ONBOARDING_SECTION_KEYS } from "@/lib/onboarding-sections";
 import { INVALIDATE_COMPLIANCE_IDENTITY_SQL, RESET_IDENTITY_VERIFICATION_SQL, SAVE_COMPLIANCE_IDENTITY_SQL } from "@/lib/onboarding-identity";
 import { requireStepUpSession, STEP_UP_COOKIE } from "@/lib/access-vault";
+import { normalizeSocialHandle, selfServeSocialPlatforms } from "@/lib/social-profile-handles";
 import { redirect } from "next/navigation";
 
 const sections = new Set<string>(ONBOARDING_SECTION_KEYS);
@@ -23,7 +24,7 @@ function email(form: FormData, key: string) { const result = value(form, key, 25
 const platformHosts: Record<string, string[]> = { instagram: ["instagram.com"], reddit: ["reddit.com"], x: ["x.com", "twitter.com"], tiktok: ["tiktok.com"], threads: ["threads.net"], facebook: ["facebook.com"], telegram: ["t.me"], youtube: ["youtube.com", "youtu.be"], fansly: ["fansly.com"], onlyfans: ["onlyfans.com"], manyvids: ["manyvids.com"], patreon: ["patreon.com"], myroomz: ["myroomz.com"] };
 function profileUrl(form: FormData, platform: string) { const result = value(form, "profileUrl", 500); if (!result) return ""; let parsed: URL; try { parsed = new URL(result); } catch { throw new Error("Enter a valid profile URL."); } if (parsed.protocol !== "https:") throw new Error("Profile URLs must use https."); const hosts = platformHosts[platform]; if (hosts && !hosts.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) throw new Error(`Enter a ${platform} profile URL.`); return parsed.toString(); }
 function dateOfBirth(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Enter a valid date of birth."); const date = new Date(`${value}T00:00:00Z`); if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new Error("Enter a valid date of birth."); const now = new Date(); const adult = new Date(Date.UTC(now.getUTCFullYear() - 18, now.getUTCMonth(), now.getUTCDate())); if (date > adult || date < new Date("1900-01-01T00:00:00Z")) throw new Error("The supplied date does not meet adult verification requirements."); return value; }
-function revalidate() { revalidatePath("/onboarding"); revalidatePath("/creators"); }
+function revalidate() { revalidatePath("/onboarding"); revalidatePath("/creators"); revalidatePath("/accounts"); }
 
 async function context() { return requireCreatorContext("mutate"); }
 async function requireCreatorPin(identity: Awaited<ReturnType<typeof context>>) {
@@ -99,9 +100,9 @@ async function createOperationalProfile(form: FormData, creatorOnly = false) {
   const username = value(form, "username", 120); if (creator && !username) throw new Error("Username is required.");
   const label = creator ? username : value(form, "label", 100); if (!label) throw new Error("Account label is required.");
   const loginMethod = creator ? value(form, "loginMethod", 20) : value(form, "connectionMethod", 80);
-  if (creator && !creatorLoginMethods.has(loginMethod)) throw new Error("Choose password, Google or Apple sign-in.");
+  if (creator && !creatorLoginMethods.has(loginMethod) && !(type === "social" && loginMethod === "not_configured")) throw new Error("Choose password, Google or Apple sign-in.");
   const loginEmail = email(form, "loginEmail");
-  if (creator && loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
+  if (creator && (loginMethod === "google" || loginMethod === "apple") && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const isActive = creator ? 0 : (form.has("isActive") && form.get("isActive") === "yes" ? 1 : 0);
   const creatorVisible = creator ? 1 : (form.has("creatorVisible") && form.get("creatorVisible") === "yes" ? 1 : 0);
   const id = crypto.randomUUID(); const DB = cloudflareEnv().DB; const actor = humanAuditActor(identity);
@@ -114,17 +115,37 @@ async function createOperationalProfile(form: FormData, creatorOnly = false) {
 export async function addOperationalProfileAction(form: FormData) { await createOperationalProfile(form); }
 export async function createCreatorOperationalProfileAction(form: FormData) { return { ok: true, id: await createOperationalProfile(form, true) }; }
 
+export async function createCreatorSocialProfileAction(form: FormData) {
+  const identity = await context();
+  if (identity.creator.role !== "creator") throw new Error("Only the creator can add a social profile here.");
+  const platform = value(form, "platform", 40).toLowerCase();
+  if (!selfServeSocialPlatforms.some((supported) => supported === platform)) throw new Error("Choose Instagram, TikTok or Reddit.");
+  const handle = normalizeSocialHandle(platform as (typeof selfServeSocialPlatforms)[number], value(form, "username", 120));
+  const existing = await cloudflareEnv().DB.prepare("SELECT id FROM operational_accounts WHERE creator_id=? AND platform=? AND lower(CASE WHEN platform='reddit' AND lower(substr(handle,1,2))='u/' THEN substr(handle,3) ELSE ltrim(handle,'@') END)=? LIMIT 1")
+    .bind(identity.creator.creator_id, platform, handle).first<{ id: string }>();
+  if (existing) throw new Error("This profile is already saved in your workspace.");
+  const account = new FormData();
+  account.set("accountKind", "social"); account.set("platform", platform); account.set("username", handle);
+  account.set("loginMethod", "not_configured"); account.set("purpose", value(form, "purpose", 400));
+  return { ok: true, id: await createOperationalProfile(account, true) };
+}
+
 export async function saveCreatorAccountLoginMethodAction(form: FormData) {
   const identity = await context();
   if (identity.creator.role !== "creator") throw new Error("Only the creator can save an account sign-in method here.");
   await requireCreatorPin(identity);
   const accountId = value(form, "accountId", 160); const loginMethod = value(form, "loginMethod", 20); const loginEmail = email(form, "loginEmail");
-  if (!accountId || !creatorLoginMethods.has(loginMethod)) throw new Error("Choose an account and sign-in method.");
-  if (loginMethod !== "password" && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
+  if (!accountId) throw new Error("Choose an account and sign-in method.");
+  if ((loginMethod === "google" || loginMethod === "apple") && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const username = value(form, "username", 120); if (!username) throw new Error("Username is required.");
   const DB = cloudflareEnv().DB;
-  const account = await DB.prepare("SELECT account_kind,platform,label,handle,login_email,profile_url,account_purpose,connection_method FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string }>();
+  const account = await DB.prepare("SELECT account_kind,platform,label,handle,login_email,profile_url,account_purpose,connection_method,connection_status FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string; connection_status: string }>();
   if (!account) throw new Error("Choose an account in your workspace.");
+  if (!creatorLoginMethods.has(loginMethod) && !(account.account_kind === "social" && loginMethod === "not_configured")) throw new Error("Choose a sign-in method for this account.");
+  if (account.connection_status === "connected" && selfServeSocialPlatforms.some((supported) => supported === account.platform)) {
+    const platform = account.platform as (typeof selfServeSocialPlatforms)[number];
+    if (normalizeSocialHandle(platform, account.handle) !== normalizeSocialHandle(platform, username)) throw new Error("This connected profile belongs to its verified username. Add the other username as a separate profile.");
+  }
   const nextProfileUrl = profileUrl(form, account.platform); const purpose = value(form, "purpose", 400);
   const metadataChanged = (account.handle || account.label).trim() !== username || account.login_email.trim().toLowerCase() !== loginEmail || account.profile_url.trim() !== nextProfileUrl || account.account_purpose.trim() !== purpose || account.connection_method.trim() !== loginMethod;
   if (metadataChanged) {
