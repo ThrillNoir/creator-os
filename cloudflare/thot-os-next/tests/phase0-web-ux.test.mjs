@@ -25,6 +25,6 @@ test("retired accounts cannot become the presented publishing identity", async (
   assert.match(accounts, /platform='fansly' AND oa\.is_active=1/);
   assert.match(accounts, /const retired = !account\.is_active && account\.publishing_authority === "blocked"/);
   assert.match(accounts, /: retired \|\| pending \? null[\s\S]*startRedditReconnectAction/);
-  assert.match(accounts, /account\.is_active \? <>[\s\S]*startInstagramReconnectAction[\s\S]*: canManageIdentity \? <Link href="\/onboarding#admin-social_profiles">Review account/);
+  assert.match(accounts, /account\.is_active \? <>[\s\S]*startInstagramReconnectAction[\s\S]*account\.publishing_authority === "blocked" \? null : canManageIdentity/);
   assert.match(operations, /platform='fansly' AND is_active=1/);
 });

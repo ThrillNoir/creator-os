@@ -10,6 +10,7 @@ import { missingRequiredOnboardingSections, ONBOARDING_SECTION_KEYS, REQUIRED_ON
 import { INVALIDATE_COMPLIANCE_IDENTITY_SQL, RESET_IDENTITY_VERIFICATION_SQL, SAVE_COMPLIANCE_IDENTITY_SQL } from "@/lib/onboarding-identity";
 import { requireStepUpSession, STEP_UP_COOKIE } from "@/lib/access-vault";
 import { normalizeSocialHandle, selfServeSocialPlatforms } from "@/lib/social-profile-handles";
+import { approveCreatorSocialAccountSql, auditApprovedCreatorSocialAccountSql } from "@/lib/onboarding-account-review";
 import { redirect } from "next/navigation";
 
 const sections = new Set<string>(ONBOARDING_SECTION_KEYS);
@@ -108,7 +109,9 @@ async function createOperationalProfile(form: FormData, creatorOnly = false) {
   const id = crypto.randomUUID(); const DB = cloudflareEnv().DB; const actor = humanAuditActor(identity);
   await DB.prepare(`INSERT INTO operational_accounts (id,creator_id,platform,label,handle,connection_status,publishing_mode,publishing_authority,account_kind,login_email,profile_url,account_purpose,is_active,connection_method,creator_visible,administrator_notes,capabilities_json,private_upload_destination)
   VALUES (?,?,?,?,?,'not_connected','not_configured','not_configured',?,?,?,?,?,?,?,?,?,?)`).bind(id, creatorId, platform, label, username, type, loginEmail, profileUrl(form, platform), value(form, "purpose", 400), isActive, loginMethod, creatorVisible, creator ? "" : value(form, "administratorNotes", 3000), "[]", creator ? "" : value(form, "privateUploadDestination", 500)).run();
-  await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator); await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: Boolean(creatorVisible), isActive: Boolean(isActive), loginMethod }); revalidate();
+  const activeSocialCreator = creator && type === "social" && Boolean(await DB.prepare("SELECT 1 FROM creator_onboarding_profiles WHERE creator_id=? AND workflow_state='active'").bind(creatorId).first());
+  if (!activeSocialCreator) await changedSection(creatorId, type === "social" ? "social_profiles" : "paid_platforms", identity.email, creator);
+  await audit(creatorId, actor, "onboarding_operational_account_created", id, { accountKind: type, platform, creatorVisible: Boolean(creatorVisible), isActive: Boolean(isActive), loginMethod }); revalidate();
   return id;
 }
 
@@ -130,6 +133,22 @@ export async function createCreatorSocialProfileAction(form: FormData) {
   return { ok: true, id: await createOperationalProfile(account, true) };
 }
 
+export async function approveCreatorSocialProfileAction(form: FormData) {
+  const identity = await requireCreatorContext("manage_identity");
+  if (identity.creator.role !== "agency_admin") throw new Error("Only an agency administrator can review a new social profile.");
+  const creatorId = identity.creator.creator_id;
+  const accountId = value(form, "accountId", 160);
+  if (!accountId) throw new Error("Choose a social profile to approve.");
+  const DB = cloudflareEnv().DB;
+  const results = await DB.batch([
+    DB.prepare(approveCreatorSocialAccountSql).bind(accountId, creatorId),
+    DB.prepare(auditApprovedCreatorSocialAccountSql)
+      .bind(crypto.randomUUID(), creatorId, identity.email, identity.creator.role, accountId, JSON.stringify({ approval: "account_only" })),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) throw new Error("This profile is no longer awaiting review in an active creator workspace. Refresh before trying again.");
+  revalidate(); revalidatePath("/operations");
+}
+
 export async function saveCreatorAccountLoginMethodAction(form: FormData) {
   const identity = await context();
   if (identity.creator.role !== "creator") throw new Error("Only the creator can save an account sign-in method here.");
@@ -139,18 +158,23 @@ export async function saveCreatorAccountLoginMethodAction(form: FormData) {
   if ((loginMethod === "google" || loginMethod === "apple") && !loginEmail) throw new Error("Enter the email used for Google or Apple sign-in.");
   const username = value(form, "username", 120); if (!username) throw new Error("Username is required.");
   const DB = cloudflareEnv().DB;
-  const account = await DB.prepare("SELECT account_kind,platform,label,handle,login_email,profile_url,account_purpose,connection_method,connection_status FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string; connection_status: string }>();
+  const account = await DB.prepare("SELECT account_kind,platform,label,handle,login_email,profile_url,account_purpose,connection_method,connection_status,is_active FROM operational_accounts WHERE id=? AND creator_id=? AND creator_visible=1").bind(accountId, identity.creator.creator_id).first<{ account_kind: string; platform: string; label: string; handle: string; login_email: string; profile_url: string; account_purpose: string; connection_method: string; connection_status: string; is_active: number }>();
   if (!account) throw new Error("Choose an account in your workspace.");
   if (!creatorLoginMethods.has(loginMethod) && !(account.account_kind === "social" && loginMethod === "not_configured")) throw new Error("Choose a sign-in method for this account.");
   if (account.connection_status === "connected" && selfServeSocialPlatforms.some((supported) => supported === account.platform)) {
     const platform = account.platform as (typeof selfServeSocialPlatforms)[number];
     if (normalizeSocialHandle(platform, account.handle) !== normalizeSocialHandle(platform, username)) throw new Error("This connected profile belongs to its verified username. Add the other username as a separate profile.");
   }
+  if (account.account_kind === "social" && account.is_active && selfServeSocialPlatforms.some((supported) => supported === account.platform)) {
+    const platform = account.platform as (typeof selfServeSocialPlatforms)[number];
+    if (normalizeSocialHandle(platform, account.handle) !== normalizeSocialHandle(platform, username)) throw new Error("An approved profile keeps its reviewed username. Add the other username as a separate profile.");
+  }
   const nextProfileUrl = profileUrl(form, account.platform); const purpose = value(form, "purpose", 400);
   const metadataChanged = (account.handle || account.label).trim() !== username || account.login_email.trim().toLowerCase() !== loginEmail || account.profile_url.trim() !== nextProfileUrl || account.account_purpose.trim() !== purpose || account.connection_method.trim() !== loginMethod;
   if (metadataChanged) {
     await DB.prepare("UPDATE operational_accounts SET label=?,handle=?,login_email=?,profile_url=?,account_purpose=?,connection_method=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND creator_id=?").bind(username, username, loginEmail, nextProfileUrl, purpose, loginMethod, accountId, identity.creator.creator_id).run();
-    await changedSection(identity.creator.creator_id, account.account_kind === "paid" ? "paid_platforms" : "social_profiles", identity.email, true);
+    const activeSocialCreator = account.account_kind === "social" && Boolean(await DB.prepare("SELECT 1 FROM creator_onboarding_profiles WHERE creator_id=? AND workflow_state='active'").bind(identity.creator.creator_id).first());
+    if (!activeSocialCreator) await changedSection(identity.creator.creator_id, account.account_kind === "paid" ? "paid_platforms" : "social_profiles", identity.email, true);
   }
   await audit(identity.creator.creator_id, humanAuditActor(identity), "onboarding_account_login_method_saved", accountId, { loginMethod, metadataChanged }); revalidate();
   return { ok: true };
@@ -218,6 +242,8 @@ export async function saveBrandContextAction(form: FormData) {
 export async function reviewOnboardingSectionAction(form: FormData) {
   const identity = await context(); const creatorId = identity.creator.creator_id; const section = value(form,"section",40); if (!sections.has(section)) throw new Error("Unknown onboarding section.");
   const admin = identity.creator.role === "agency_admin"; if (!admin && identity.creator.role !== "creator") throw new Error("This role cannot review onboarding.");
+  const active = await cloudflareEnv().DB.prepare("SELECT 1 FROM creator_onboarding_profiles WHERE creator_id=? AND workflow_state='active'").bind(creatorId).first();
+  if (active) throw new Error("This creator is already active. Review a new social profile on its own, or edit an onboarding section first.");
   const status = admin ? "complete" : "creator_review"; await cloudflareEnv().DB.prepare(`INSERT INTO creator_onboarding_sections (creator_id,section_key,status,updated_by,reviewed_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(creator_id,section_key) DO UPDATE SET status=excluded.status,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,reviewed_at=CURRENT_TIMESTAMP`).bind(creatorId,section,status,identity.email).run();
   if (admin) await cloudflareEnv().DB.prepare("UPDATE creator_onboarding_profiles SET workflow_state='admin_review',updated_at=CURRENT_TIMESTAMP WHERE creator_id=?").bind(creatorId).run();

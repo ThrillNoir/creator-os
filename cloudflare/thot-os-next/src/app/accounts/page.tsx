@@ -34,9 +34,10 @@ type InstagramSetup = {
   provider_error: string | null;
   last_analytics_sync_at: string | null;
   is_active: number;
+  creator_submitted: number;
   messaging_status: string | null; messaging_mode: string | null; messaging_write_enabled: number | null; messaging_outbound_validated: number | null; messaging_error: string | null; messaging_sync_error: string | null; messaging_paused: number;
 };
-type PlatformAccount = { id: string; platform: string; label: string; handle: string; connection_status: string; connection_method: string; account_kind: string; is_active: number; publishing_authority: string; has_credential: number };
+type PlatformAccount = { id: string; platform: string; label: string; handle: string; connection_status: string; connection_method: string; account_kind: string; is_active: number; publishing_authority: string; has_credential: number; creator_submitted: number };
 
 function formatDate(value: string | null) {
   if (!value) return "Not recorded";
@@ -57,7 +58,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const canManageIdentity = roleCan(context.creator.role, "manage_identity");
   const canConnectProviders = roleCan(context.creator.role, "mutate");
   const [accounts, setup, instagramAccounts, pin] = await Promise.all([
-    cloudflareEnv().DB.prepare("SELECT oa.id,oa.platform,oa.label,oa.handle,oa.connection_status,oa.connection_method,oa.account_kind,oa.is_active,oa.publishing_authority,EXISTS(SELECT 1 FROM vault_credentials vc WHERE vc.creator_id=oa.creator_id AND vc.account_id=oa.id AND vc.status='active') AS has_credential FROM operational_accounts oa WHERE oa.creator_id=? AND account_kind IN ('social','paid') ORDER BY account_kind,platform,label").bind(creatorId).all<PlatformAccount>(),
+    cloudflareEnv().DB.prepare("SELECT oa.id,oa.platform,oa.label,oa.handle,oa.connection_status,oa.connection_method,oa.account_kind,oa.is_active,oa.publishing_authority,EXISTS(SELECT 1 FROM vault_credentials vc WHERE vc.creator_id=oa.creator_id AND vc.account_id=oa.id AND vc.status='active') AS has_credential,EXISTS(SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=oa.creator_id AND e.subject=oa.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created') AS creator_submitted FROM operational_accounts oa WHERE oa.creator_id=? AND account_kind IN ('social','paid') ORDER BY account_kind,platform,label").bind(creatorId).all<PlatformAccount>(),
     cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.external_identity_confirmed_at,
     bp.label AS profile_label,bp.status AS profile_status,abp.verified_at AS profile_verified_at,
     (SELECT MAX(bc.last_seen_at) FROM bridge_credentials bc WHERE bc.creator_id=oa.creator_id AND bc.account_id=oa.id AND bc.profile_id=abp.profile_id AND bc.status='active' AND bc.expires_at>CURRENT_TIMESTAMP AND bp.status<>'revoked') AS bridge_last_seen_at,
@@ -67,6 +68,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     LEFT JOIN browser_profiles bp ON bp.creator_id=abp.creator_id AND bp.id=abp.profile_id
     WHERE oa.creator_id=? AND oa.platform='fansly' AND oa.is_active=1 ORDER BY oa.label LIMIT 1`).bind(creatorId).first<FanslySetup>(),
     cloudflareEnv().DB.prepare(`SELECT oa.id,oa.label,oa.handle,oa.connection_status,oa.publishing_authority,oa.external_identity_confirmed_at,oa.is_active,
+      EXISTS(SELECT 1 FROM creator_access_audit_events e WHERE e.creator_id=oa.creator_id AND e.subject=oa.id AND e.actor_role='creator' AND e.event_type='onboarding_operational_account_created') AS creator_submitted,
       pc.status AS provider_status,pc.display_name,pc.last_error AS provider_error,state.last_analytics_sync_at,
       mc.status AS messaging_status,mc.mode AS messaging_mode,mc.write_enabled AS messaging_write_enabled,mc.outbound_validated AS messaging_outbound_validated,mc.last_error AS messaging_error,mc.last_sync_error AS messaging_sync_error,
       EXISTS(SELECT 1 FROM messaging_connections paused WHERE paused.creator_id=oa.creator_id AND paused.emergency_paused=1) AS messaging_paused
@@ -96,7 +98,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
           : account.connection_method === "google" ? "Google sign-in recorded" : account.connection_method === "apple" ? "Apple sign-in recorded" : "No login details needed to record this profile";
         return <article className="identity-row" key={account.id}>
           <div><strong>{platformLabel(account.platform)} · {account.handle || account.label}</strong><small>{status}</small><span>{login}{!supported ? " · No THOT OS connector available yet" : ""}</span></div>
-          {pending && canManageIdentity ? <Link className="secondary-action" href="/onboarding#admin-social_profiles">Review account</Link>
+          {pending && canManageIdentity ? <Link className="secondary-action" href={account.creator_submitted && account.account_kind === "social" ? "/onboarding#pending-social-profiles" : "/onboarding#admin-social_profiles"}>Review account</Link>
             : retired || pending ? null
             : account.platform === "reddit" && canConnectProviders && account.connection_status !== "connected" ? <form action={startRedditReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">Connect Reddit</button></form>
             : account.platform === "instagram" ? <Link className="secondary-action" href={`#instagram-${account.id}`}>{account.connection_status === "connected" ? "Manage connection" : "Connect Instagram"}</Link>
@@ -119,7 +121,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
           <div className="connection-row-actions">{connected && <><Link className="primary" href={inboxHref}>Open inbox</Link><Link className="secondary-action" href={`/operations?platform=instagram&section=create&accountId=${encodeURIComponent(account.id)}`}>Create post</Link></>}
           {!connected && canConnectProviders && <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="primary" type="submit">Connect Instagram</button></form>}</div>
           <details className="account-connection-details"><summary>Connection details{connected ? " & reconnect" : ""}</summary><p>Analytics last checked: {formatDate(account.last_analytics_sync_at)}. Passwords and 2FA for this connection are entered on Instagram’s sign-in page.</p>{account.provider_error && <p role="status">{account.provider_error}</p>}
-          <div className="connection-row-actions"><Link className="secondary-action" href={`/operations?platform=instagram&section=analytics&accountId=${encodeURIComponent(account.id)}`}>View analytics</Link>{connected && canConnectProviders && <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">Reconnect Instagram</button></form>}</div></details></> : account.publishing_authority === "blocked" ? null : canManageIdentity ? <Link href="/onboarding#admin-social_profiles">Review account</Link> : <p>Awaiting agency review before connection.</p>}
+          <div className="connection-row-actions"><Link className="secondary-action" href={`/operations?platform=instagram&section=analytics&accountId=${encodeURIComponent(account.id)}`}>View analytics</Link>{connected && canConnectProviders && <form action={startInstagramReconnectAction}><input type="hidden" name="accountId" value={account.id} /><button className="secondary-action" type="submit">Reconnect Instagram</button></form>}</div></details></> : account.publishing_authority === "blocked" ? null : canManageIdentity ? <Link href={account.creator_submitted ? "/onboarding#pending-social-profiles" : "/onboarding#admin-social_profiles"}>Review account</Link> : <p>Awaiting agency review before connection.</p>}
         </article>;
       })}
     </section>
