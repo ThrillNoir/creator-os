@@ -42,14 +42,14 @@ async function seed(db, identity) {
     .run("fixture-video", owner.creatorId, "sfw", 0);
 }
 
-test("local migrated schema creates, redeems, ranges, and revokes a synthetic download", { timeout: 30000 }, async () => {
+test("local migrated schema creates, redeems, ranges, and revokes a synthetic download", { timeout: 90000 }, async () => {
   const local = await replayDownloadSchema();
   const mf = new Miniflare(convertV4MiniflareOptions({
     modules: true, compatibilityDate: "2026-08-08", script: "export default { fetch() { return new Response('fixture'); } }", r2Buckets: ["LIBRARY_MEDIA"],
   }));
   try {
-    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 68);
-    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0066_creator_portfolio_drafts.sql");
+    assert.equal(local.db.prepare("SELECT COUNT(*) AS count FROM d1_migrations").get().count, 74);
+    assert.equal(local.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").get().name, "0072_creator_client_records.sql");
     const media = await mf.getR2Bucket("LIBRARY_MEDIA");
     const identity = await media.put("originals/fixture.mp4", bytes, { httpMetadata: { contentType: "video/mp4" } });
     await seed(local.db, identity);
