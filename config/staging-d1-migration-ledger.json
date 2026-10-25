@@ -421,5 +421,11 @@
       "remoteId": 73
     }
   ],
-  "pendingMigrations": []
+  "pendingMigrations": [
+    {
+      "name": "0072_creator_client_records.sql",
+      "sha256": "c9994461239d949820b80617c15278de803d782522223f86579112f35ab57c9b",
+      "purpose": "Reviewed pending staging migration for creator-scoped private client, booking, payment, and audit records."
+    }
+  ]
 }
