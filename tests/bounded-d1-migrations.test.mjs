@@ -50,8 +50,8 @@ test("reviewed staging ledger records the applied profile photo migration", () =
   const ledger = JSON.parse(readFileSync(path.join(root, "config/staging-d1-migration-ledger.json"), "utf8"));
   const directory = path.join(root, "cloudflare/thot-os-app/migrations");
   const inventory = inventoryFromLedger(directory, ledger, readdirSync);
-  assert.equal(ledger.migrations.length, 73);
-  assert.deepEqual(ledger.migrations.slice(-10).map(({ remoteId, name }) => ({ remoteId, name })), [
+  assert.equal(ledger.migrations.length, 74);
+  assert.deepEqual(ledger.migrations.slice(-11).map(({ remoteId, name }) => ({ remoteId, name })), [
     { remoteId: 64, name: "0062_booking_delivery_evidence.sql" },
     { remoteId: 65, name: "0063_content_download_links.sql" },
     { remoteId: 66, name: "0064_content_download_message.sql" },
@@ -62,8 +62,9 @@ test("reviewed staging ledger records the applied profile photo migration", () =
     { remoteId: 71, name: "0069_portfolio_draft_visibility.sql" },
     { remoteId: 72, name: "0070_asset_display_names.sql" },
     { remoteId: 73, name: "0071_profile_library_photos.sql" },
+    { remoteId: 74, name: "0072_creator_client_records.sql" },
   ]);
-  assert.deepEqual(ledger.pendingMigrations.map(({ name }) => name), ["0072_creator_client_records.sql"]);
+  assert.deepEqual(ledger.pendingMigrations, []);
   assert.equal(inventory.at(-1).name, "0072_creator_client_records.sql");
   assert.equal(inventory.at(-1).sha256, "c9994461239d949820b80617c15278de803d782522223f86579112f35ab57c9b");
   assert.equal(inventory.at(-2).name, "0071_profile_library_photos.sql");
@@ -73,14 +74,14 @@ test("reviewed staging ledger records the applied profile photo migration", () =
   const currentPlan = buildBoundedPlan({
     environment: "staging", releaseId: "profile-library-photos-20261022",
     from: "0071_profile_library_photos.sql", through: "0071_profile_library_photos.sql",
-    inventory, remoteApplied: ledger.migrations.slice(0, -1).map(({ name }) => name), registry, policy, git,
+    inventory, remoteApplied: ledger.migrations.slice(0, -2).map(({ name }) => name), registry, policy, git,
   });
   assert.deepEqual(currentPlan.execution.map(({ name }) => name), ["0071_profile_library_photos.sql"]);
   assert.deepEqual(currentPlan.excludedPending.map(({ name }) => name), ["0072_creator_client_records.sql"]);
   const nextPlan = buildBoundedPlan({
     environment: "staging", releaseId: "creator-client-records-20261025",
     from: "0072_creator_client_records.sql", through: "0072_creator_client_records.sql",
-    inventory, remoteApplied: ledger.migrations.map(({ name }) => name), registry, policy, git,
+    inventory, remoteApplied: ledger.migrations.slice(0, -1).map(({ name }) => name), registry, policy, git,
   });
   assert.deepEqual(nextPlan.execution.map(({ name }) => name), ["0072_creator_client_records.sql"]);
   assert.deepEqual(nextPlan.excludedPending, []);

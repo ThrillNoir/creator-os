@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "environment": "staging",
   "databaseId": "174532e8-5ada-4e30-abba-1276b3540b3f",
-  "observedAt": "2026-10-22T06:07:55Z",
+  "observedAt": "2026-10-25T23:30:07.584Z",
   "purpose": "Reviewed ordered applied ledger for staging; filename prefixes are not authoritative ordering. Pending entries are reviewed repository migrations only and block deployment until D1 reconciliation records them as applied.",
   "migrations": [
     {
@@ -419,13 +419,13 @@
       "sha256": "027273965f73bb27afc447c13f7f0d71cb8fe676df5ebb9d66c9471f9206d134",
       "purpose": "Applied approved bounded staging migration: creator-scoped Library profile photo selections, derivatives, and surface-specific use grants.",
       "remoteId": 73
-    }
-  ],
-  "pendingMigrations": [
+    },
     {
       "name": "0072_creator_client_records.sql",
       "sha256": "c9994461239d949820b80617c15278de803d782522223f86579112f35ab57c9b",
-      "purpose": "Reviewed pending staging migration for creator-scoped private client, booking, payment, and audit records."
+      "purpose": "Applied approved bounded staging migration: creator-scoped private client, booking, payment, and audit records.",
+      "remoteId": 74
     }
-  ]
+  ],
+  "pendingMigrations": []
 }
