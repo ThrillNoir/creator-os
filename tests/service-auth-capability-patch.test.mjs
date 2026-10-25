@@ -54,7 +54,7 @@ function readyRows(plan, { grants = "missing", audit = false } = {}) {
 test("adult profile capabilities are canonical, staging-scoped, and do not alter the production boundary", async () => {
   const { patch, activation, contract, registry } = await fixture();
   const principal = contract.principals.find((entry) => entry.principalName === "thot-os-web-public-links");
-  assert.deepEqual(principal.capabilities.slice(-2), ["adult.profile.publish", "adult.profile.withdraw"]);
+  assert.deepEqual(principal.capabilities.filter((capability) => capability.startsWith("adult.profile.")), ["adult.profile.publish", "adult.profile.withdraw"]);
   const activationGrant = activation.grants.find((entry) => entry.principalName === principal.principalName && entry.creatorId === "adelaide");
   assert.deepEqual(activationGrant.capabilities, ["public.profile.publish", "public.profile.withdraw", "adult.profile.publish", "adult.profile.withdraw"]);
   assert.deepEqual(patch.grants, [{ principalName: principal.principalName, creatorId: "adelaide", capabilities: ["adult.profile.publish", "adult.profile.withdraw"] }]);
