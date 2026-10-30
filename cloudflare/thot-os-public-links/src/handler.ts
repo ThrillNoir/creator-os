@@ -353,6 +353,13 @@ export default {
     const gameApiPath = gameHost && url.pathname === "/api/leaderboard";
     if (request.method !== "GET" && request.method !== "HEAD" && !(askPath && request.method === "POST") && !(gameApiPath && request.method === "POST")) return textResponse("Method not allowed", 405, { allow: askPath || gameApiPath ? "GET, POST" : "GET, HEAD" });
 
+    if (url.hostname === "www.thathuboverthere.com" && url.pathname === "/") {
+      return new Response(null, {
+        status: 301,
+        headers: { ...securityHeaders(), "cache-control": "public, max-age=300", location: `https://thathuboverthere.com/${url.search}` },
+      });
+    }
+
     // The apex game is deliberately separate from the www creator allowlist.
     // Keep these exact routes before the legacy apex redirect/404 guard.
     if (gameApiPath) return gameLeaderboardApi(request, env);

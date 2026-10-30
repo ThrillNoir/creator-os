@@ -33,9 +33,18 @@ test("apex game and its assets load without changing the www profile boundary", 
   assert.equal(head.status, 200);
   assert.equal(await head.text(), "");
   assert.equal((await worker.fetch(new Request("https://thathuboverthere.com/assets/game/src/main.js"), env)).status, 200);
-  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/"), env)).status, 404);
+  for (const method of ["GET", "HEAD"]) {
+    const www = await worker.fetch(new Request("https://www.thathuboverthere.com/?play=adelaide&source=a%20b", { method }), env);
+    assert.equal(www.status, 301);
+    assert.equal(www.headers.get("location"), "https://thathuboverthere.com/?play=adelaide&source=a%20b");
+    assert.equal(await www.text(), "");
+  }
+  const wwwRoot = await worker.fetch(new Request("https://www.thathuboverthere.com/"), env);
+  assert.equal(wwwRoot.status, 301);
+  assert.equal(wwwRoot.headers.get("location"), "https://thathuboverthere.com/");
   assert.equal((await worker.fetch(new Request("https://thathuboverthere.com/private"), env)).status, 404);
   assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/api/leaderboard"), env)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://www.thathuboverthere.com/media/adelaide/version/avatar"), env)).status, 404);
 });
 
 test("leaderboard routes accept bounded JSON on apex only", async () => {
