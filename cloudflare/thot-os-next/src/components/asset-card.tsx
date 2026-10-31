@@ -15,7 +15,8 @@ export function AssetCard({ asset, selectable = false, templateHref, canPrepareP
   const displayName = assetDisplayName(asset);
   const readyForReview = video ? !["uploading", "archived"].includes(asset.video_state ?? "") : asset.media_state !== "ingesting";
   const reviewAction = readyForReview ? <Link className="copy-attributes" href={`/library/${video ? asset.id : objectId ?? asset.id}`}>{canEdit ? asset.safety ? "Review & tag" : "Next: review & tag" : "View classification"}</Link> : null;
-  const card = <><div className="asset-preview">{posterUrl ? <img src={posterUrl} alt="" loading="lazy" /> : video ? <span>{videoStatus}</span> : objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
+  const missingPoster = video && canPreviewVerifiedVideo(asset.video_state) && !posterUrl;
+  const card = <><div className="asset-preview">{posterUrl ? <img src={posterUrl} alt="" loading="lazy" /> : video ? <span>{missingPoster ? canEdit ? "No thumbnail yet · Open to choose one" : "No thumbnail yet" : videoStatus}</span> : objectId ? <img src={`/api/preview/${objectId}`} alt="" loading="lazy" /> : <span>{unavailablePreview}</span>}</div>
     <div className="asset-info"><strong title={displayName}>{displayName}</strong><small>{Math.round(asset.bytes / 1024)} KB · {asset.extension.toUpperCase()}</small><div className="pills">{tags.map((tag) => <span className={`pill ${tag}`} key={tag}>{tag}</span>)}</div></div></>;
   return <article className={`asset-card${video ? " video-card" : ""}`}>
     {selectable && <label className="asset-select"><input type="checkbox" name="assetId" value={asset.id} /><span>Select</span></label>}

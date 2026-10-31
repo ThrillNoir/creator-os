@@ -14,6 +14,12 @@ async function hexDigest(value: Uint8Array | string) {
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export async function videoPosterIdentity(creatorId: string, assetId: string, bytes: Uint8Array) {
+  const objectId = await hexDigest(`${creatorId}:${assetId}`);
+  const revision = await hexDigest(bytes);
+  return { objectId, key: `creators/${creatorId}/assets/${objectId}/previews/${revision}.jpg` };
+}
+
 export async function readVideoPosterUpload(request: Request) {
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > VIDEO_POSTER_MAX_BYTES) throw new Error("poster_too_large");
@@ -53,13 +59,12 @@ export async function preparePrivateVideoPoster(input: {
   const info = await input.images.info(byteStream(bytes));
   if (!bytes.length || info.format !== "image/jpeg" || !Number.isInteger(info.width) || !Number.isInteger(info.height)
     || info.width < 1 || info.height < 1) throw new Error("poster_processing_failed");
-  const objectId = await hexDigest(`${input.creatorId}:${input.assetId}`);
-  const revision = await hexDigest(bytes);
+  const { objectId, key } = await videoPosterIdentity(input.creatorId, input.assetId, bytes);
   return {
     bytes,
     width: info.width,
     height: info.height,
     objectId,
-    key: `creators/${input.creatorId}/assets/${objectId}/previews/${revision}.jpg`,
+    key,
   };
 }
