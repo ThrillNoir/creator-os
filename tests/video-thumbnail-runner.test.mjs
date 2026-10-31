@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +45,7 @@ function fixture(bytes) {
     async put(key, jpeg, { customMetadata }) { puts++; const entry = { key, bytes: jpeg, customMetadata }; posters.set(key, entry); return entry; },
   };
   const portFactory = { d1: () => DB, r2: ({ bucket }) => bucket === "thot-os-library-media-staging" ? LIBRARY_MEDIA : PREVIEWS,
-    commit: () => ({ async commit(source, key) { const result = await DB.prepare(`UPDATE assets SET preview_r2_key=?
+    commit: () => ({ async commit(source, jpeg) { const key = `creators/${source.creatorId}/assets/${createHash("sha256").update(`${source.creatorId}:${source.assetId}`).digest("hex")}/previews/${createHash("sha256").update(jpeg).digest("hex")}.jpg`; await PREVIEWS.put(key, jpeg, { customMetadata: { creator_id: source.creatorId, asset_id: source.assetId, derivative: "video_poster_v1" } }); const result = await DB.prepare(`UPDATE assets SET preview_r2_key=?
       WHERE id=? AND creator_id=? AND preview_r2_key IS NULL AND EXISTS
       (SELECT 1 FROM asset_storage_objects WHERE asset_id=? AND creator_id=? AND object_key=? AND source_revision=? AND r2_etag=? AND r2_version=? AND byte_count=?)`)
       .bind(key, source.assetId, source.creatorId, source.assetId, source.creatorId, source.sourceKey,
@@ -93,8 +94,7 @@ test("one-shot plan ID protects source identity; optional tick advances and wrap
       THOT_THUMBNAIL_ACCESS_CLIENT_SECRET: "synthetic-access-secret",
       THOT_THUMBNAIL_SOURCE_R2_KEY_ID: "synthetic-source-key",
       THOT_THUMBNAIL_SOURCE_R2_SECRET: "synthetic-source-secret",
-      THOT_THUMBNAIL_PREVIEW_R2_KEY_ID: "synthetic-preview-key",
-      THOT_THUMBNAIL_PREVIEW_R2_SECRET: "synthetic-preview-secret" };
+      };
     const common = { config: CONFIG, portFactory: f.portFactory, stateStore: f.stateStore, readToken: () => "synthetic-read" };
     try {
       const plan = await runThumbnailMindCommand({ ...common, argv, env: {} });
@@ -173,7 +173,11 @@ test("one-shot H.264 traverses mocked D1 and R2 HTTP ports without changing the 
       assert.equal(new URL(request.url).pathname, "/api/internal/video-thumbnail/commit");
       assert.equal(request.headers.get("x-thot-os-service-capability"), "library.thumbnail.commit");
       assert.equal(request.headers.get("cf-access-client-id"), "synthetic-access-id");
-      const { creatorId, assetId, source, posterKey } = await request.json();
+      const { creatorId, assetId, source, posterBase64, contentType } = await request.json();
+      assert.equal(contentType, "image/jpeg");
+      const jpeg = Buffer.from(posterBase64, "base64");
+      const posterKey = `creators/${creatorId}/assets/${createHash("sha256").update(`${creatorId}:${assetId}`).digest("hex")}/previews/${createHash("sha256").update(jpeg).digest("hex")}.jpg`;
+      posterPuts++; posters.set(`/thot-os-previews-staging/${posterKey}`, jpeg);
       const outcome = f.sqlite.prepare(`UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=?
         AND preview_r2_key IS NULL AND EXISTS (SELECT 1 FROM asset_storage_objects WHERE asset_id=?
         AND creator_id=? AND object_key=? AND source_revision=? AND r2_etag=? AND r2_version=? AND byte_count=?)`)
@@ -189,7 +193,7 @@ test("one-shot H.264 traverses mocked D1 and R2 HTTP ports without changing the 
     const writeEnv = { THOT_THUMBNAIL_ALLOW_APPLY: "1", THOT_THUMBNAIL_SERVICE_TOKEN: "synthetic-service-token",
       THOT_THUMBNAIL_ACCESS_CLIENT_ID: "synthetic-access-id", THOT_THUMBNAIL_ACCESS_CLIENT_SECRET: "synthetic-access-secret",
       THOT_THUMBNAIL_SOURCE_R2_KEY_ID: "synthetic-source-key", THOT_THUMBNAIL_SOURCE_R2_SECRET: "synthetic-source-secret",
-      THOT_THUMBNAIL_PREVIEW_R2_KEY_ID: "synthetic-preview-key", THOT_THUMBNAIL_PREVIEW_R2_SECRET: "synthetic-preview-secret" };
+      };
     try {
       const common = { config: CONFIG, portFactory, argv: ["--creator", "creator-one"] };
       const plan = await runThumbnailMindCommand({ ...common, env: {}, readToken: () => "synthetic-read" });

@@ -64,10 +64,10 @@ test("narrow poster commit sends service and Access credentials only to the pinn
     assert.equal(request.headers.get("x-thot-os-service-capability"), "library.thumbnail.commit");
     assert.deepEqual(await request.json(), { creatorId: "creator-one", assetId: source.assetId,
       source: { key: source.sourceKey, revision: source.sourceRevision, version: "v1", etag: "e1", bytes: 123, codec: "h265" },
-      posterKey: "poster-key" });
+      contentType: "image/jpeg", posterBase64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64") });
     return Response.json({ ok: true, status: "committed" });
   } });
-  assert.equal(await port.commit(source, "poster-key"), true);
+  assert.equal(await port.commit(source, new Uint8Array([0xff, 0xd8, 0xff, 0xd9])), true);
   assert.equal(calls, 1);
   assert.throws(() => createRemotePosterCommitPort({ ...options, endpoint: "http://staging.invalid/api/internal/video-thumbnail/commit" }),
     /thumbnail_commit_config_invalid/);
@@ -84,15 +84,15 @@ test("commit redirect, manual-wins conflict and ambiguous failures are handled w
   const manual = createRemotePosterCommitPort({ ...options, fetchImpl: async () => {
     calls++; return Response.json({ ok: false, error: "poster_already_selected" }, { status: 409 });
   } });
-  assert.equal(await manual.commit(source, "poster-key"), false);
+  assert.equal(await manual.commit(source, new Uint8Array([0xff, 0xd8, 0xff, 0xd9])), false);
   const redirected = createRemotePosterCommitPort({ ...options, fetchImpl: async () => {
     calls++; return new Response(null, { status: 302, headers: { location: "https://other.invalid/" } });
   } });
-  await assert.rejects(redirected.commit(source, "poster-key"), /thumbnail_commit_failed/);
+  await assert.rejects(redirected.commit(source, new Uint8Array([0xff, 0xd8, 0xff, 0xd9])), /thumbnail_commit_failed/);
   const uncertain = createRemotePosterCommitPort({ ...options, fetchImpl: async () => {
     calls++; return Response.json({ ok: false, error: "commit_uncertain" }, { status: 503 });
   } });
-  await assert.rejects(uncertain.commit(source, "poster-key"), /thumbnail_commit_failed/);
+  await assert.rejects(uncertain.commit(source, new Uint8Array([0xff, 0xd8, 0xff, 0xd9])), /thumbnail_commit_failed/);
   assert.equal(calls, 3);
 });
 

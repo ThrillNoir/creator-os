@@ -51,7 +51,8 @@ const CAS = `UPDATE assets SET preview_r2_key=?
         AND o.r2_version=? AND o.byte_count=?)`;
 
 export function createVideoThumbnailStorageAdapter({ DB, LIBRARY_MEDIA, PREVIEWS, COMMIT_REFERENCE = null }) {
-  if (!DB?.prepare || !LIBRARY_MEDIA?.head || !LIBRARY_MEDIA?.get || !PREVIEWS?.head || !PREVIEWS?.put) {
+  if (!DB?.prepare || !LIBRARY_MEDIA?.head || !LIBRARY_MEDIA?.get
+    || (!COMMIT_REFERENCE && (!PREVIEWS?.head || !PREVIEWS?.put))) {
     throw new Error("thumbnail_storage_bindings_missing");
   }
   if (COMMIT_REFERENCE && typeof COMMIT_REFERENCE.commit !== "function") throw new Error("thumbnail_commit_binding_invalid");
@@ -94,6 +95,9 @@ export function createVideoThumbnailStorageAdapter({ DB, LIBRARY_MEDIA, PREVIEWS
         || current.etag !== source.etag || current.bytes !== source.bytes || current.codec !== source.codec) return false;
       const head = await LIBRARY_MEDIA.head(source.sourceKey);
       if (!sameObject(head, source)) throw new Error("source_object_identity_changed");
+      // The authenticated Web endpoint owns private-preview storage and the D1 CAS.
+      // The runner needs only source ObjectRead, never preview-bucket credentials.
+      if (COMMIT_REFERENCE) return COMMIT_REFERENCE.commit(source, poster.bytes);
       const existing = await PREVIEWS.head(poster.key);
       if (existing && (existing.customMetadata?.creator_id !== source.creatorId
         || existing.customMetadata?.asset_id !== source.assetId
@@ -105,7 +109,6 @@ export function createVideoThumbnailStorageAdapter({ DB, LIBRARY_MEDIA, PREVIEWS
         });
         if (!stored) throw new Error("poster_storage_failed");
       }
-      if (COMMIT_REFERENCE) return COMMIT_REFERENCE.commit(source, poster.key);
       const result = await DB.prepare(CAS).bind(poster.key, source.assetId, source.creatorId,
         source.codec, source.sourceKey, source.sourceRevision, source.etag, source.version, source.bytes).run();
       const count = changes(result);

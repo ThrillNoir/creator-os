@@ -6,7 +6,7 @@ import { handleVideoThumbnailCommit } from "../src/lib/video-thumbnail-commit.ts
 
 const ASSET = "11111111-1111-4111-8111-111111111111";
 const TOKEN = "synthetic-service-token-with-at-least-forty-characters-123";
-const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 0xff, 0xd9]);
+const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 0xff, 0xd9]);
 const hex = (value) => createHash("sha256").update(value).digest("hex");
 const posterKey = `creators/creator-one/assets/${hex(`creator-one:${ASSET}`)}/previews/${hex(JPEG)}.jpg`;
 const source = { key: "originals/v1/synthetic", revision: "native:synthetic", version: "version-one",
@@ -34,145 +34,165 @@ function fixture() {
   const prepare = (sql) => ({ bind(...params) { const stmt = sqlite.prepare(sql); return {
     async first() { return stmt.get(...params) ?? null; },
     async all() { return { results: stmt.all(...params) }; },
-    async run() { return { meta: { changes: stmt.run(...params).changes } }; },
     runSync() { return { meta: { changes: stmt.run(...params).changes } }; },
   }; } });
-  const DB = { prepare, async batch(statements) {
-    return sqlite.transaction(() => statements.map((statement) => statement.runSync()))();
-  } };
-  let heads = 0; let gets = 0;
-  let beforeGet;
-  const object = { key: posterKey, size: JPEG.length, etag: "poster-etag", version: "poster-version",
-    httpMetadata: { contentType: "image/jpeg" }, customMetadata: { creator_id: "creator-one",
-      asset_id: ASSET, derivative: "video_poster_v1" } };
+  const DB = { prepare, async batch(statements) { return sqlite.transaction(() => statements.map((s) => s.runSync()))(); } };
+  const objects = new Map();
+  let puts = 0; let gets = 0; let sourceHeads = 0; let beforePut; let beforeBatch;
   const PREVIEWS = {
-    async head(key) { heads++; return key === posterKey ? object : null; },
+    async head(key) { return objects.get(key) ?? null; },
+    async put(key, bytes, options) {
+      puts++; beforePut?.();
+      if (objects.has(key)) return null;
+      const object = { key, etag: "poster-etag", size: bytes.length, httpMetadata: options.httpMetadata,
+        customMetadata: options.customMetadata, bytes: Uint8Array.from(bytes) };
+      objects.set(key, object);
+      return object;
+    },
     async get(key, { onlyIf } = {}) {
       gets++;
-      beforeGet?.();
-      if (key !== posterKey || onlyIf?.etagMatches !== object.etag) return null;
-      return { ...object, body: true, async arrayBuffer() { return JPEG.buffer.slice(0); } };
+      const object = objects.get(key);
+      return object && onlyIf?.etagMatches === object.etag
+        ? { ...object, body: true, async arrayBuffer() { return Uint8Array.from(object.bytes).buffer; } } : null;
     },
   };
-  return { sqlite, env: { DB, PREVIEWS }, get heads() { return heads; }, get gets() { return gets; },
-    set beforeGet(callback) { beforeGet = callback; }, close() { sqlite.close(); } };
+  const LIBRARY_MEDIA = { async head(key) { sourceHeads++; return key === source.key
+    ? { key, version: source.version, etag: source.etag, size: source.bytes } : null; } };
+  const IMAGES = { async info() { return { format: "image/jpeg", width: 320, height: 180 }; } };
+  const env = { DB: { ...DB, async batch(statements) { beforeBatch?.(); return DB.batch(statements); } }, PREVIEWS, LIBRARY_MEDIA, IMAGES };
+  return { sqlite, env, objects, get puts() { return puts; }, get gets() { return gets; },
+    get sourceHeads() { return sourceHeads; }, set beforePut(fn) { beforePut = fn; },
+    set beforeBatch(fn) { beforeBatch = fn; }, close() { sqlite.close(); } };
 }
-
 function request(input = {}, { token = TOKEN, capability = "library.thumbnail.commit" } = {}) {
   return new Request("https://staging.invalid/api/internal/video-thumbnail/commit", { method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`,
-      "x-thot-os-service-capability": capability },
-    body: JSON.stringify({ creatorId: "creator-one", assetId: ASSET, source, posterKey, ...input }) });
+      "x-thot-os-service-capability": capability, "x-thot-os-creator-id": "creator-one" },
+    body: JSON.stringify({ creatorId: "creator-one", assetId: ASSET, source,
+      contentType: "image/jpeg", posterBase64: Buffer.from(JPEG).toString("base64"), ...input }) });
 }
 
-test("authenticated scoped commit, replay and audit change only the missing poster reference", async () => {
+test("scoped JPEG commit is conditional, idempotent, and audited once", async () => {
   const f = fixture();
   try {
-    const first = await handleVideoThumbnailCommit(request(), f.env);
-    assert.equal(first.status, 200);
-    assert.equal((await first.json()).status, "committed");
-    assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets WHERE id=?").get(ASSET).preview_r2_key, posterKey);
+    assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).status, "committed");
+    assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, posterKey);
+    assert.equal(f.puts, 1);
+    assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).status, "already_committed");
+    assert.equal(f.puts, 1); assert.equal(f.gets, 1);
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM identity_audit_events").get().n, 1);
-    const replay = await handleVideoThumbnailCommit(request(), f.env);
-    assert.equal((await replay.json()).status, "already_committed");
-    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM identity_audit_events").get().n, 1);
-    assert.equal(f.heads, 1);
-    assert.equal(f.gets, 1);
   } finally { f.close(); }
 });
 
-test("missing grant, wrong service token or capability never accesses the poster", async () => {
+test("unauthorized token, capability, and foreign creator cannot read source or write poster", async () => {
   const f = fixture();
   try {
     for (const req of [request({}, { token: "synthetic-wrong-token-with-at-least-forty-characters" }),
-      request({}, { capability: "portfolio.publish" }),
-      request({ creatorId: "creator-two", posterKey: posterKey.replace("creator-one", "creator-two") })]) {
+      request({}, { capability: "portfolio.publish" }), request({ creatorId: "creator-two" })])
       assert.equal((await handleVideoThumbnailCommit(req, f.env)).status, 404);
-    }
-    assert.equal(f.heads, 0);
-    assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, null);
+    assert.equal(f.sourceHeads, 0); assert.equal(f.puts, 0);
   } finally { f.close(); }
 });
 
-test("malformed and oversized requests fail before authorization or storage reads", async () => {
+test("invalid shape, arbitrary key, malformed JPEG, and oversized body are rejected", async () => {
   const f = fixture();
   try {
-    for (const input of [{ extra: true }, { source: { ...source, codec: "unknown" } },
-      { source: { ...source, bytes: -1 } }, { posterKey: "other-key.jpg" }]) {
+    for (const input of [{ extra: true }, { posterKey: "arbitrary.jpg" },
+      { source: { ...source, codec: "unknown" } }, { posterBase64: Buffer.from("not a jpeg").toString("base64") },
+      { posterBase64: "not-base64" }, { contentType: "image/png" }])
       assert.equal((await handleVideoThumbnailCommit(request(input), f.env)).status, 400);
-    }
-    const oversized = new Request("https://staging.invalid/api/internal/video-thumbnail/commit", {
-      method: "POST", headers: { "Content-Type": "application/json", "content-length": "4097",
-        Authorization: `Bearer ${TOKEN}`, "x-thot-os-service-capability": "library.thumbnail.commit" }, body: "{}",
-    });
+    const oversized = request(); oversized.headers.set("content-length", String(20 * 1024 * 1024));
     assert.equal((await handleVideoThumbnailCommit(oversized, f.env)).status, 413);
-    assert.equal(f.heads, 0);
+    assert.equal(f.puts, 0);
   } finally { f.close(); }
 });
 
-test("unauthenticated and stalled request bodies cannot hold the endpoint indefinitely", async () => {
+test("unauthenticated and stalled bodies cannot hold the endpoint", async () => {
   const f = fixture();
   try {
     const stalled = () => new ReadableStream({ start() {} });
-    const absentToken = new Request("https://staging.invalid/api/internal/video-thumbnail/commit", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: stalled(), duplex: "half",
-    });
-    assert.equal((await handleVideoThumbnailCommit(absentToken, f.env, { bodyTimeoutMs: 20 })).status, 404);
-    const slowValidToken = new Request("https://staging.invalid/api/internal/video-thumbnail/commit", {
+    const absent = new Request("https://staging.invalid/api/internal/video-thumbnail/commit", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: stalled(), duplex: "half" });
+    assert.equal((await handleVideoThumbnailCommit(absent, f.env, { bodyTimeoutMs: 20 })).status, 404);
+    const slow = new Request("https://staging.invalid/api/internal/video-thumbnail/commit", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}`,
-        "x-thot-os-service-capability": "library.thumbnail.commit" }, body: stalled(), duplex: "half",
-    });
-    assert.equal((await handleVideoThumbnailCommit(slowValidToken, f.env, { bodyTimeoutMs: 20 })).status, 408);
-    assert.equal(f.heads, 0);
+        "x-thot-os-service-capability": "library.thumbnail.commit", "x-thot-os-creator-id": "creator-one" }, body: stalled(), duplex: "half" });
+    assert.equal((await handleVideoThumbnailCommit(slow, f.env, { bodyTimeoutMs: 20 })).status, 408);
   } finally { f.close(); }
 });
 
-test("changed source and selected manual poster fail without overwriting it", async () => {
+test("source identity change and manual selection prevent poster storage", async () => {
   const f = fixture();
   try {
-    f.sqlite.prepare("UPDATE asset_storage_objects SET r2_version='new-version'").run();
+    f.sqlite.prepare("UPDATE asset_storage_objects SET r2_version='changed'").run();
     assert.equal((await handleVideoThumbnailCommit(request(), f.env)).status, 409);
-    assert.equal(f.heads, 0);
     f.sqlite.prepare("UPDATE asset_storage_objects SET r2_version='version-one'").run();
-    f.sqlite.prepare("UPDATE assets SET preview_r2_key='manual-poster.jpg'").run();
-    const manual = await handleVideoThumbnailCommit(request(), f.env);
-    assert.equal(manual.status, 409);
-    assert.equal((await manual.json()).error, "poster_already_selected");
-    assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, "manual-poster.jpg");
+    f.env.LIBRARY_MEDIA.head = async () => ({ key: source.key, version: "changed", etag: source.etag, size: source.bytes });
+    assert.equal((await handleVideoThumbnailCommit(request(), f.env)).status, 409);
+    f.sqlite.prepare("UPDATE assets SET preview_r2_key='manual.jpg'").run();
+    assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).error, "poster_already_selected");
+    assert.equal(f.puts, 0);
   } finally { f.close(); }
 });
 
-test("manual selection racing after poster fetch wins the conditional update", async () => {
+test("manual and source races after conditional put win the D1 CAS; orphan is retained safely", async () => {
+  for (const [sql, expected] of [["UPDATE assets SET preview_r2_key='manual-race.jpg'", "poster_already_selected"],
+    ["UPDATE asset_storage_objects SET r2_etag='changed'", "source_changed"]]) {
+    const f = fixture();
+    try {
+      f.beforeBatch = () => f.sqlite.prepare(sql).run();
+      assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).error, expected);
+      assert.equal(f.puts, 1); assert.equal(f.objects.size, 1);
+      assert.notEqual(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, posterKey);
+    } finally { f.close(); }
+  }
+});
+
+test("storage failure, D1 failure and existing-key mismatch fail closed", async () => {
   const f = fixture();
   try {
-    f.beforeGet = () => f.sqlite.prepare("UPDATE assets SET preview_r2_key='manual-race.jpg'").run();
-    const result = await handleVideoThumbnailCommit(request(), f.env);
-    assert.equal(result.status, 409);
-    assert.equal((await result.json()).error, "poster_already_selected");
-    assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, "manual-race.jpg");
+    f.env.PREVIEWS.put = async () => { throw new Error("storage failed"); };
+    assert.equal((await handleVideoThumbnailCommit(request(), f.env)).status, 503);
+    f.env.PREVIEWS.put = async (key, bytes, options) => {
+      f.objects.set(key, { key, etag: "poster-etag", size: bytes.length, httpMetadata: options.httpMetadata,
+        customMetadata: options.customMetadata, bytes: Uint8Array.from(bytes) }); return f.objects.get(key); };
+    f.env.DB.batch = async () => { throw new Error("D1 failed"); };
+    assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).error, "commit_uncertain");
+    assert.equal(f.objects.size, 1);
+    f.objects.get(posterKey).bytes[5] ^= 1;
+    assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).error, "poster_invalid");
   } finally { f.close(); }
 });
 
-test("source changing during poster fetch prevents the conditional update", async () => {
+test("conditional put collision reuses only identical existing bytes and never overwrites", async () => {
+  for (const mismatch of [false, true]) {
+    const f = fixture();
+    try {
+      f.env.PREVIEWS.put = async (key, bytes, options) => {
+        assert.equal(options.onlyIf.etagDoesNotMatch, "*");
+        const existingBytes = Uint8Array.from(bytes);
+        if (mismatch) existingBytes[5] ^= 1;
+        f.objects.set(key, { key, etag: "winning-etag", size: bytes.length,
+          httpMetadata: options.httpMetadata, customMetadata: options.customMetadata, bytes: existingBytes });
+        return null;
+      };
+      const result = await handleVideoThumbnailCommit(request(), f.env);
+      assert.equal(result.status, mismatch ? 409 : 200);
+      assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key,
+        mismatch ? null : posterKey);
+    } finally { f.close(); }
+  }
+});
+
+test("R2 original changing after poster upload prevents the reference update", async () => {
   const f = fixture();
   try {
-    f.beforeGet = () => f.sqlite.prepare("UPDATE asset_storage_objects SET r2_etag='new-etag'").run();
+    let heads = 0;
+    f.env.LIBRARY_MEDIA.head = async (key) => ({ key, version: ++heads === 1 ? source.version : "changed",
+      etag: source.etag, size: source.bytes });
     const result = await handleVideoThumbnailCommit(request(), f.env);
-    assert.equal(result.status, 409);
     assert.equal((await result.json()).error, "source_changed");
     assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, null);
-  } finally { f.close(); }
-});
-
-test("poster key and object metadata must match creator, asset, JPEG bytes and source", async () => {
-  const f = fixture();
-  try {
-    const badKey = posterKey.replace(hex(JPEG), "0".repeat(64));
-    assert.equal((await handleVideoThumbnailCommit(request({ posterKey: badKey }), f.env)).status, 409);
-    f.env.PREVIEWS.head = async () => ({ key: posterKey, size: JPEG.length, etag: "poster-etag", version: "poster-version",
-      httpMetadata: { contentType: "image/jpeg" }, customMetadata: { creator_id: "creator-two",
-        asset_id: ASSET, derivative: "video_poster_v1" } });
-    assert.equal((await handleVideoThumbnailCommit(request(), f.env)).status, 409);
-    assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, null);
+    assert.equal(f.objects.size, 1);
   } finally { f.close(); }
 });

@@ -74,13 +74,17 @@ export function createRemotePosterCommitPort({ endpoint, serviceToken, accessCli
     || url.pathname !== "/api/internal/video-thumbnail/commit"
     || ![serviceToken, accessClientId, accessClientSecret].every(nonempty)) fail("thumbnail_commit_config_invalid");
   return Object.freeze({
-    async commit(source, posterKey) {
+    async commit(source, posterBytes) {
+      if (!(posterBytes instanceof Uint8Array) || posterBytes.length < 4 || posterBytes.length > 12 * 1024 ** 2)
+        fail("thumbnail_poster_invalid");
       const payload = { creatorId: source.creatorId, assetId: source.assetId,
         source: { key: source.sourceKey, revision: source.sourceRevision, version: source.version,
-          etag: source.etag, bytes: source.bytes, codec: source.codec }, posterKey };
+          etag: source.etag, bytes: source.bytes, codec: source.codec },
+        contentType: "image/jpeg", posterBase64: Buffer.from(posterBytes).toString("base64") };
       const request = new Request(url, { method: "POST", redirect: "manual", headers: {
         "Content-Type": "application/json", Authorization: `Bearer ${serviceToken}`,
         "x-thot-os-service-capability": "library.thumbnail.commit",
+        "x-thot-os-creator-id": source.creatorId,
         "CF-Access-Client-Id": accessClientId, "CF-Access-Client-Secret": accessClientSecret,
       }, body: JSON.stringify(payload) });
       const response = await fetchBounded(fetchImpl, request);

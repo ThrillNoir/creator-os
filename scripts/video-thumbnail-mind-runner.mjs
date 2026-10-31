@@ -84,9 +84,8 @@ export async function runThumbnailMindCommand({ argv, env = process.env, readTok
     databaseName: target.databaseName, token: d1Token });
   const credentials = write ? {
     source: [env.THOT_THUMBNAIL_SOURCE_R2_KEY_ID, env.THOT_THUMBNAIL_SOURCE_R2_SECRET],
-    preview: [env.THOT_THUMBNAIL_PREVIEW_R2_KEY_ID, env.THOT_THUMBNAIL_PREVIEW_R2_SECRET],
   } : null;
-  if (write && (!credentials.source.every(Boolean) || !credentials.preview.every(Boolean))) throw new Error("thumbnail_r2_credential_missing");
+  if (write && !credentials.source.every(Boolean)) throw new Error("thumbnail_r2_credential_missing");
   if (write && (![env.THOT_THUMBNAIL_SERVICE_TOKEN, env.THOT_THUMBNAIL_ACCESS_CLIENT_ID,
     env.THOT_THUMBNAIL_ACCESS_CLIENT_SECRET].every(Boolean) || typeof portFactory.commit !== "function"))
     throw new Error("thumbnail_commit_credential_missing");
@@ -95,8 +94,7 @@ export async function runThumbnailMindCommand({ argv, env = process.env, readTok
     async put() { throw new Error("thumbnail_plan_is_read_only"); } };
   const LIBRARY_MEDIA = write ? portFactory.r2({ accountId: target.accountId, bucket: target.sourceBucket,
     accessKeyId: credentials.source[0], secretAccessKey: credentials.source[1] }) : missing;
-  const PREVIEWS = write ? portFactory.r2({ accountId: target.accountId, bucket: target.previewBucket,
-    accessKeyId: credentials.preview[0], secretAccessKey: credentials.preview[1] }) : missing;
+  const PREVIEWS = write ? null : missing;
   const COMMIT_REFERENCE = write ? portFactory.commit({
     endpoint: "https://thot-os-staging.thot-os.workers.dev/api/internal/video-thumbnail/commit",
     serviceToken: env.THOT_THUMBNAIL_SERVICE_TOKEN,
