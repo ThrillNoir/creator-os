@@ -198,7 +198,8 @@ test("one-shot H.264 traverses mocked D1 and R2 HTTP ports without changing the 
       const common = { config: CONFIG, portFactory, argv: ["--creator", "creator-one"] };
       const plan = await runThumbnailMindCommand({ ...common, env: {}, readToken: () => "synthetic-read" });
       assert.equal(sourceGets, 0); assert.equal(posterPuts, 0);
-      const result = await runThumbnailMindCommand({ ...common, argv: [...common.argv, "--apply", plan.planId], env: writeEnv });
+      const result = await runThumbnailMindCommand({ ...common, argv: [...common.argv, "--apply", plan.planId], env: writeEnv,
+        readToken: () => "synthetic-read" });
       assert.deepEqual(result.results.map((item) => item.status), ["committed"]);
       assert.equal(sourceGets, 1); assert.equal(posterPuts, 1);
       assert.deepEqual(await readFile(file), bytes);

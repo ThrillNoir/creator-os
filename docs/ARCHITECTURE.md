@@ -1,5 +1,9 @@
 # Creator OS — technical direction
 
+> Historical proposal, not the current deployment guide. THOT OS now runs on
+> Cloudflare Workers with D1 and private R2; see [the canonical runtime](../README.md#canonical-runtime).
+> The Mac/local-folder, PostgreSQL and Stripe suggestions below were not adopted.
+
 ## Product boundary
 
 Creator OS is an internal operations system. It organises finished media, prepares platform-specific copy, collects human approval, and guides or schedules publishing. It does not edit the media and it does not automate fake engagement.

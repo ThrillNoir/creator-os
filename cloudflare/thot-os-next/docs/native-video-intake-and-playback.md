@@ -1,5 +1,10 @@
 # Private native video intake and playback decision
 
+> Historical intake-phase decision. Its statements about pending playback and
+> derivatives describe that phase, not the current staging feature state. See
+> [the canonical runtime](../../../README.md#canonical-runtime) and the current
+> Library and video playback implementation before planning new work.
+
 ## Decision
 
 Native video originals are admitted to the existing private `LIBRARY_MEDIA` R2

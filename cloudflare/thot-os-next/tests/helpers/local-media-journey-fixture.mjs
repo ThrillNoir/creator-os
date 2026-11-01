@@ -85,7 +85,7 @@ export async function createLocalD1() {
     ALTER TABLE asset_ingest_sessions ADD COLUMN completed_r2_etag TEXT;
     ALTER TABLE asset_ingest_sessions ADD COLUMN completion_observed_at TEXT;
     ALTER TABLE asset_ingest_sessions ADD COLUMN reconcile_attempts INTEGER NOT NULL DEFAULT 0;
-    CREATE TABLE asset_preview_jobs (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, asset_id TEXT NOT NULL, source_revision TEXT, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(creator_id,asset_id));
+    CREATE TABLE asset_preview_jobs (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, asset_id TEXT NOT NULL, source_revision TEXT, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, queued_at TEXT DEFAULT CURRENT_TIMESTAMP, started_at TEXT, completed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(creator_id,asset_id));
     CREATE TABLE asset_classifications (asset_id TEXT PRIMARY KEY,creator_id TEXT,safety TEXT,is_teaser INTEGER DEFAULT 0,is_multi INTEGER DEFAULT 0,notes TEXT DEFAULT '');
     CREATE TABLE asset_destinations (asset_id TEXT,creator_id TEXT,destination TEXT,PRIMARY KEY(asset_id,destination));
     CREATE TABLE fixture_audit (event TEXT NOT NULL);`);

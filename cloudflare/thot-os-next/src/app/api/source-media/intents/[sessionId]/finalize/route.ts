@@ -33,6 +33,10 @@ async function ensureNativePreview(DB: D1Database, libraryMedia: R2Bucket, previ
     await DB.batch([
       DB.prepare("UPDATE assets SET preview_r2_key=? WHERE id=? AND creator_id=? AND preview_r2_key IS NULL").bind(preview.objectKey, session.asset_id, creatorId),
       DB.prepare("UPDATE asset_media_authorities SET state='preview_ready',preview_failure_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE asset_id=? AND creator_id=? AND authority_kind='r2_native'").bind(session.asset_id, creatorId),
+      DB.prepare(`UPDATE asset_preview_jobs SET status='ready',completed_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
+        WHERE creator_id=? AND asset_id=? AND source_revision=? AND status IN ('queued','failed','processing')
+          AND EXISTS (SELECT 1 FROM assets a WHERE a.id=? AND a.creator_id=? AND a.preview_r2_key IS NOT NULL)`)
+        .bind(creatorId, session.asset_id, record.source_revision, session.asset_id, creatorId),
       identityAuditStatement(DB, humanAuditActor(context), "native_media_preview_ready", session.asset_id, { width: preview.width, height: preview.height, privateDerivative: true }),
     ]);
     return "ready";

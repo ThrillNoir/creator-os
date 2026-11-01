@@ -79,7 +79,7 @@ test("scoped JPEG commit is conditional, idempotent, and audited once", async ()
     assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, posterKey);
     assert.equal(f.puts, 1);
     assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).status, "already_committed");
-    assert.equal(f.puts, 1); assert.equal(f.gets, 1);
+    assert.equal(f.puts, 1); assert.equal(f.gets, 2);
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM identity_audit_events").get().n, 1);
   } finally { f.close(); }
 });
@@ -195,4 +195,21 @@ test("R2 original changing after poster upload prevents the reference update", a
     assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, null);
     assert.equal(f.objects.size, 1);
   } finally { f.close(); }
+});
+
+test("replay checks that its referenced poster still exists and matches its content key", async () => {
+  for (const damage of ["missing", "corrupt"]) {
+    const f = fixture();
+    try {
+      assert.equal((await (await handleVideoThumbnailCommit(request(), f.env)).json()).status, "committed");
+      if (damage === "missing") f.objects.delete(posterKey);
+      else f.objects.get(posterKey).bytes[5] ^= 1;
+      const replay = await handleVideoThumbnailCommit(request(), f.env);
+      assert.equal(replay.status, 409);
+      assert.equal((await replay.json()).error, damage === "missing" ? "poster_missing" : "poster_invalid");
+      assert.equal(f.sqlite.prepare("SELECT preview_r2_key FROM assets").get().preview_r2_key, posterKey);
+      assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM identity_audit_events").get().n, 1);
+      assert.equal(f.puts, 1);
+    } finally { f.close(); }
+  }
 });

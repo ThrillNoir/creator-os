@@ -163,16 +163,20 @@ export async function handleVideoThumbnailCommit(request: Request, env: {
   try { row = await env.DB.prepare(sourceSql).bind(input.creatorId, input.assetId).first<SourceRow>(); }
   catch { return json({ ok: false, error: "source_lookup_unavailable" }, 503); }
   if (!row || !sameSource(row, input.source)) return json({ ok: false, error: "source_changed" }, 409);
-  if (row.posterKey === posterKey) return json({ ok: true, status: "already_committed" });
-  if (row.posterKey !== null) return json({ ok: false, error: "poster_already_selected" }, 409);
+  const replay = row.posterKey === posterKey;
+  if (row.posterKey !== null && !replay) return json({ ok: false, error: "poster_already_selected" }, 409);
   let sourceHead: R2Object | null;
-  try { sourceHead = await env.LIBRARY_MEDIA.head(input.source.key); }
-  catch { return json({ ok: false, error: "source_lookup_unavailable" }, 503); }
-  if (!sameSourceObject(sourceHead, input.source)) return json({ ok: false, error: "source_changed" }, 409);
+  if (!replay) {
+    try { sourceHead = await env.LIBRARY_MEDIA.head(input.source.key); }
+    catch { return json({ ok: false, error: "source_lookup_unavailable" }, 503); }
+    if (!sameSourceObject(sourceHead, input.source)) return json({ ok: false, error: "source_changed" }, 409);
+  }
   let head: R2Object | null;
   try { head = await env.PREVIEWS.head(posterKey); }
   catch { return json({ ok: false, error: "poster_lookup_unavailable" }, 503); }
   if (!head) {
+    // A replay must not silently repair or report success for a missing public-facing card.
+    if (replay) return json({ ok: false, error: "poster_missing" }, 409);
     try {
       const stored = await env.PREVIEWS.put(posterKey, bytes, {
         httpMetadata: { contentType: "image/jpeg", cacheControl: "private, no-store" },
@@ -196,6 +200,7 @@ export async function handleVideoThumbnailCommit(request: Request, env: {
   catch { return json({ ok: false, error: "poster_lookup_unavailable" }, 503); }
   if (storedBytes.length !== bytes.length || (await videoPosterIdentity(input.creatorId, input.assetId, storedBytes)).key !== posterKey)
     return json({ ok: false, error: "poster_invalid" }, 409);
+  if (replay) return json({ ok: true, status: "already_committed" });
   // Recheck the original after the private R2 write, before the D1 reference.
   try { sourceHead = await env.LIBRARY_MEDIA.head(input.source.key); }
   catch { return json({ ok: false, error: "source_lookup_unavailable" }, 503); }
